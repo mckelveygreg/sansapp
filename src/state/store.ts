@@ -94,6 +94,30 @@ export interface PedalController {
   dispose: () => void;
 }
 
+/**
+ * Mirror the deep params that the shared dynamics/ambience stores hold, from a decoded preset — so
+ * recall/connect show the preset's real gate/comp/ambience values instead of stale carry-over. These
+ * are now decoded ParamIds, so their ghost/baseline comes from the pedal store automatically.
+ */
+function syncDeepStores(preset: Preset): void {
+  const v = preset.values;
+  dynamicsStore.getState().patch({
+    gateThreshold: v.gateThreshold,
+    gateRatio: v.gateRatio,
+    gateRelease: v.gateRelease,
+    compOutput: v.compOutput,
+    compAttack: v.compAttack,
+    compRelease: v.compRelease,
+    autoGain: v.autoGain > 0,
+    lookahead: v.lookahead > 0,
+  });
+  ambienceStore.getState().patch({
+    decay: v.ambienceDecay,
+    time: v.ambienceTime,
+    type: detectAmbienceType(preset.raw),
+  });
+}
+
 /** Wire a DeviceSession's events into the store and return UI-facing actions. */
 export function bindSession(session: DeviceSession, store: PedalStoreApi): PedalController {
   store.getState().setConnection(session.state); // seed current state (may already be connected)
@@ -123,13 +147,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     async recall(slot) {
       const preset = await session.recallPreset(slot);
       store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null);
-      // Send-only deep params (gate, comp output/attack/release, ambience decay/time) aren't read
-      // back from the blob — reset them so the previous preset's tweaks don't carry over.
-      dynamicsStore.getState().reset();
-      ambienceStore.getState().reset();
-      // Ambience TYPE lives in the blob (a bundle, not a ParamId) — set it from the recalled preset
-      // so the Ambience page reflects it (NOT from a re-read of the stale edit buffer).
-      ambienceStore.getState().patch({ type: detectAmbienceType(preset.raw) });
+      syncDeepStores(preset); // gate/comp/ambience deep params, from this preset's real values
       store.getState().pushLog(`▶ recalled ${slot}: ${preset.name}`);
       return preset;
     },
@@ -146,9 +164,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
         // no settings block — leave slot unknown
       }
       store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null);
-      dynamicsStore.getState().reset();
-      ambienceStore.getState().reset();
-      ambienceStore.getState().patch({ type: detectAmbienceType(preset.raw) });
+      syncDeepStores(preset);
       store.getState().pushLog(`● loaded current preset${slot != null ? ` (${slot + 1})` : ""}`);
       return preset;
     },

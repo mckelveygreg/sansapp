@@ -29,6 +29,7 @@ export default function Ambience() {
   const level = useStore(pedalStore, (s) => s.values.ambiance) ?? 64;
   const decay = useStore(ambienceStore, (s) => s.decay);
   const time = useStore(ambienceStore, (s) => s.time);
+  const baseline = useStore(pedalStore, (s) => s.baseline);
 
   async function selectType(i: number) {
     ambienceStore.getState().patch({ type: i }); // optimistic; setAmbienceType re-confirms on success
@@ -92,10 +93,28 @@ export default function Ambience() {
         }}
       >
         <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 12 }}>
-          <Knob label="Level" value={level} display={`${rawToPct(level)}%`} onChange={onLevel} />
-          <Knob label="Decay" value={decay} display={`${rawToPct(decay)}%`} onChange={onDecay} />
+          <Knob
+            label="Level"
+            value={level}
+            ghost={baseline.ambiance}
+            display={`${rawToPct(level)}%`}
+            onChange={onLevel}
+          />
+          <Knob
+            label="Decay"
+            value={decay}
+            ghost={baseline.ambienceDecay}
+            display={`${rawToPct(decay)}%`}
+            onChange={onDecay}
+          />
           {isEcho(type) ? (
-            <Knob label="Time" value={time} display={`${ms(time)}ms`} onChange={onTime} />
+            <Knob
+              label="Time"
+              value={time}
+              ghost={baseline.ambienceTime}
+              display={`${ms(time)}ms`}
+              onChange={onTime}
+            />
           ) : null}
         </View>
       </View>

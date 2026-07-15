@@ -92,6 +92,21 @@ export const PARAMS = {
   chorusModDepth: knob("chorusModDepth", "Chorus Mod Depth", "ambience", 0x66, 0x44, true),
   chorusDelaySize: knob("chorusDelaySize", "Chorus Delay Size", "ambience", 0x67, 0x45, true),
   chorusFeedback: knob("chorusFeedback", "Chorus Feedback", "ambience", 0x68, 0x46, true),
+  // Deep params now read back from presets. blobOffset = wireId + 0x22 — binary-confirmed 2026-07-15
+  // two ways: EliteControl's 05 41 decode loop applies body[0x22+k] to param k for k=0x00..0x49, and
+  // a 128-preset oracle places every known toggle at its predicted +0x22 offset. Previously these
+  // were send-only (didn't reset on preset change, no ghost). gateRatio's wire id (0x1d, Expander
+  // Ratio) is inferred; its offset follows the same rule regardless.
+  gateThreshold: knob("gateThreshold", "Gate Threshold", "dynamics", 0x2b, 0x09, true),
+  gateRatio: knob("gateRatio", "Gate Ratio", "dynamics", 0x3f, 0x1d, true),
+  gateRelease: knob("gateRelease", "Gate Release", "dynamics", 0x49, 0x27, true),
+  compOutput: knob("compOutput", "Comp Output", "dynamics", 0x3c, 0x1a, true),
+  compAttack: knob("compAttack", "Comp Attack", "dynamics", 0x3d, 0x1b, true),
+  compRelease: knob("compRelease", "Comp Release", "dynamics", 0x3e, 0x1c, true),
+  autoGain: knob("autoGain", "Auto Gain", "dynamics", 0x54, 0x32, true),
+  lookahead: knob("lookahead", "Look-ahead", "dynamics", 0x55, 0x33, true),
+  ambienceDecay: knob("ambienceDecay", "Ambience Decay", "ambience", 0x37, 0x15, true),
+  ambienceTime: knob("ambienceTime", "Ambience Time", "ambience", 0x36, 0x14, true),
 } as const satisfies Record<string, ParamDef>;
 
 export type ParamId = keyof typeof PARAMS;
@@ -152,8 +167,9 @@ export const AMBIENCE_PARAMS = {
  * Gate & Master Level deep page (behind the LEVEL knob). Threshold 0x09 (confirmed), Release 0x27
  * (Gate Release), and the gate's ratio stage maps to the Expander Ratio (0x1d — inferred). Master
  * Level is the main output level (0x00). Ranges: Threshold Bypass then ≈−90…−30 dB, Ratio 1–10:1,
- * Release 10–1000 ms. These are send-only for now (preset read-back offsets aren't mapped yet), and
- * the ratio id is inferred — if the gate misbehaves, please open a protocol-observation issue.
+ * Release 10–1000 ms. Read back from the preset via the PARAMS entries above (gateThreshold /
+ * gateRatio / gateRelease, blobOffset = wireId + 0x22); the ratio wire id (0x1d) is inferred — if
+ * the gate misbehaves, please open a protocol-observation issue.
  */
 export const GATE_PARAMS = {
   threshold: 0x09,

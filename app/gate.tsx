@@ -40,7 +40,7 @@ export default function Gate() {
   const { width } = useWindowDimensions();
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
   const level = useStore(pedalStore, (s) => s.values.level) ?? 64;
-  const levelGhost = useStore(pedalStore, (s) => s.baseline.level);
+  const baseline = useStore(pedalStore, (s) => s.baseline);
   const d = useStore(dynamicsStore, (s) => s);
   // Comp threshold/ratio for the shared graph are store-backed (read from the pedal store).
   const compThreshold = useStore(pedalStore, (s) => s.values.comp) ?? 64;
@@ -82,7 +82,7 @@ export default function Gate() {
         <Knob
           label="Level"
           value={level}
-          ghost={levelGhost}
+          ghost={baseline.level}
           display={`${rawToPct(level)}%`}
           onChange={setLevel}
         />
@@ -94,18 +94,21 @@ export default function Gate() {
           <Knob
             label="Threshold"
             value={d.gateThreshold}
+            ghost={baseline.gateThreshold}
             display={gateThresholdLabel(d.gateThreshold)}
             onChange={setG("gateThreshold", GATE_PARAMS.threshold)}
           />
           <Knob
             label="Ratio"
             value={d.gateRatio}
+            ghost={baseline.gateRatio}
             display={`${gateRatio(d.gateRatio).toFixed(1)}:1`}
             onChange={setG("gateRatio", GATE_PARAMS.ratio)}
           />
           <Knob
             label="Release"
             value={d.gateRelease}
+            ghost={baseline.gateRelease}
             display={`${gateReleaseMs(d.gateRelease).toFixed(1)} ms`}
             onChange={setG("gateRelease", GATE_PARAMS.release)}
           />
@@ -115,8 +118,8 @@ export default function Gate() {
       <FootNote>
         Live over MIDI — Main Level is the master output; the Gate cleans up hiss/noise below its
         Threshold (the lower-left of the graph). Calibrated to EliteControl&apos;s read-outs (the
-        Threshold low end is an estimate). Not read back from presets yet, so it opens from
-        defaults.
+        Threshold low end is an estimate); read back from the preset, so a moved knob shows the
+        amber ghost of its saved value.
       </FootNote>
     </KnobScroll>
   );
