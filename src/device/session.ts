@@ -99,12 +99,9 @@ export class DeviceSession {
       }
       await this.delay(this.sendGapMs);
       this.send({ kind: "control", code: 0x5b });
-      await this.delay(this.sendGapMs);
-      // EliteControl sends this right after connecting, before any edit-buffer writes. Hypothesis:
-      // it enables "Live Edit Mode" (a string in the app binary) — the thing that makes 05 20
-      // edit-buffer writes (engine/model bundles) take effect on the LIVE sound. Knob setParams are
-      // always live; without this, an ambience/amp *type* write is stored but not heard. (0x13, 2026-07.)
-      this.send({ kind: "setParam", param: 0x13, value: 1 });
+      // Deliberately send NOTHING else. An earlier build sent `setParam 0x13 = 1` on a hypothesis it
+      // was "Live Edit Mode" — but 0x13 is the Reverb Extension Factor (docs/PROTOCOL.md), so that
+      // write silently changed a reverb setting (and possibly toggled a mode) on every connect.
       this.setState("ready");
     } catch (e) {
       this.setState("disconnected");
@@ -154,8 +151,8 @@ export class DeviceSession {
     );
     // Commit ONLY when saving to a numbered slot. The edit buffer (0x7F) must NOT be committed:
     // setParam 0x12=127 makes the pedal jump to "program 128" and dump the working sound. Edit-buffer
-    // writes take effect live via Live Edit Mode (0x13=1, sent on connect) with no commit — this
-    // matches EliteControl (its edit-buffer writes have no 0x12; only its slot Save does).
+    // writes take effect live with no commit — this matches EliteControl (its edit-buffer writes
+    // have no 0x12; only its slot Save does).
     if ((slot & 0x7f) !== EDIT_BUFFER_SLOT) {
       this.send({ kind: "setParam", param: 0x12, value: slot & 0x7f });
     }
