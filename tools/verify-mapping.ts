@@ -57,7 +57,7 @@ for (const [k, v] of Object.entries(AMBIENCE_PARAMS)) add(v, `ambience.${k}`);
 for (const band of ["low", "mid", "high"] as const)
   for (const [k, v] of Object.entries(PARAMETRIC_EQ[band])) add(v, `eq.${band}.${k}`);
 add(0x12, "SAVE/commit");
-add(0x13, "live-edit toggle");
+add(0x13, "reverb extension factor (per PROTOCOL.md; unconfirmed)");
 add(0x4d, "RED SHIFT footswitch (layer)");
 
 const name = (id: number) => LABEL.get(id) ?? "(unmapped)";
