@@ -58,10 +58,27 @@ describe("amp model bundles", () => {
     }
   });
 
-  it("changing a character byte drops the match to a different model or null", () => {
-    const blob = applyAmpBundle(new Uint8Array(256), "VT Bass");
-    blob[AMP_BUNDLE_OFFSETS[1]!] = 111; // no model has Buzz=111
+  it("changing a character byte falls back to the Buzz tag, else null", () => {
+    const blob = applyAmpBundle(new Uint8Array(256), "VT Bass"); // Buzz 63
+    blob[AMP_BUNDLE_OFFSETS[2]!] = 120; // break Punch so no template matches
+    expect(detectAmpModel(blob)).toBe("VT Bass"); // Buzz 63 tag still catches it
+    blob[AMP_BUNDLE_OFFSETS[1]!] = 111; // now Buzz=111 too — no tag
     expect(detectAmpModel(blob)).toBeNull();
+  });
+
+  it("tags the tweaked factory Para Driver / VT Bass presets via the Buzz fallback", () => {
+    // Real factory bytes: neither preset's full voicing matches its namesake template.
+    const paraDriver = new Uint8Array(256); // preset 3 char = (buzz 62, punch 86, pF 100, pQ 64)
+    [0x24, 0x25, 0x2d, 0x4f].forEach((o, i) => (paraDriver[o] = [62, 86, 100, 64][i]!));
+    expect(detectAmpModel(paraDriver)).toBe("Para Driver"); // Buzz 62 → Para Driver
+
+    const vtBassDi = new Uint8Array(256); // preset 2 char = (buzz 63, punch 15, pF 64, pQ 90)
+    [0x24, 0x25, 0x2d, 0x4f].forEach((o, i) => (vtBassDi[o] = [63, 15, 64, 90][i]!));
+    expect(detectAmpModel(vtBassDi)).toBe("VT Bass"); // Buzz 63 → VT Bass
+
+    const neutralDi = new Uint8Array(256); // the DI default (64,64,65,64) → no model
+    [0x24, 0x25, 0x2d, 0x4f].forEach((o, i) => (neutralDi[o] = [64, 64, 65, 64][i]!));
+    expect(detectAmpModel(neutralDi)).toBeNull();
   });
 
   it("bundleMatches keys on voicing, ignoring the per-preset Preset Level", () => {
