@@ -1,0 +1,9 @@
+# `match` keeps signing certs + provisioning profiles in a PRIVATE git repo, encrypted with a
+# passphrase (MATCH_PASSWORD). This is the "certs in a private repo" pattern — no shared keychains,
+# no manual .p12 juggling. Point MATCH_GIT_URL at a private repo you own (e.g. sansapp-certs).
+git_url(ENV["MATCH_GIT_URL"])
+storage_mode("git")
+type("appstore")
+app_identifier(["com.mckelveygreg.sansapp"])
+# CI / normal builds fetch read-only; only `fastlane certs` (run once, interactively) writes.
+readonly(ENV["MATCH_READONLY"] != "false")

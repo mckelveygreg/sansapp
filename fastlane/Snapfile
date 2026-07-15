@@ -1,0 +1,9 @@
+# App Store screenshots. `fastlane snapshot` drives a UITest to capture screens automatically, but
+# a stock Expo app has no UITest target — so for v1 the simplest path is to capture screenshots by
+# hand (see docs/RELEASE.md) and drop them in fastlane/screenshots/en-US/. This Snapfile is here for
+# when a UITest target is added.
+devices(["iPhone 16 Pro Max", "iPhone 16 Pro"])
+languages(["en-US"])
+scheme("SansApp")
+output_directory("./fastlane/screenshots")
+clear_previous_screenshots(true)

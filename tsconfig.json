@@ -1,0 +1,15 @@
+{
+  "//": "React Native / Expo app config (expo-managed). The framework-free core is ALSO checked, more strictly, by tsconfig.core.json (npm run typecheck).",
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM"],
+    "moduleResolution": "bundler",
+    "types": ["react", "react-native", "node"],
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["app", "src", "app.config.ts"]
+}

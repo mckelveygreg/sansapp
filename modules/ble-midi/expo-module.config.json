@@ -1,0 +1,9 @@
+{
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["BleMidiModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.blemidi.BleMidiModule"]
+  }
+}

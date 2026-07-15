@@ -1,0 +1,11 @@
+SansApp is a MIDI editor for the Tech 21 SansAmp Programmable Bass Driver DI Elite — a hardware bass
+preamp pedal. The editing features require the physical pedal, connected via a Bluetooth or USB MIDI
+adapter, which the review team will not have.
+
+Without a pedal connected, the app launches to a "Connect" screen and every screen remains browsable
+(the editor, IR page, presets, backup and settings all render). The app needs no account or login
+and collects no data.
+
+This is an independent, unofficial project. The Tech 21 / SansAmp / Bass Driver names are used
+nominatively to describe hardware compatibility. Source and full description:
+https://github.com/mckelveygreg/sansapp

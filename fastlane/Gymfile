@@ -1,0 +1,9 @@
+# `expo prebuild` generates ios/SansApp.xcworkspace (the `prep` lane runs it). Release config uses
+# the precompiled RN xcframeworks (fast); the dev-build-from-source flag is off here.
+workspace("ios/SansApp.xcworkspace")
+scheme("SansApp")
+configuration("Release")
+export_method("app-store")
+output_directory("build")
+output_name("SansApp")
+clean(true)

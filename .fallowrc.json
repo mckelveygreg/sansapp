@@ -1,0 +1,39 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": [
+    "app/**/*.{ts,tsx}",
+    "tools/*.ts",
+    "src/midi/requestAccess*.ts",
+    "src/midi/bleMidi*.ts",
+    "plugins/*.js"
+  ],
+  "ignoreDependencies": [
+    "expo",
+    "expo-router",
+    "expo-status-bar",
+    "expo-splash-screen",
+    "@expo/vector-icons",
+    "@react-navigation/bottom-tabs",
+    "react",
+    "react-dom",
+    "react-native",
+    "react-native-web",
+    "react-native-safe-area-context",
+    "react-native-screens",
+    "@expo/metro-runtime",
+    "@motiz88/react-native-midi",
+    "@shopify/react-native-skia",
+    "expo-build-properties",
+    "expo-dev-client",
+    "@expo/ngrok"
+  ],
+  "duplicates": {
+    "minOccurrences": 3
+  },
+  "rules": {
+    "unused-dependencies": "warn",
+    "unused-exports": "warn",
+    "unused-types": "warn",
+    "unused-class-members": "warn"
+  }
+}

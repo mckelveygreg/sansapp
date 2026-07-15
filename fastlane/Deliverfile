@@ -1,0 +1,8 @@
+# Metadata + screenshots upload. Text metadata lives in fastlane/metadata/, screenshots in
+# fastlane/screenshots/. Nothing here auto-submits or auto-releases — you review in App Store
+# Connect and press the button yourself.
+app_identifier("com.mckelveygreg.sansapp")
+submit_for_review(false)
+automatic_release(false)
+force(true) # skip the interactive HTML preview
+precheck_include_in_app_purchases(false)

@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # @julusian/midi is a native dev dependency (used only by tools/); ALSA headers
+      # let it install/build on Linux if no prebuild is available.
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck # framework-free core
+      - run: npm run typecheck:app # React Native surface
+      - run: npm test
+      - run: npm run fallow # codebase intelligence: dead code, cycles, duplication

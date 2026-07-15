@@ -1,0 +1,1 @@
+bass,SansAmp,Tech 21,MIDI,preamp,DI,pedal,editor,tone,cab,IR,WIDI,bass guitar

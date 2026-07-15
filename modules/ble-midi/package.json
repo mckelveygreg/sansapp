@@ -1,0 +1,6 @@
+{
+  "name": "ble-midi",
+  "version": "0.1.0",
+  "description": "Bluetooth-LE MIDI device discovery + connection for Android (no-op on iOS/web).",
+  "main": "index.ts"
+}

@@ -1,0 +1,26 @@
+{
+  "//": "Node-safe, framework-free core (protocol/device/state/ui/tools/tests). Strict, no RN/JSX.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": [
+    "src/protocol",
+    "src/device",
+    "src/dsp",
+    "src/state",
+    "src/ui",
+    "tools",
+    "test",
+    "vitest.config.ts"
+  ]
+}

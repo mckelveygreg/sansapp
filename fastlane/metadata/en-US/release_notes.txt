@@ -1,0 +1,1 @@
+First release. Full live editor, cab/IR design + direct upload, and 128-preset backup & restore over Bluetooth or USB MIDI.

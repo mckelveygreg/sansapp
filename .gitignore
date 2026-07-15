@@ -1,0 +1,53 @@
+# dependencies
+node_modules/
+
+# build / tooling output
+dist/
+coverage/
+.expo/
+*.tsbuildinfo
+
+# Expo prebuild output (CNG — regenerate with `npx expo prebuild`)
+/ios/
+/android/
+expo-env.d.ts
+
+# logs
+*.log
+npm-debug.log*
+
+# macOS
+.DS_Store
+
+# --- Tech 21 copyrighted reference material — NEVER commit ---
+# (the official Mac app lives in the parent dir; guard anyway)
+*.app/
+Tech21_*/
+
+# --- Device data — NEVER commit real presets / captures (may be personal;
+#     factory data is Tech 21's). Synthetic test fixtures are *.json instead. ---
+*.dat
+*.syx
+captures/
+test/fixtures/real/
+.fallow/
+*.wav
+
+# Python bytecode from RE scripts
+__pycache__/
+*.pyc
+
+# --- Binary-analysis / research tooling & preset bundles — never publish ---
+tools/re/
+*.p3b
+*.p3p
+
+# --- fastlane / release artifacts ---
+/build/
+*.ipa
+*.dSYM.zip
+fastlane/report.xml
+fastlane/README.md
+fastlane/test_output/
+vendor/bundle/
+.env

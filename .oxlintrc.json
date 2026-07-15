@@ -1,0 +1,39 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": { "correctness": "error", "suspicious": "warn" },
+  // A few default rules are turned off deliberately:
+  //  - no-array-sort / no-array-reverse recommend toSorted()/toReversed() (ES2023), which crash in
+  //    Hermes (React Native's engine). Shipped code must use .sort()/.reverse() — enforced by
+  //    test/hermes-safety.test.ts.
+  //  - consistent-function-scoping fights idiomatic React (small event-handler closures defined in
+  //    components); hoisting them out of the component hurts readability more than it helps.
+  "rules": {
+    "unicorn/no-array-sort": "off",
+    "unicorn/no-array-reverse": "off",
+    "unicorn/consistent-function-scoping": "off"
+  },
+  "ignorePatterns": ["node_modules/**", "dist/**", ".expo/**", "coverage/**"],
+  "overrides": [
+    {
+      "files": ["src/protocol/**", "src/device/**", "src/dsp/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              "react",
+              "react-dom",
+              "react-native",
+              "react-native/**",
+              "expo",
+              "expo/**",
+              "expo-*",
+              "@shopify/react-native-skia",
+              "zustand"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
