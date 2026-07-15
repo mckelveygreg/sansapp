@@ -46,6 +46,7 @@ export class DeviceSession {
   private readonly stateCbs = new Set<(s: ConnectionState) => void>();
   private readonly paramCbs = new Set<(e: ParamNotifyEvent) => void>();
   private readonly msgCbs = new Set<(m: PedalMessage) => void>();
+  private readonly slotCbs = new Set<(slot: number) => void>();
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private hbFails = 0;
   /** Serializes reply-expecting requests so only one round-trip is on the wire at a time. */
@@ -74,6 +75,11 @@ export class DeviceSession {
   onMessage(cb: (m: PedalMessage) => void): () => void {
     this.msgCbs.add(cb);
     return () => this.msgCbs.delete(cb);
+  }
+  /** The pedal's active preset slot, reported by the heartbeat (so we notice pedal-side changes). */
+  onSlotChange(cb: (slot: number) => void): () => void {
+    this.slotCbs.add(cb);
+    return () => this.slotCbs.delete(cb);
   }
 
   /** Run the connect handshake: hello → config/data blocks → control(5B). */
@@ -266,8 +272,12 @@ export class DeviceSession {
   private async heartbeat(): Promise<void> {
     if (this.state !== "ready" || this.pending.size > 0) return;
     try {
-      await this.readBlock(0x55, 0);
+      const settings = await this.readBlock(0x55, 0);
       this.hbFails = 0;
+      // block0[0] = the pedal's active preset slot. Report it so the app notices when the pedal
+      // changes preset on its own (footswitch). Listeners de-dupe against what they're showing.
+      const slot = settings[0];
+      if (slot !== undefined && slot < 128) for (const cb of this.slotCbs) cb(slot);
     } catch {
       if (++this.hbFails >= 2) {
         this.hbFails = 0;
