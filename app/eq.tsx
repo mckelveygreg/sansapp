@@ -63,7 +63,6 @@ export default function ParametricEq() {
       low: read("lowGain"),
       mid: read("midGain"),
       high: read("highGain"),
-      presence: values.presence ?? 64,
       freq: read("midFreq"),
       q: read("midQ"),
       lowFreq: read("lowFreq"),
