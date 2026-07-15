@@ -48,12 +48,25 @@ export function applyAmpBundle(blob: Uint8Array, ampName: string): Uint8Array {
  */
 const CHARACTER_IDX = [1, 2, 5, 6] as const;
 
-/** Best-guess amp model a blob is voiced from (character-byte match), or null if none match. */
+/**
+ * EliteControl's fallback when no template matches exactly: the Buzz byte alone tags the Para/VT
+ * "clean DI" family. Binary RE of SelectAmpMode's fallback (EliteControl.arm64 @0x1000c380c) — Buzz
+ * 62 → Para Driver, 63 → VT Bass, anything else → no highlight. This is why the factory "Para
+ * Driver"/"VT Bass DI" presets, whose full voicing is tweaked away from the model template, still
+ * light up the right amp. Collision-free: Buzz 62 only occurs in Para Driver, 63 only in VT Bass.
+ */
+const BUZZ_OFFSET = AMP_BUNDLE_OFFSETS[1]!; // 0x24
+const BUZZ_TAG: Readonly<Record<number, string>> = { 62: "Para Driver", 63: "VT Bass" };
+
+/**
+ * The amp model a blob is voiced from, mirroring EliteControl's preset→model read-back: first an
+ * exact character-byte match against the 10 templates, then the Buzz-byte fallback. Null if neither.
+ */
 export function detectAmpModel(blob: Uint8Array): string | null {
   for (const [name, vals] of Object.entries(AMP_BUNDLES)) {
     if (CHARACTER_IDX.every((i) => blob[AMP_BUNDLE_OFFSETS[i]!] === vals[i])) return name;
   }
-  return null;
+  return BUZZ_TAG[blob[BUZZ_OFFSET]!] ?? null;
 }
 
 /** The current amp-voicing bytes (at AMP_BUNDLE_OFFSETS) — for saving a custom amp. */
