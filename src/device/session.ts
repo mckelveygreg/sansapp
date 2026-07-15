@@ -47,6 +47,7 @@ export class DeviceSession {
   private readonly paramCbs = new Set<(e: ParamNotifyEvent) => void>();
   private readonly msgCbs = new Set<(m: PedalMessage) => void>();
   private readonly slotCbs = new Set<(slot: number) => void>();
+  private readonly pushedPresetCbs = new Set<(slot: number, preset: Preset) => void>();
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private hbFails = 0;
   /** Serializes reply-expecting requests so only one round-trip is on the wire at a time. */
@@ -76,10 +77,18 @@ export class DeviceSession {
     this.msgCbs.add(cb);
     return () => this.msgCbs.delete(cb);
   }
-  /** The pedal's active preset slot, reported by the heartbeat (so we notice pedal-side changes). */
+  /** Backstop: the pedal's active slot, polled by the heartbeat (catches a dropped preset push). */
   onSlotChange(cb: (slot: number) => void): () => void {
     this.slotCbs.add(cb);
     return () => this.slotCbs.delete(cb);
+  }
+  /**
+   * The pedal changed preset on its OWN (footswitch): it pushes an unsolicited `05 41` full preset
+   * dump, and this fires INSTANTLY with the decoded preset — the same mechanism EliteControl uses.
+   */
+  onPushedPreset(cb: (slot: number, preset: Preset) => void): () => void {
+    this.pushedPresetCbs.add(cb);
+    return () => this.pushedPresetCbs.delete(cb);
   }
 
   /** Run the connect handshake: hello → config/data blocks → control(5B). */
@@ -208,12 +217,25 @@ export class DeviceSession {
   }
 
   private handleIncoming(m: PedalMessage): void {
+    let matched = false;
     for (const p of this.pending) {
       if (p.match(m)) {
         clearTimeout(p.timer);
         this.pending.delete(p);
         p.resolve(m);
+        matched = true;
         break;
+      }
+    }
+    // An UNSOLICITED preset dump = the pedal changed preset by itself (footswitch). It pushes the
+    // full `05 41` dump — the same thing EliteControl reacts to — so apply it instantly. (A dump we
+    // requested matches a pending read above, so it never reaches here.)
+    if (!matched && m.kind === "presetDump" && m.checksumOk) {
+      try {
+        const preset = decodePreset(m.blob);
+        for (const cb of this.pushedPresetCbs) cb(m.slot, preset);
+      } catch {
+        // ignore a malformed push
       }
     }
     if (m.kind === "paramNotify") {

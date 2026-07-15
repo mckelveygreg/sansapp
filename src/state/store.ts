@@ -145,12 +145,17 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
   let reloading = false; // avoid overlapping reloads from repeated slot notifications
   const unsubs = [
     session.onState((s) => store.getState().setConnection(s)),
-    // The pedal's own preset changes (its footswitches) surface as its active-slot byte changing,
-    // which the heartbeat reports. When it differs from what we're showing, re-read the new preset.
+    // The pedal changes preset on its own (footswitch) → it pushes the full 05 41 dump. Apply it
+    // INSTANTLY (number + name + every knob/deep param), exactly like EliteControl. This is the
+    // primary path; the heartbeat slot-check below is only a backstop for a dropped BLE push.
+    session.onPushedPreset((slot, preset) => {
+      store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null);
+      syncDeepStores(preset);
+      store.getState().pushLog(`⤺ pedal → preset ${slot + 1}: ${preset.name.trim()}`);
+    }),
     session.onSlotChange((slot) => {
       if (slot === store.getState().slot || reloading) return;
-      reloading = true;
-      store.getState().pushLog(`⤺ pedal changed preset → ${slot + 1}`);
+      reloading = true; // dropped push? re-read the now-current preset
       void loadCurrent().finally(() => {
         reloading = false;
       });
