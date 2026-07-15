@@ -57,10 +57,12 @@ export default function Compressor() {
   const { width } = useWindowDimensions();
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
   const d = useStore(dynamicsStore, (s) => s);
-  // Threshold (0x0a) and Ratio (0x1d) are store-backed (PARAMS.comp / PARAMS.ratio), so they reflect
-  // recall/Apply and stay in sync with the main editor. The rest are send-only (dynamicsStore).
+  // Threshold (0x0a) and Ratio (0x19) are store-backed (PARAMS.comp / PARAMS.ratio). Output/Attack/
+  // Release live in dynamicsStore for the shared graph but are now read back from the preset too
+  // (synced on recall), so every knob reflects the loaded preset and shows the ghost via baseline.
   const threshold = useStore(pedalStore, (s) => s.values.comp) ?? 64;
   const ratio = useStore(pedalStore, (s) => s.values.ratio) ?? 64;
+  const baseline = useStore(pedalStore, (s) => s.baseline);
 
   // Knob onChange gives an absolute 0–127; send it live + update the shared dynamics store.
   const set = (key: "compOutput" | "compAttack" | "compRelease", param: number) => (v: number) => {
@@ -119,30 +121,35 @@ export default function Compressor() {
           <Knob
             label="Threshold"
             value={threshold}
+            ghost={baseline.comp}
             display={compThresholdLabel(threshold)}
             onChange={setThreshold}
           />
           <Knob
             label="Ratio"
             value={ratio}
+            ghost={baseline.ratio}
             display={`${compRatio(ratio).toFixed(1)}:1`}
             onChange={setRatio}
           />
           <Knob
             label="Output"
             value={d.compOutput}
+            ghost={baseline.compOutput}
             display={`${compOutputDb(d.compOutput).toFixed(0)}dB`}
             onChange={set("compOutput", COMP_PARAMS.outputGain)}
           />
           <Knob
             label="Attack"
             value={d.compAttack}
+            ghost={baseline.compAttack}
             display={`${compAttackMs(d.compAttack).toFixed(0)}ms`}
             onChange={set("compAttack", COMP_PARAMS.attack)}
           />
           <Knob
             label="Release"
             value={d.compRelease}
+            ghost={baseline.compRelease}
             display={`${compReleaseMs(d.compRelease).toFixed(0)}ms`}
             onChange={set("compRelease", COMP_PARAMS.release)}
           />

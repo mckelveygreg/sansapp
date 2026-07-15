@@ -23,8 +23,6 @@ interface DynamicsValues {
 
 interface DynamicsStore extends DynamicsValues {
   patch: (p: Partial<DynamicsValues>) => void;
-  /** Reset to defaults — called on preset recall so a previous preset's tweaks don't carry over. */
-  reset: () => void;
 }
 
 const DEFAULTS: DynamicsValues = {
@@ -41,7 +39,4 @@ const DEFAULTS: DynamicsValues = {
 export const dynamicsStore = createStore<DynamicsStore>((set) => ({
   ...DEFAULTS,
   patch: (p) => set(p),
-  // These send-only params aren't read back from the preset; resetting on recall at least keeps them
-  // from bleeding across presets (they open from defaults — see the Gate/Comp page footnotes).
-  reset: () => set(DEFAULTS),
 }));
