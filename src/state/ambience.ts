@@ -15,6 +15,8 @@ interface AmbienceValues {
 
 interface AmbienceStore extends AmbienceValues {
   patch: (p: Partial<AmbienceValues>) => void;
+  /** Reset the send-only Decay/Time on recall (Type is read back separately from the blob). */
+  reset: () => void;
 }
 
 export const ambienceStore = createStore<AmbienceStore>((set) => ({
@@ -22,4 +24,5 @@ export const ambienceStore = createStore<AmbienceStore>((set) => ({
   decay: 57,
   time: 93,
   patch: (p) => set(p),
+  reset: () => set({ decay: 57, time: 93 }),
 }));

@@ -40,6 +40,7 @@ export default function Gate() {
   const { width } = useWindowDimensions();
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
   const level = useStore(pedalStore, (s) => s.values.level) ?? 64;
+  const levelGhost = useStore(pedalStore, (s) => s.baseline.level);
   const d = useStore(dynamicsStore, (s) => s);
   // Comp threshold/ratio for the shared graph are store-backed (read from the pedal store).
   const compThreshold = useStore(pedalStore, (s) => s.values.comp) ?? 64;
@@ -78,7 +79,13 @@ export default function Gate() {
 
       <View style={{ ...card, alignItems: "center" }}>
         <Text style={sectionLabel}>MAIN LEVEL</Text>
-        <Knob label="Level" value={level} display={`${rawToPct(level)}%`} onChange={setLevel} />
+        <Knob
+          label="Level"
+          value={level}
+          ghost={levelGhost}
+          display={`${rawToPct(level)}%`}
+          onChange={setLevel}
+        />
       </View>
 
       <View style={card}>
