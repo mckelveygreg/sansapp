@@ -49,5 +49,5 @@ tools/re/
 fastlane/report.xml
 fastlane/README.md
 fastlane/test_output/
-vendor/bundle/
+vendor/
 .env
