@@ -121,8 +121,40 @@ function syncDeepStores(preset: Preset): void {
 /** Wire a DeviceSession's events into the store and return UI-facing actions. */
 export function bindSession(session: DeviceSession, store: PedalStoreApi): PedalController {
   store.getState().setConnection(session.state); // seed current state (may already be connected)
+
+  // Re-read the pedal's current preset into the store WITHOUT changing the pedal — used on connect
+  // and whenever the pedal changes preset on its own (below).
+  const loadCurrent = async (): Promise<Preset> => {
+    const preset = await session.readEditBuffer(); // 05 40 7F — read only, pedal unchanged
+    // Settings block 0, byte 0 = the pedal's active preset slot. Use it so we show the real preset
+    // number, not "current". Falls back to null if the read fails.
+    let slot: number | null = null;
+    try {
+      const settings = await session.readBlock(0x55, 0);
+      const s = settings[0];
+      if (s !== undefined && s < 128) slot = s;
+    } catch {
+      // no settings block — leave slot unknown
+    }
+    store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null);
+    syncDeepStores(preset);
+    store.getState().pushLog(`● loaded current preset${slot != null ? ` (${slot + 1})` : ""}`);
+    return preset;
+  };
+
+  let reloading = false; // avoid overlapping reloads from repeated slot notifications
   const unsubs = [
     session.onState((s) => store.getState().setConnection(s)),
+    // The pedal's own preset changes (its footswitches) surface as its active-slot byte changing,
+    // which the heartbeat reports. When it differs from what we're showing, re-read the new preset.
+    session.onSlotChange((slot) => {
+      if (slot === store.getState().slot || reloading) return;
+      reloading = true;
+      store.getState().pushLog(`⤺ pedal changed preset → ${slot + 1}`);
+      void loadCurrent().finally(() => {
+        reloading = false;
+      });
+    }),
     session.onParamNotify((e) => {
       // The red "shift" footswitch reports as a 0x4d notify — same raw id as High-EQ Freq. Never
       // treat that notify as a knob change (High Freq is set-only; it never legitimately notifies),
@@ -151,23 +183,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
       store.getState().pushLog(`▶ recalled ${slot}: ${preset.name}`);
       return preset;
     },
-    async loadCurrent() {
-      const preset = await session.readEditBuffer(); // 05 40 7F — read only, pedal unchanged
-      // Settings block 0, byte 0 = the pedal's active preset slot (found 2026-07-06). Use it so we
-      // show the real preset number, not "current". Falls back to null if the read fails.
-      let slot: number | null = null;
-      try {
-        const settings = await session.readBlock(0x55, 0);
-        const s = settings[0];
-        if (s !== undefined && s < 128) slot = s;
-      } catch {
-        // no settings block — leave slot unknown
-      }
-      store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null);
-      syncDeepStores(preset);
-      store.getState().pushLog(`● loaded current preset${slot != null ? ` (${slot + 1})` : ""}`);
-      return preset;
-    },
+    loadCurrent,
     dispose() {
       for (const u of unsubs) u();
     },
