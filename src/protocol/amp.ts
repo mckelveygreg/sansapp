@@ -39,10 +39,19 @@ export function applyAmpBundle(blob: Uint8Array, ampName: string): Uint8Array {
   return next;
 }
 
-/** Best-guess current amp model from a blob, or null if none match. */
+/**
+ * The voicing-character bytes (indices into a bundle: Buzz, Punch, Punch-Freq, Punch-Q) that
+ * identify an amp model. Pre-Amp/Drive/Presence are front-panel knobs a preset tweaks on top, and
+ * Preset Level is a per-preset output level — none are part of the model's identity, so we match on
+ * the character alone. Every factory bundle is unique on these four (British vs Shred differ ONLY
+ * here), so a loaded preset still fingerprints back to the amp it was voiced from even after edits.
+ */
+const CHARACTER_IDX = [1, 2, 5, 6] as const;
+
+/** Best-guess amp model a blob is voiced from (character-byte match), or null if none match. */
 export function detectAmpModel(blob: Uint8Array): string | null {
   for (const [name, vals] of Object.entries(AMP_BUNDLES)) {
-    if (AMP_BUNDLE_OFFSETS.every((o, i) => blob[o] === vals[i])) return name;
+    if (CHARACTER_IDX.every((i) => blob[AMP_BUNDLE_OFFSETS[i]!] === vals[i])) return name;
   }
   return null;
 }
@@ -61,7 +70,11 @@ export function applyAmpBundleBytes(blob: Uint8Array, bytes: readonly number[]):
   return next;
 }
 
-/** Does `bytes` match this blob's current amp-voicing bytes? (matches a saved custom to the state) */
+/**
+ * Does the blob's voicing exactly match `bytes` (a saved custom)? Compares the 7 voicing bytes but
+ * ignores Preset Level (the trailing offset) — that's a per-preset output level, not part of the
+ * amp's identity, so a custom stays "active" across presets with different levels.
+ */
 export function bundleMatches(blob: Uint8Array, bytes: readonly number[]): boolean {
-  return AMP_BUNDLE_OFFSETS.every((o, i) => blob[o] === bytes[i]);
+  return AMP_BUNDLE_OFFSETS.slice(0, -1).every((o, i) => blob[o] === bytes[i]);
 }

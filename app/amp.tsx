@@ -6,7 +6,7 @@
  * on the dedicated IR page. RN app surface.
  */
 import { Link } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Alert, Platform, Pressable, Text, View } from "react-native";
 import { useStore } from "zustand";
@@ -89,10 +89,18 @@ export default function Amp() {
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
   const values = useStore(pedalStore, (s) => s.values);
   const baseline = useStore(pedalStore, (s) => s.baseline);
-  const slot = useStore(pedalStore, (s) => s.slot);
   const [customs, setCustoms] = useState<AmpPreset[]>([]);
-  const [active, setActive] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+
+  // Which model/custom the live voicing matches — derived from the store, so it's correct on the
+  // first render after a preset loads AND updates the moment a knob moves. A saved custom (exact
+  // voicing) wins over the looser factory character-match it may be built on.
+  const active = useMemo<string | null>(() => {
+    const blob = new Uint8Array(0x63);
+    for (const { id } of AMP_KNOBS) blob[PARAMS[id].blobOffset] = (values[id] ?? 0) & 0x7f;
+    const custom = customs.find((c) => bundleMatches(blob, c.bytes));
+    return custom ? custom.name : detectAmpModel(blob);
+  }, [values, customs]);
 
   const set = (id: ParamId, wire: number) => (v: number) => {
     sendParam(wire, v);
@@ -108,32 +116,7 @@ export default function Amp() {
     void loadAmpPresets().then(setCustoms);
   }, []);
 
-  // Highlight the matching model/custom, re-checked on connect + on any preset change.
-  useEffect(() => {
-    if (!ready) return;
-    const session = getSession();
-    if (!session) return;
-    let live = true;
-    void session
-      .readEditBuffer()
-      .then((buf) => {
-        if (!live) return;
-        const factory = detectAmpModel(buf.raw);
-        if (factory) {
-          setActive(factory);
-          return;
-        }
-        const custom = customs.find((c) => bundleMatches(buf.raw, c.bytes));
-        setActive(custom ? custom.name : null);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [ready, slot, customs]);
-
   async function applyBundle(name: string, apply: (blob: Uint8Array) => Uint8Array) {
-    setActive(name);
     const session = getSession();
     if (!session) {
       setStatus("Connect to apply an amp.");
@@ -161,8 +144,7 @@ export default function Amp() {
       const bytes = readAmpBundle(buf.raw);
       const doSave = (name: string) => {
         const next = [...customs.filter((c) => c.name !== name), { name, bytes }];
-        setCustoms(next);
-        setActive(name);
+        setCustoms(next); // `active` re-derives from the store and lights up the new custom
         void saveAmpPresets(next);
         setStatus(`Saved "${name}".`);
       };
@@ -200,9 +182,8 @@ export default function Amp() {
         style: "destructive",
         onPress: () => {
           const next = customs.filter((c) => c.name !== name);
-          setCustoms(next);
+          setCustoms(next); // `active` re-derives; a deleted custom simply stops matching
           void saveAmpPresets(next);
-          if (active === name) setActive(null);
         },
       },
     ]);
