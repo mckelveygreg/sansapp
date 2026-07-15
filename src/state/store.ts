@@ -10,6 +10,7 @@ import { detectAmbienceType } from "../protocol/ambience";
 import { KNOB_LAYER_NOTIFY_PARAM, type ParamId } from "../protocol/params";
 import type { Preset } from "../protocol/preset";
 import { ambienceStore } from "./ambience";
+import { dynamicsStore } from "./dynamics";
 
 /** Which physical-knob layer the pedal is on: primary, or the red "SHIFT" (Red Zone) layer. */
 export type KnobLayer = "primary" | "red";
@@ -122,6 +123,10 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     async recall(slot) {
       const preset = await session.recallPreset(slot);
       store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null);
+      // Send-only deep params (gate, comp output/attack/release, ambience decay/time) aren't read
+      // back from the blob — reset them so the previous preset's tweaks don't carry over.
+      dynamicsStore.getState().reset();
+      ambienceStore.getState().reset();
       // Ambience TYPE lives in the blob (a bundle, not a ParamId) — set it from the recalled preset
       // so the Ambience page reflects it (NOT from a re-read of the stale edit buffer).
       ambienceStore.getState().patch({ type: detectAmbienceType(preset.raw) });
@@ -141,6 +146,8 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
         // no settings block — leave slot unknown
       }
       store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null);
+      dynamicsStore.getState().reset();
+      ambienceStore.getState().reset();
       ambienceStore.getState().patch({ type: detectAmbienceType(preset.raw) });
       store.getState().pushLog(`● loaded current preset${slot != null ? ` (${slot + 1})` : ""}`);
       return preset;
