@@ -47,6 +47,7 @@ const CONTROLS: ReadonlyArray<{
 export default function Chorus() {
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
   const values = useStore(pedalStore, (s) => s.values);
+  const baseline = useStore(pedalStore, (s) => s.baseline);
 
   // Send live + update the store so the editor stays in sync.
   const set = (storeId: ParamId, param: number) => (val: number) => {
@@ -80,6 +81,7 @@ export default function Chorus() {
               key={c.storeId}
               label={c.label}
               value={v}
+              ghost={baseline[c.storeId]}
               display={c.fmt(v)}
               onChange={set(c.storeId, c.param)}
             />

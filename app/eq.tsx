@@ -47,8 +47,10 @@ export default function ParametricEq() {
   // All nine controls read live from the store (synced from the loaded preset), so the screen and
   // its graph reflect the pedal's actual values and match the editor's tone chart.
   const values = useStore(pedalStore, (s) => s.values);
+  const baseline = useStore(pedalStore, (s) => s.baseline);
 
   const read = (key: string): number => values[STORE_ID[key]!] ?? 64;
+  const ghostOf = (key: string): number | undefined => baseline[STORE_ID[key]!];
   // Knob onChange gives an absolute 0–127; send it live and update the store so the editor's knobs +
   // tone chart stay in sync.
   const set = (key: string, param: number) => (val: number) => {
@@ -108,18 +110,21 @@ export default function ParametricEq() {
             <Knob
               label="Gain"
               value={read(`${b.key}Gain`)}
+              ghost={ghostOf(`${b.key}Gain`)}
               display={`${eqGainDb(read(`${b.key}Gain`)).toFixed(0)}dB`}
               onChange={set(`${b.key}Gain`, b.ids.gain)}
             />
             <Knob
               label="Freq"
               value={read(`${b.key}Freq`)}
+              ghost={ghostOf(`${b.key}Freq`)}
               display={fmtHz(b.band.freq(read(`${b.key}Freq`)))}
               onChange={set(`${b.key}Freq`, b.ids.freq)}
             />
             <Knob
               label="Q"
               value={read(`${b.key}Q`)}
+              ghost={ghostOf(`${b.key}Q`)}
               display={b.band.q(read(`${b.key}Q`)).toFixed(1)}
               onChange={set(`${b.key}Q`, b.ids.q)}
             />
