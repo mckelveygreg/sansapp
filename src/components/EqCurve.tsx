@@ -1,7 +1,8 @@
 /**
  * EqCurve — a live tone-stack graph driven by the current EQ knob values. Reuses IrGraph;
- * the curve updates as Low/Mid/High/Presence/Freq/Q change. Sizes to its actual container via
- * onLayout (it lives inside a padded Section, so a window-width guess overflowed the card).
+ * the curve updates as Low/Mid/High/Freq/Q change. (Presence is a preamp voicing control, not a
+ * measured EQ shelf, so it's not drawn here — it lives on the Amp page.) Sizes to its actual
+ * container via onLayout (it lives inside a padded Section, so a window-width guess overflowed).
  */
 import { useState } from "react";
 import { View } from "react-native";
@@ -22,7 +23,6 @@ export function EqCurve({ values }: { values: Readonly<Partial<Record<ParamId, n
       low: v("low"),
       mid: v("mid"),
       high: v("high"),
-      presence: v("presence"),
       freq: v("freq"),
       q: v("q"),
     },
