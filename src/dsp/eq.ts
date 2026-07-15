@@ -17,7 +17,9 @@ export interface EqKnobs {
   low: number;
   mid: number;
   high: number;
-  presence: number;
+  /** Presence (0..127). Optional: a fixed high-shelf voicing for the OVERALL tone chart; omit it on
+   * the Parametric EQ page, which shows only the 3 adjustable bands. */
+  presence?: number;
   /** Parametric mid centre-frequency knob (0..127). */
   freq: number;
   /** Parametric mid width knob (0..127). */
@@ -33,7 +35,7 @@ const PRESENCE_HZ = 6000;
 const NOON = 64;
 
 export function eqFilters(eq: EqKnobs, sampleRate = 44100): Biquad[] {
-  return [
+  const filters = [
     lowShelf(
       EQ_BANDS.low.freq(eq.lowFreq ?? NOON),
       sampleRate,
@@ -47,8 +49,14 @@ export function eqFilters(eq: EqKnobs, sampleRate = 44100): Biquad[] {
       EQ_BANDS.high.q(eq.highQ ?? NOON),
       eqGainDb(eq.high),
     ),
-    highShelf(PRESENCE_HZ, sampleRate, Math.SQRT1_2, eqGainDb(eq.presence)),
   ];
+  // Presence is a preamp voicing control, not one of the 3 EQ bands — only overlay it when the
+  // caller asks for the overall tone (the editor chart). The Parametric EQ page omits it, so its
+  // graph is flat when the bands are flat.
+  if (eq.presence !== undefined) {
+    filters.push(highShelf(PRESENCE_HZ, sampleRate, Math.SQRT1_2, eqGainDb(eq.presence)));
+  }
+  return filters;
 }
 
 /** Tone-stack magnitude response (dB) across `grid`, for the EQ curve display. */
