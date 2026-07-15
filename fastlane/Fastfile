@@ -19,7 +19,7 @@ platform :ios do
   lane :register do
     produce(
       app_identifier: "com.mckelveygreg.sansapp",
-      app_name: "SansApp",
+      app_name: "SansApp — PBDR Elite Editor",
       language: "English",
       sku: "com.mckelveygreg.sansapp",
     )
