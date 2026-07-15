@@ -1,23 +1,35 @@
 /**
- * IR page — one place for cabs. Pull the pedal's own factory + user IRs (05 69), show their real
- * curves, and select any of them live (0x0E). Then design a custom IR, three combinable ways:
- *   • Filter-only: high/low-pass, shelves, tilt, notch — the filter IS the IR.
- *   • Cab-based: take a pulled cab (or a loaded WAV), optionally blend a second, and bake the
- *     filter (e.g. a high-pass) INTO it.
- * The point of the last one: a real cab with a built-in high-pass, so you can drop the HPF pedal.
+ * IR page — impulse responses, two layers:
  *
- * Upload the result straight to a user slot (7/8) over MIDI — the IR encoding is verified
- * (src/protocol/irEncode), so no EliteControl / WAV round-trip is needed. We never ship Tech 21's
- * IRs: every curve here is read off the user's own pedal.
+ *   1. IMPULSE RESPONSE (always on): pull the pedal's own 8 cabs (05 69), then drag the microphone
+ *      up/down the stack to blend between them LIVE (the continuous 0x0E morph) — like EliteControl.
+ *      The graph shows the blended response; every faint curve is one of your pulled cabs.
+ *   2. CRAFT A CUSTOM IR (optional Studio): take a pulled cab or a loaded WAV, optionally blend a
+ *      second and bake a filter (e.g. a high-pass) into it, then UPLOAD it to a user slot (7/8) over
+ *      MIDI. This is the part you're crafting, so it needs an upload; the encoding is verified
+ *      (src/protocol/irEncode) — no EliteControl / WAV round-trip.
+ *
+ * We never ship Tech 21's IRs: every curve here is read off the user's own pedal.
  */
-import { useMemo, useState } from "react";
-import { Pressable, ScrollView, Switch, Text, useWindowDimensions, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { useMemo, useRef, useState } from "react";
+import {
+  PanResponder,
+  Platform,
+  Pressable,
+  Switch,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import * as Haptics from "expo-haptics";
+import { useStore } from "zustand";
 import { IrGraph } from "../src/components/IrGraph";
 import type { IrCurve } from "../src/components/IrGraph";
+import { KnobScroll } from "../src/components/KnobScroll";
 import { radius, theme } from "../src/components/theme";
 import { blendIr, cascadeIr, generateIr, type IrGenKind } from "../src/dsp/generators";
 import { frequencyResponse, logGrid } from "../src/dsp/ir";
-import { useStore } from "zustand";
 import { uploadCustomIr } from "../src/midi/bundleIo";
 import { pickFileBytes, saveAndShare } from "../src/midi/exportFile";
 import { USER_IR_SLOTS, readIrSlot } from "../src/midi/irRead";
@@ -29,6 +41,7 @@ import {
   USER_IR_MODE,
   gainDbToValue,
 } from "../src/protocol/params";
+import { uiStore } from "../src/state/ui";
 import { decodeWav, encodeWav, floatToPcm } from "../src/protocol/wav";
 
 interface TypeDef {
@@ -48,22 +61,29 @@ const TYPES: readonly TypeDef[] = [
 ];
 const Q_STEPS = [0.5, Math.SQRT1_2, 1, 2] as const;
 const GRID = logGrid(30, 18000, 150);
+const FLAT_DB: readonly number[] = GRID.map(() => 0);
 const TAPS = 1000;
 
-// The pedal exposes 8 IR slots (bank 0x02, b=0..7) — HARDWARE-CONFIRMED 2026-07-15 (see irRead.ts):
-// 1–6 are FACTORY cabs, 7–8 are the USER slots (the only place custom IRs may be uploaded, each with
-// its own gain). Before a pull we don't know a slot's name, so we label it generically; the pulled
-// IR's own stored name (e.g. "SA_SPKR") wins once read.
+// The pedal exposes 8 IR slots (bank 0x02) — 1–6 factory, 7–8 the writable USER slots. Its live
+// IR-select (0x0E) is CONTINUOUS: 0 = Off (flat), then it morphs between neighbouring cabs up to
+// slot 8 at 127. So slot n sits at n·16 (clamped to 127), and values between blend two cabs.
 const IR_SLOTS = 8;
-// 1–6 are fixed factory cabs; the two writable slots are USER_IR_SLOTS (7/8). Note: 7/8 are NOT empty
-// "user" scratch — most factory presets point their IR select at slot 7, so many presets share a cab
-// there. Overwriting a writable slot changes the cab for every preset that uses it.
 const slotFallback = (pos: number) => `IR ${pos}`;
+const slotToValue = (pos: number) => Math.min(127, pos * 16);
+
+const haptic = (fn: () => Promise<unknown>) => {
+  if (Platform.OS !== "web") void fn().catch(() => {});
+};
 
 interface Cab {
   ir: Float64Array;
   rate: number;
   name: string;
+}
+interface Pulled {
+  name: string;
+  db: number[];
+  ir: Float64Array;
 }
 
 function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
@@ -130,45 +150,170 @@ function Stepper({
   );
 }
 
+const ROW_H = 40;
+const MIC_ROWS = IR_SLOTS + 1; // Off + 1..8
+
+/**
+ * The IMPULSE RESPONSE stack: rows Off/1..8 with a microphone you drag to blend between cabs live.
+ * `value` is the 0x0E wire value (0..127); dragging maps the mic's Y to it and calls `onChange` so
+ * the caller sends it live. Tapping a row snaps to that cab.
+ */
+function MicStack({
+  names,
+  value,
+  onChange,
+  onSelect,
+}: {
+  names: Record<number, string>;
+  value: number;
+  onChange: (v: number) => void;
+  onSelect: (pos: number) => void;
+}) {
+  const H = MIC_ROWS * ROW_H;
+  const startVal = useRef(value);
+  const valRef = useRef(value);
+  valRef.current = value;
+  const clampV = (v: number) => Math.max(0, Math.min(127, v));
+  // rowFloat (0=Off … 8=slot 8) ↔ y (row centre) ↔ 0x0E value.
+  const valToY = (v: number) => (v / 16) * ROW_H + ROW_H / 2;
+  const yToVal = (y: number) =>
+    clampV(Math.round(Math.max(0, Math.min(8, (y - ROW_H / 2) / ROW_H)) * 16));
+
+  const responder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onShouldBlockNativeResponder: () => true,
+      onPanResponderGrant: () => {
+        startVal.current = valRef.current;
+        uiStore.getState().setAdjusting(true);
+        haptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
+      },
+      onPanResponderMove: (_e, g) => {
+        const next = yToVal(valToY(startVal.current) + g.dy);
+        if (next !== valRef.current) {
+          if (Math.round(next / 16) !== Math.round(valRef.current / 16)) {
+            haptic(() => Haptics.selectionAsync());
+          }
+          onChange(next);
+        }
+      },
+      onPanResponderRelease: () => uiStore.getState().setAdjusting(false),
+      onPanResponderTerminate: () => uiStore.getState().setAdjusting(false),
+    }),
+  ).current;
+
+  const micY = valToY(value);
+  const nearest = Math.round(value / 16);
+
+  return (
+    <View style={{ flexDirection: "row" }}>
+      {/* Left rail: a guide line + the draggable mic. */}
+      <View {...responder.panHandlers} style={{ width: 46, height: H }}>
+        <View
+          style={{
+            position: "absolute",
+            left: 22,
+            top: 0,
+            width: 2,
+            height: H,
+            backgroundColor: theme.panelEdge,
+          }}
+        />
+        <View
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: micY - 1,
+            height: 2,
+            backgroundColor: theme.accent,
+            opacity: 0.5,
+          }}
+        />
+        <View
+          style={{
+            position: "absolute",
+            left: 6,
+            top: micY - 15,
+            width: 30,
+            height: 30,
+            borderRadius: 15,
+            backgroundColor: theme.accent,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Ionicons name="mic" size={18} color="#fff" />
+        </View>
+      </View>
+      {/* Rows */}
+      <View style={{ flex: 1 }}>
+        {Array.from({ length: MIC_ROWS }, (_, pos) => {
+          const label = pos === 0 ? "Off — Flat Response" : (names[pos] ?? slotFallback(pos));
+          const active = nearest === pos;
+          return (
+            <Pressable
+              key={pos}
+              onPress={() => onSelect(pos)}
+              style={{
+                height: ROW_H,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 10,
+                paddingHorizontal: 10,
+                borderBottomWidth: 1,
+                borderBottomColor: theme.panelEdge,
+                backgroundColor: active ? `${theme.accent}22` : "transparent",
+              }}
+            >
+              <Text style={{ color: theme.textDim, width: 22, fontVariant: ["tabular-nums"] }}>
+                {pos === 0 ? "—" : pos}
+              </Text>
+              <Text style={{ color: active ? theme.text : theme.textDim, flex: 1, fontSize: 14 }}>
+                {label}
+              </Text>
+              {pos >= 7 ? (
+                <Text style={{ color: theme.amber, fontSize: 10, letterSpacing: 1 }}>USER</Text>
+              ) : null}
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+/** Linear blend of two dB curves (either may be null = not pulled). */
+function blendDb(
+  a: readonly number[] | null,
+  b: readonly number[] | null,
+  f: number,
+): number[] | null {
+  if (!a && !b) return null;
+  if (!a) return b!.slice();
+  if (!b) return a.slice();
+  return a.map((v, i) => v * (1 - f) + b[i]! * f);
+}
+
 export default function IrStudio() {
   const { width } = useWindowDimensions();
-  const [kind, setKind] = useState<IrGenKind>("highpass");
-  const [fc, setFc] = useState(80);
-  const [gainDb, setGainDb] = useState(6);
-  const [qi, setQi] = useState(1);
-  const [stages, setStages] = useState(2);
-  const [cabA, setCabA] = useState<Cab | null>(null);
-  const [cabB, setCabB] = useState<Cab | null>(null);
-  const [blend, setBlend] = useState(50); // % toward cab B
-  const [applyFilter, setApplyFilter] = useState(true);
-  const [status, setStatus] = useState<string | null>(null);
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
-  const [pulled, setPulled] = useState<
-    Record<number, { name: string; db: number[]; ir: Float64Array }>
-  >({});
+  const [status, setStatus] = useState<string | null>(null);
+
+  // --- IMPULSE RESPONSE (live blend) ---
+  const [pulled, setPulled] = useState<Record<number, Pulled>>({});
   const [pulling, setPulling] = useState(false);
-  const [browse, setBrowse] = useState<number | null>(null);
-  const [uploadSlot, setUploadSlot] = useState<7 | 8>(7);
-  // Per-user-slot live gain (0x2a/0x2b), tracked in dB (−12..+12; ±12 confirmed). Sent as the 0..127
-  // wire value. Local state — the pedal doesn't read it back cheaply.
-  const [gainDbs, setGainDbs] = useState<Record<number, number>>({ 7: 0, 8: 0 });
-  const setGain = (slot: 7 | 8, db: number) => {
-    const clamped = Math.max(-USER_IR_GAIN_DB_RANGE, Math.min(USER_IR_GAIN_DB_RANGE, db));
-    setGainDbs((g) => ({ ...g, [slot]: clamped }));
-    sendParam(USER_IR_GAIN[slot]!, gainDbToValue(clamped));
-  };
-  // Per-preset "IR Mode" toggle (0x28/0x29): ON = this preset uses the slot's custom IR, OFF = its
-  // normal IR. Live param, saved into the preset on the pedal's next save.
-  const [modes, setModes] = useState<Record<number, boolean>>({ 7: false, 8: false });
-  const setMode = (slot: 7 | 8, on: boolean) => {
-    setModes((m) => ({ ...m, [slot]: on }));
-    sendParam(USER_IR_MODE[slot]!, on ? 1 : 0);
-  };
+  const [pullProg, setPullProg] = useState<{ done: number; total: number } | null>(null);
+  const [morph, setMorph] = useState(16); // 0x0E value; 16 = slot 1. Not sent until the user acts.
 
   // The pedal plays its 2400-sample IRs at a fixed rate we haven't pinned exactly (calibration TODO);
-  // use a nominal rate so the pulled curve's SHAPE is right (x-axis Hz labels are approximate).
+  // a nominal rate keeps the curve SHAPE right (x-axis Hz labels are approximate).
   const PEDAL_IR_RATE = 88200;
-  // Pull every cab off the pedal (05 69) and compute its real curve — no shipped Tech 21 IRs.
+  const curveOf = (ir: Float64Array) =>
+    frequencyResponse(ir, GRID, { sampleRate: PEDAL_IR_RATE, normalizeBand: [700, 1400] });
+
   async function pullFromPedal() {
     const session = getSession();
     if (!session) {
@@ -176,82 +321,107 @@ export default function IrStudio() {
       return;
     }
     setPulling(true);
+    setPullProg({ done: 0, total: IR_SLOTS });
     setStatus("Reading IRs from the pedal…");
-    const next: Record<number, { name: string; db: number[]; ir: Float64Array }> = {};
+    const next: Record<number, Pulled> = {};
     for (let pos = 1; pos <= IR_SLOTS; pos++) {
       const ir = await readIrSlot(session, pos);
       if (ir) {
         const samples = Float64Array.from(ir.samples);
-        const db = frequencyResponse(samples, GRID, {
-          sampleRate: PEDAL_IR_RATE,
-          normalizeBand: [700, 1400],
-        });
-        next[pos] = { name: ir.name || slotFallback(pos), ir: samples, db };
+        next[pos] = { name: ir.name || slotFallback(pos), ir: samples, db: curveOf(samples) };
       }
+      setPullProg({ done: pos, total: IR_SLOTS });
     }
     setPulled(next);
     setPulling(false);
+    setPullProg(null);
     const n = Object.keys(next).length;
     setStatus(
       n ? `Pulled ${n} IR${n > 1 ? "s" : ""} from the pedal.` : "No IRs read (check the slot map).",
     );
   }
 
-  // Select a cab live on the pedal (IR-select 0x0E, continuous: pos·16, 8→127). If we've pulled that
-  // slot's IR, also load it as the design source so you can high-pass/blend it and re-upload.
-  function selectSlot(pos: number) {
-    sendParam(0x0e, Math.min(127, pos * 16));
-    setBrowse(pos);
-    const hit = pulled[pos];
-    if (pos === 0) {
-      setStatus("Selected Off (flat).");
-      return;
-    }
-    if (hit) {
-      setCabA({ ir: hit.ir, rate: PEDAL_IR_RATE, name: hit.name });
-      setCabB(null);
-      setStatus(
-        `Selected "${hit.name}" — loaded as the cab source below. High-pass it, then upload.`,
-      );
-    } else {
-      setStatus(`Selected slot ${pos}. Pull from pedal to load it as a design source.`);
-    }
+  // Live blend: send 0x0E as the mic moves. Off (0) = flat.
+  function setBlendValue(v: number) {
+    setMorph(v);
+    sendParam(0x0e, v);
   }
+  function selectSlot(pos: number) {
+    setBlendValue(slotToValue(pos));
+    const hit = pulled[pos];
+    setStatus(pos === 0 ? "Off (flat)." : hit ? `Cab ${pos}: ${hit.name}` : `Slot ${pos}.`);
+  }
+
+  // The blended curve at the current mic position (interpolated between the two neighbouring cabs).
+  const stackDb = useMemo(() => {
+    if (morph <= 0) return FLAT_DB.slice();
+    const rf = morph / 16;
+    const lo = Math.floor(rf);
+    const hi = Math.min(8, Math.ceil(rf));
+    const dbAt = (pos: number) => (pos <= 0 ? FLAT_DB : (pulled[pos]?.db ?? null));
+    return blendDb(dbAt(lo), dbAt(hi), rf - lo);
+  }, [morph, pulled]);
+
+  const stackCurves: IrCurve[] = [
+    ...Object.values(pulled).map((p) => ({
+      db: p.db,
+      color: theme.textDim,
+      width: 1,
+      opacity: 0.22,
+    })),
+    ...(stackDb ? [{ db: stackDb, color: theme.accent, width: 2.6 }] : []),
+  ];
+
+  // --- CRAFT A CUSTOM IR (Studio) ---
+  const [showStudio, setShowStudio] = useState(false);
+  const [kind, setKind] = useState<IrGenKind>("highpass");
+  const [filterOn, setFilterOn] = useState(true);
+  const [fc, setFc] = useState(80);
+  const [gainDb, setGainDb] = useState(6);
+  const [qi, setQi] = useState(1);
+  const [stages, setStages] = useState(2);
+  const [cabA, setCabA] = useState<Cab | null>(null);
+  const [cabB, setCabB] = useState<Cab | null>(null);
+  const [blend, setBlend] = useState(50);
+  const [uploadSlot, setUploadSlot] = useState<7 | 8>(7);
+  const [gainDbs, setGainDbs] = useState<Record<number, number>>({ 7: 0, 8: 0 });
+  const [modes, setModes] = useState<Record<number, boolean>>({ 7: false, 8: false });
+
+  const setGain = (slot: 7 | 8, db: number) => {
+    const clamped = Math.max(-USER_IR_GAIN_DB_RANGE, Math.min(USER_IR_GAIN_DB_RANGE, db));
+    setGainDbs((g) => ({ ...g, [slot]: clamped }));
+    sendParam(USER_IR_GAIN[slot]!, gainDbToValue(clamped));
+  };
+  const setMode = (slot: 7 | 8, on: boolean) => {
+    setModes((m) => ({ ...m, [slot]: on }));
+    sendParam(USER_IR_MODE[slot]!, on ? 1 : 0);
+  };
 
   const def = TYPES.find((t) => t.kind === kind)!;
   const q = Q_STEPS[qi]!;
-  // Design (and plot) the filter at the loaded cab's sample rate — factory cabs are 48 kHz, so a
-  // filter designed at the 44.1 kHz default would land its corner ~8.8% high once baked into a
-  // 48 kHz IR. No cab loaded → filter-only export defaults to 44.1 kHz.
   const rate = cabA?.rate ?? 44100;
-
   const filterIr = useMemo(
     () => generateIr(kind, { fc, gainDb, q, stages, taps: TAPS, sampleRate: rate }),
     [kind, fc, gainDb, q, stages, rate],
   );
-
-  // Result = [cab A, or A⇄B blend, or (no cab) the filter itself] with the filter optionally baked in.
-  const result = useMemo(() => {
+  const craft = useMemo(() => {
     let base: Float64Array | null = null;
     if (cabA && cabB) base = blendIr(cabA.ir, cabB.ir, blend / 100);
     else if (cabA) base = cabA.ir;
-    if (!base) return filterIr; // filter-only mode
-    return applyFilter ? cascadeIr(base, filterIr, TAPS) : Float64Array.from(base);
-  }, [cabA, cabB, blend, applyFilter, filterIr]);
-
-  const db = useMemo(
-    () => frequencyResponse(result, GRID, { sampleRate: rate, normalizeBand: [700, 1400] }),
-    [result, rate],
+    if (!base) {
+      if (!filterOn) {
+        const flat = new Float64Array(TAPS);
+        flat[0] = 1; // delta = flat response (no cab, no filter)
+        return flat;
+      }
+      return filterIr;
+    }
+    return filterOn ? cascadeIr(base, filterIr, TAPS) : Float64Array.from(base);
+  }, [cabA, cabB, blend, filterOn, filterIr]);
+  const craftDb = useMemo(
+    () => frequencyResponse(craft, GRID, { sampleRate: rate, normalizeBand: [700, 1400] }),
+    [craft, rate],
   );
-  // Amber = the IR you're designing. If a pulled pedal cab is selected, overlay its real curve (dim).
-  const browsed = browse != null ? pulled[browse] : undefined;
-  const curves: IrCurve[] = browsed
-    ? [
-        { db: browsed.db, color: theme.textDim, width: 1.6 },
-        { db, color: theme.amber, width: 2.6 },
-      ]
-    : [{ db, color: theme.amber, width: 2.6 }];
-  const graphW = width - 32 - 18;
 
   async function loadCab(which: "A" | "B") {
     try {
@@ -267,25 +437,33 @@ export default function IrStudio() {
     }
   }
 
+  function useCabFromPedal(pos: number) {
+    const hit = pulled[pos];
+    if (!hit) {
+      setStatus(`Pull the pedal first to load slot ${pos}.`);
+      return;
+    }
+    setCabA({ ir: hit.ir, rate: PEDAL_IR_RATE, name: hit.name });
+    setCabB(null);
+    setShowStudio(true);
+    setStatus(`Loaded "${hit.name}" into the Studio — bake a filter, then upload.`);
+  }
+
   function irName() {
     const tag = cabA ? cabA.name : kind;
-    const suffix = applyFilter || !cabA ? `-${kind}${fc}Hz` : "";
+    const suffix = filterOn || !cabA ? `-${kind}${fc}Hz` : "";
     return `SansApp-${tag}${suffix}`.replace(/\s+/g, "_");
   }
 
   async function onExport() {
     try {
-      await saveAndShare(`${irName()}.wav`, encodeWav(floatToPcm(result), rate), "audio/wav");
+      await saveAndShare(`${irName()}.wav`, encodeWav(floatToPcm(craft), rate), "audio/wav");
       setStatus(`Exported ${irName()}.wav`);
     } catch (e) {
       setStatus(e instanceof Error ? e.message : String(e));
     }
   }
 
-  // Generate + upload this IR straight to the pedal over MIDI — no EliteControl, no WAV round-trip.
-  // Unlocked by implementing the IR encoding + wire checksum (src/protocol/irEncode). Hardware-verified:
-  // the upload lands in the chosen library slot (addressed in the frame header). Uploading OVERWRITES
-  // that slot's IR.
   async function onUpload() {
     const session = getSession();
     if (!session) {
@@ -294,11 +472,21 @@ export default function IrStudio() {
     }
     try {
       setStatus(`Uploading IR to slot ${uploadSlot}…`);
-      await uploadCustomIr(session, result, irName().slice(0, 32), {
-        slot: uploadSlot,
-        save: true,
-      });
-      setStatus(`Uploaded "${irName()}" → IR slot ${uploadSlot} (saved).`);
+      await uploadCustomIr(session, craft, irName().slice(0, 32), { slot: uploadSlot, save: true });
+      // Refresh the uploaded slot so the stack shows its new name + curve immediately.
+      const fresh = await readIrSlot(session, uploadSlot);
+      if (fresh) {
+        const samples = Float64Array.from(fresh.samples);
+        setPulled((p) => ({
+          ...p,
+          [uploadSlot]: {
+            name: fresh.name || slotFallback(uploadSlot),
+            ir: samples,
+            db: curveOf(samples),
+          },
+        }));
+      }
+      setStatus(`Uploaded "${irName()}" → slot ${uploadSlot} (saved & refreshed).`);
     } catch (e) {
       setStatus(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -306,31 +494,25 @@ export default function IrStudio() {
 
   const stepFc = (d: number) =>
     setFc((v) => Math.round(Math.max(30, Math.min(8000, v * 2 ** (d / 6)))));
+  const graphW = width - 32 - 18;
+  const panel = {
+    backgroundColor: theme.panel,
+    borderColor: theme.panelEdge,
+    borderWidth: 1,
+    borderRadius: radius,
+    padding: 14,
+    gap: 12,
+  } as const;
 
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 14 }}>
-      <Text style={{ color: theme.textDim, fontSize: 13, lineHeight: 19 }}>
-        Pull your pedal's own cabs to browse and audition them, or design a new IR below — bake a
-        high-pass into a cab, blend two cabs, or build a filter from scratch — then upload it to one
-        of the pedal's IR slots (7/8 writable) over MIDI. The graph is the real response.
-      </Text>
-
-      {/* CABS — pulled from the pedal (we never ship Tech 21's IRs) */}
-      <View
-        style={{
-          backgroundColor: theme.panel,
-          borderColor: theme.panelEdge,
-          borderWidth: 1,
-          borderRadius: radius,
-          padding: 14,
-          gap: 10,
-        }}
-      >
+    <KnobScroll style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 14 }}>
+      {/* IMPULSE RESPONSE — live blend */}
+      <View style={panel}>
         <View
           style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
         >
           <Text style={{ color: theme.text, fontWeight: "700", letterSpacing: 0.5 }}>
-            CABS ON PEDAL
+            IMPULSE RESPONSE
           </Text>
           <Chip
             label={
@@ -342,236 +524,315 @@ export default function IrStudio() {
             }}
           />
         </View>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          <Chip label="Off" active={browse === 0} onPress={() => selectSlot(0)} />
-          {Array.from({ length: IR_SLOTS }, (_, i) => i + 1).map((pos) => (
-            <Chip
-              key={pos}
-              label={pulled[pos]?.name ?? slotFallback(pos)}
-              active={browse === pos}
-              onPress={() => selectSlot(pos)}
-            />
-          ))}
-        </View>
-        <Text style={{ color: theme.textDim, fontSize: 12, lineHeight: 18 }}>
-          {ready
-            ? Object.keys(pulled).length
-              ? "Tap a cab to load it on the pedal — its real curve overlays the graph below, and it becomes the design source."
-              : "Pull to read each cab off the pedal and show its real curve (nothing is shipped with the app). Tap a slot to select it live."
-            : "Connect to the pedal to pull and audition its cabs."}
-        </Text>
-      </View>
 
-      {/* CAB SOURCE */}
-      <View
-        style={{
-          backgroundColor: theme.panel,
-          borderColor: theme.panelEdge,
-          borderWidth: 1,
-          borderRadius: radius,
-          padding: 14,
-          gap: 10,
-        }}
-      >
-        <Text style={{ color: theme.text, fontWeight: "700", letterSpacing: 0.5 }}>CAB SOURCE</Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-          <Chip
-            label={cabA ? `Cab: ${cabA.name}` : "Load cab…"}
-            active={!!cabA}
-            onPress={() => void loadCab("A")}
-          />
-          <Chip
-            label={cabB ? `2nd: ${cabB.name}` : "Load 2nd cab…"}
-            active={!!cabB}
-            onPress={() => void loadCab("B")}
-          />
-          {cabA || cabB ? (
-            <Chip
-              label="Clear"
-              active={false}
-              onPress={() => {
-                setCabA(null);
-                setCabB(null);
+        {pulling ? (
+          <View style={{ gap: 4 }}>
+            <View
+              style={{
+                height: 6,
+                backgroundColor: theme.panelEdge,
+                borderRadius: 3,
+                overflow: "hidden",
               }}
-            />
-          ) : null}
-        </View>
-        {cabA && cabB ? (
-          <Stepper
-            label="BLEND A↔B"
-            value={`${100 - blend}% / ${blend}%`}
-            onStep={(d) => setBlend((v) => Math.max(0, Math.min(100, v + d * 10)))}
-          />
-        ) : null}
-        {cabA ? (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Switch
-              value={applyFilter}
-              onValueChange={setApplyFilter}
-              trackColor={{ false: theme.panelEdge, true: theme.accent }}
-              thumbColor="#fff"
-            />
-            <Text style={{ color: theme.textDim, fontSize: 12 }}>
-              Bake the filter below into the cab
+            >
+              <View
+                style={{
+                  height: 6,
+                  width: `${pullProg ? Math.round((pullProg.done / pullProg.total) * 100) : 0}%`,
+                  backgroundColor: theme.accent,
+                }}
+              />
+            </View>
+            <Text style={{ color: theme.textDim, fontSize: 11 }}>
+              Reading cab {pullProg?.done ?? 0} of {pullProg?.total ?? IR_SLOTS}…
             </Text>
           </View>
+        ) : null}
+
+        {Object.keys(pulled).length ? (
+          <Text style={{ color: theme.textDim, fontSize: 12, lineHeight: 18 }}>
+            Drag the mic to blend between cabs — it plays live on the pedal. Tap a row to jump to
+            it.
+          </Text>
         ) : (
-          <Text style={{ color: theme.textDim, fontSize: 12 }}>
-            No cab loaded — the filter below is the IR. Load a cab to high-pass/blend it instead.
+          <Text style={{ color: theme.textDim, fontSize: 12, lineHeight: 18 }}>
+            {ready
+              ? "Pull to read each cab off the pedal (nothing is shipped with the app), then drag the mic to blend."
+              : "Connect to the pedal to pull and blend its cabs."}
           </Text>
         )}
-      </View>
 
-      {/* GRAPH */}
-      <View
-        style={{
-          backgroundColor: theme.bg,
-          borderColor: theme.panelEdge,
-          borderWidth: 1,
-          borderRadius: radius,
-          padding: 8,
-        }}
-      >
-        <IrGraph grid={GRID} curves={curves} width={graphW} height={190} dbTop={18} dbBot={-42} />
-      </View>
-
-      {/* FILTER */}
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {TYPES.map((t) => (
-          <Chip
-            key={t.kind}
-            label={t.label}
-            active={t.kind === kind}
-            onPress={() => setKind(t.kind)}
-          />
-        ))}
-      </View>
-      <View
-        style={{
-          backgroundColor: theme.panel,
-          borderColor: theme.panelEdge,
-          borderWidth: 1,
-          borderRadius: radius,
-          padding: 14,
-          gap: 14,
-        }}
-      >
-        <Stepper label="FREQUENCY" value={`${fc} Hz`} onStep={stepFc} />
-        {def.gain ? (
-          <Stepper
-            label="GAIN"
-            value={`${gainDb > 0 ? "+" : ""}${gainDb} dB`}
-            onStep={(d) => setGainDb((v) => Math.max(-12, Math.min(12, v + d)))}
-          />
-        ) : null}
-        {def.q ? (
-          <View
-            style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
-          >
-            <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1 }}>Q</Text>
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              {Q_STEPS.map((qq, i) => (
-                <Chip key={qq} label={qq.toFixed(1)} active={i === qi} onPress={() => setQi(i)} />
-              ))}
-            </View>
-          </View>
-        ) : null}
-        {def.slope ? (
-          <View
-            style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
-          >
-            <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1 }}>SLOPE</Text>
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              <Chip label="12 dB/oct" active={stages === 1} onPress={() => setStages(1)} />
-              <Chip label="24 dB/oct" active={stages === 2} onPress={() => setStages(2)} />
-            </View>
-          </View>
-        ) : null}
-      </View>
-
-      {/* Custom IRs only go to the two WRITABLE slots (7/8); 1–6 are fixed factory cabs. Each writable
-          slot has its own live gain (0x2a/0x2b), shown in dB (±12, confirmed). */}
-      <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-        <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1 }}>UPLOAD TO</Text>
-        {USER_IR_SLOTS.map((s) => (
-          <Chip
-            key={s}
-            label={pulled[s]?.name ? `${s}: ${pulled[s]!.name}` : `Slot ${s}`}
-            active={uploadSlot === s}
-            onPress={() => setUploadSlot(s)}
-          />
-        ))}
-      </View>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1 }}>
-          USE SLOT {uploadSlot} (this preset)
-        </Text>
-        <Switch
-          value={modes[uploadSlot] ?? false}
-          onValueChange={(v) => setMode(uploadSlot, v)}
-          trackColor={{ false: theme.panelEdge, true: theme.accent }}
-          thumbColor="#fff"
+        <MicStack
+          names={Object.fromEntries(Object.entries(pulled).map(([k, v]) => [k, v.name]))}
+          value={morph}
+          onChange={setBlendValue}
+          onSelect={selectSlot}
         />
-      </View>
-      <Stepper
-        label={`SLOT ${uploadSlot} GAIN`}
-        value={`${(gainDbs[uploadSlot] ?? 0) > 0 ? "+" : ""}${(gainDbs[uploadSlot] ?? 0).toFixed(1)} dB`}
-        onStep={(d) => setGain(uploadSlot, (gainDbs[uploadSlot] ?? 0) + d)}
-      />
-      <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
-        Slots 7 & 8 hold custom cabs shared across presets; the toggle above is per-preset — off
-        uses this preset's normal IR, on uses the custom cab. Uploading replaces the shared cab
-        data.
-      </Text>
-      <View style={{ flexDirection: "row", gap: 10 }}>
-        <Pressable
-          onPress={onUpload}
+
+        <View
           style={{
-            flex: 1,
-            backgroundColor: theme.accent,
-            padding: 14,
-            borderRadius: radius,
-            alignItems: "center",
-          }}
-        >
-          <Text style={{ color: "#fff", fontWeight: "700" }}>
-            Upload to pedal ▸ slot {uploadSlot}
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={onExport}
-          style={{
-            flex: 1,
-            backgroundColor: theme.panel,
+            backgroundColor: theme.bg,
             borderColor: theme.panelEdge,
             borderWidth: 1,
-            padding: 14,
             borderRadius: radius,
-            alignItems: "center",
+            padding: 8,
           }}
         >
-          <Text style={{ color: theme.text, fontWeight: "700" }}>Export .wav</Text>
-        </Pressable>
+          <IrGraph
+            grid={GRID}
+            curves={stackCurves}
+            width={graphW}
+            height={190}
+            dbTop={18}
+            dbBot={-42}
+          />
+        </View>
       </View>
-      {status ? (
-        <Text style={{ color: theme.textDim, fontSize: 12, textAlign: "center" }}>{status}</Text>
-      ) : null}
 
-      <View
+      {/* CRAFT A CUSTOM IR — optional Studio */}
+      <Pressable
+        onPress={() => setShowStudio((s) => !s)}
         style={{
-          backgroundColor: theme.panel,
-          borderColor: theme.amber,
-          borderWidth: 1,
-          borderRadius: radius,
-          padding: 12,
+          ...panel,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
         }}
       >
-        <Text style={{ color: theme.textDim, fontSize: 12, lineHeight: 18 }}>
-          {TAPS}-tap IR. To HPF one of your cabs: Pull from pedal → tap the cab (loads it as the
-          source) → High-pass → set the frequency → pick a target slot → Upload. Export .wav if
-          you'd rather keep a copy. Below ~45 Hz the tap budget limits steepness.
-        </Text>
-      </View>
-    </ScrollView>
+        <View>
+          <Text style={{ color: theme.text, fontWeight: "700", letterSpacing: 0.5 }}>
+            CRAFT A CUSTOM IR
+          </Text>
+          <Text style={{ color: theme.textDim, fontSize: 12, marginTop: 2 }}>
+            Bake a filter into a cab, then upload to slot 7/8
+          </Text>
+        </View>
+        <Ionicons
+          name={showStudio ? "chevron-up" : "chevron-down"}
+          size={20}
+          color={theme.textDim}
+        />
+      </Pressable>
+
+      {showStudio ? (
+        <>
+          {/* CAB SOURCE */}
+          <View style={panel}>
+            <Text style={{ color: theme.text, fontWeight: "700", letterSpacing: 0.5 }}>
+              CAB SOURCE
+            </Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+              <Chip
+                label={cabA ? `Cab: ${cabA.name}` : "Load cab…"}
+                active={!!cabA}
+                onPress={() => void loadCab("A")}
+              />
+              <Chip
+                label={cabB ? `2nd: ${cabB.name}` : "Load 2nd cab…"}
+                active={!!cabB}
+                onPress={() => void loadCab("B")}
+              />
+              {cabA || cabB ? (
+                <Chip
+                  label="Clear"
+                  active={false}
+                  onPress={() => {
+                    setCabA(null);
+                    setCabB(null);
+                  }}
+                />
+              ) : null}
+            </View>
+            {Object.keys(pulled).length ? (
+              <View
+                style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}
+              >
+                <Text style={{ color: theme.textDim, fontSize: 12 }}>Or a pulled cab:</Text>
+                {Object.keys(pulled)
+                  .map(Number)
+                  .map((pos) => (
+                    <Chip
+                      key={pos}
+                      label={pulled[pos]!.name}
+                      active={cabA?.name === pulled[pos]!.name}
+                      onPress={() => useCabFromPedal(pos)}
+                    />
+                  ))}
+              </View>
+            ) : null}
+            {cabA && cabB ? (
+              <Stepper
+                label="BLEND A↔B"
+                value={`${100 - blend}% / ${blend}%`}
+                onStep={(d) => setBlend((v) => Math.max(0, Math.min(100, v + d * 10)))}
+              />
+            ) : null}
+          </View>
+
+          {/* FILTER — with an explicit Off */}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            <Chip label="Off" active={!filterOn} onPress={() => setFilterOn(false)} />
+            {TYPES.map((t) => (
+              <Chip
+                key={t.kind}
+                label={t.label}
+                active={filterOn && t.kind === kind}
+                onPress={() => {
+                  setFilterOn(true);
+                  setKind(t.kind);
+                }}
+              />
+            ))}
+          </View>
+          {filterOn ? (
+            <View style={panel}>
+              <Stepper label="FREQUENCY" value={`${fc} Hz`} onStep={stepFc} />
+              {def.gain ? (
+                <Stepper
+                  label="GAIN"
+                  value={`${gainDb > 0 ? "+" : ""}${gainDb} dB`}
+                  onStep={(d) => setGainDb((v) => Math.max(-12, Math.min(12, v + d)))}
+                />
+              ) : null}
+              {def.q ? (
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1 }}>Q</Text>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    {Q_STEPS.map((qq, i) => (
+                      <Chip
+                        key={qq}
+                        label={qq.toFixed(1)}
+                        active={i === qi}
+                        onPress={() => setQi(i)}
+                      />
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+              {def.slope ? (
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1 }}>
+                    SLOPE
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <Chip label="12 dB/oct" active={stages === 1} onPress={() => setStages(1)} />
+                    <Chip label="24 dB/oct" active={stages === 2} onPress={() => setStages(2)} />
+                  </View>
+                </View>
+              ) : null}
+            </View>
+          ) : (
+            <Text style={{ color: theme.textDim, fontSize: 12 }}>
+              Filter off — the cab is uploaded as-is (no baked filter).
+            </Text>
+          )}
+
+          {/* CRAFT PREVIEW */}
+          <View
+            style={{
+              backgroundColor: theme.bg,
+              borderColor: theme.panelEdge,
+              borderWidth: 1,
+              borderRadius: radius,
+              padding: 8,
+            }}
+          >
+            <IrGraph
+              grid={GRID}
+              curves={[{ db: craftDb, color: theme.amber, width: 2.6 }]}
+              width={graphW}
+              height={170}
+              dbTop={18}
+              dbBot={-42}
+            />
+          </View>
+
+          {/* UPLOAD */}
+          <View style={panel}>
+            <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1 }}>
+                UPLOAD TO
+              </Text>
+              {USER_IR_SLOTS.map((s) => (
+                <Chip
+                  key={s}
+                  label={pulled[s]?.name ? `${s}: ${pulled[s]!.name}` : `Slot ${s}`}
+                  active={uploadSlot === s}
+                  onPress={() => setUploadSlot(s as 7 | 8)}
+                />
+              ))}
+            </View>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1 }}>
+                USE SLOT {uploadSlot} (this preset)
+              </Text>
+              <Switch
+                value={modes[uploadSlot] ?? false}
+                onValueChange={(v) => setMode(uploadSlot, v)}
+                trackColor={{ false: theme.panelEdge, true: theme.accent }}
+                thumbColor="#fff"
+              />
+            </View>
+            <Stepper
+              label={`SLOT ${uploadSlot} GAIN`}
+              value={`${(gainDbs[uploadSlot] ?? 0) > 0 ? "+" : ""}${(gainDbs[uploadSlot] ?? 0).toFixed(1)} dB`}
+              onStep={(d) => setGain(uploadSlot, (gainDbs[uploadSlot] ?? 0) + d)}
+            />
+            <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
+              Slots 7 & 8 hold custom cabs shared across presets; the toggle is per-preset.
+              Uploading replaces the shared cab data.
+            </Text>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <Pressable
+                onPress={onUpload}
+                style={{
+                  flex: 1,
+                  backgroundColor: theme.accent,
+                  padding: 14,
+                  borderRadius: radius,
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ color: "#fff", fontWeight: "700" }}>Upload ▸ slot {uploadSlot}</Text>
+              </Pressable>
+              <Pressable
+                onPress={onExport}
+                style={{
+                  paddingHorizontal: 18,
+                  justifyContent: "center",
+                  borderColor: theme.panelEdge,
+                  borderWidth: 1,
+                  borderRadius: radius,
+                }}
+              >
+                <Text style={{ color: theme.text, fontWeight: "700" }}>Export .wav</Text>
+              </Pressable>
+            </View>
+          </View>
+        </>
+      ) : null}
+
+      {status ? (
+        <Text style={{ color: theme.textDim, fontSize: 12, lineHeight: 18 }}>{status}</Text>
+      ) : null}
+    </KnobScroll>
   );
 }
