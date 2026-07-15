@@ -66,11 +66,7 @@ export function Knob({ label, value, onChange, size = 84, display, onPress, ghos
         // Long-press (hold, no drag) on a knob that's moved off its preset → snap back to the preset.
         longTimer.current = setTimeout(() => {
           const g = ghostRef.current;
-          if (
-            !moved.current &&
-            g != null &&
-            Math.round(toDisplay(g)) !== Math.round(toDisplay(valueRef.current))
-          ) {
+          if (!moved.current && g != null && g !== valueRef.current) {
             longFired.current = true;
             onChange(g); // revert this knob (also sends live to the pedal)
             haptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
@@ -119,7 +115,7 @@ export function Knob({ label, value, onChange, size = 84, display, onPress, ghos
   const readout = display ?? toDisplay(value).toFixed(1);
   // Ghost = the preset's value for this knob. When the live value has moved off it, mark the knob
   // "changed" (amber label) and show a faint tick where the preset was — the delta at a glance.
-  const changed = ghost != null && Math.round(toDisplay(ghost)) !== Math.round(toDisplay(value));
+  const changed = ghost != null && value !== ghost;
   const ghostAngle = ghost != null ? valueToAngle(ghost) : null;
 
   return (
