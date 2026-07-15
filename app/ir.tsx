@@ -12,7 +12,7 @@
  * We never ship Tech 21's IRs: every curve here is read off the user's own pedal.
  */
 import { Ionicons } from "@expo/vector-icons";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   PanResponder,
   Platform,
@@ -32,6 +32,7 @@ import { blendIr, cascadeIr, generateIr, type IrGenKind } from "../src/dsp/gener
 import { frequencyResponse, logGrid } from "../src/dsp/ir";
 import { uploadCustomIr } from "../src/midi/bundleIo";
 import { pickFileBytes, saveAndShare } from "../src/midi/exportFile";
+import { loadIrCache, saveIrCache } from "../src/midi/irCache";
 import { USER_IR_SLOTS, readIrSlot } from "../src/midi/irRead";
 import { sendParam } from "../src/midi/liveParam";
 import { getSession, pedalStore } from "../src/midi/pedal";
@@ -85,6 +86,18 @@ interface Pulled {
   db: number[];
   ir: Float64Array;
 }
+
+// The pedal plays its 2400-sample IRs at a fixed rate we haven't pinned exactly (calibration TODO);
+// a nominal rate keeps the curve SHAPE right (x-axis Hz labels are approximate).
+const PEDAL_IR_RATE = 88200;
+const curveOf = (ir: Float64Array): number[] =>
+  frequencyResponse(ir, GRID, { sampleRate: PEDAL_IR_RATE, normalizeBand: [700, 1400] });
+const persist = (map: Record<number, Pulled>): void =>
+  void saveIrCache(
+    Object.fromEntries(
+      Object.entries(map).map(([k, v]) => [Number(k), { name: v.name, samples: v.ir }]),
+    ),
+  );
 
 function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
@@ -308,11 +321,21 @@ export default function IrStudio() {
   const [pullProg, setPullProg] = useState<{ done: number; total: number } | null>(null);
   const [morph, setMorph] = useState(16); // 0x0E value; 16 = slot 1. Not sent until the user acts.
 
-  // The pedal plays its 2400-sample IRs at a fixed rate we haven't pinned exactly (calibration TODO);
-  // a nominal rate keeps the curve SHAPE right (x-axis Hz labels are approximate).
-  const PEDAL_IR_RATE = 88200;
-  const curveOf = (ir: Float64Array) =>
-    frequencyResponse(ir, GRID, { sampleRate: PEDAL_IR_RATE, normalizeBand: [700, 1400] });
+  // Load cached curves on mount so we don't re-read the pedal every visit — Refresh re-pulls.
+  useEffect(() => {
+    void (async () => {
+      const cached = await loadIrCache();
+      if (!cached) return;
+      const next: Record<number, Pulled> = {};
+      for (const [pos, s] of Object.entries(cached)) {
+        next[Number(pos)] = { name: s.name, ir: s.samples, db: curveOf(s.samples) };
+      }
+      if (Object.keys(next).length > 0) {
+        setPulled(next);
+        setStatus(`Loaded ${Object.keys(next).length} cached cabs — Refresh to re-read the pedal.`);
+      }
+    })();
+  }, []);
 
   async function pullFromPedal() {
     const session = getSession();
@@ -333,6 +356,7 @@ export default function IrStudio() {
       setPullProg({ done: pos, total: IR_SLOTS });
     }
     setPulled(next);
+    persist(next);
     setPulling(false);
     setPullProg(null);
     const n = Object.keys(next).length;
@@ -477,14 +501,18 @@ export default function IrStudio() {
       const fresh = await readIrSlot(session, uploadSlot);
       if (fresh) {
         const samples = Float64Array.from(fresh.samples);
-        setPulled((p) => ({
-          ...p,
-          [uploadSlot]: {
-            name: fresh.name || slotFallback(uploadSlot),
-            ir: samples,
-            db: curveOf(samples),
-          },
-        }));
+        setPulled((p) => {
+          const merged = {
+            ...p,
+            [uploadSlot]: {
+              name: fresh.name || slotFallback(uploadSlot),
+              ir: samples,
+              db: curveOf(samples),
+            },
+          };
+          persist(merged); // keep the cache in sync with the newly-uploaded slot
+          return merged;
+        });
       }
       setStatus(`Uploaded "${irName()}" → slot ${uploadSlot} (saved & refreshed).`);
     } catch (e) {
