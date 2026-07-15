@@ -7,12 +7,16 @@
 import { Link } from "expo-router";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { useStore } from "zustand";
+import { Knob } from "../src/components/Knob";
+import { KnobScroll } from "../src/components/KnobScroll";
 import { radius, theme } from "../src/components/theme";
 import { applyAmpBundle, detectAmpModel, hasAmpBundle } from "../src/protocol/amp";
 import { AMP_MODELS } from "../src/protocol/constants";
+import { rawToPct, sendParam } from "../src/midi/liveParam";
 import { getSession, pedalStore } from "../src/midi/pedal";
+import { PARAMS, type ParamId } from "../src/protocol/params";
 
 const EDIT = 0x7f;
 
@@ -59,6 +63,13 @@ function Chip({
 export default function Amp() {
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
   const [amp, setAmp] = useState(0);
+  const values = useStore(pedalStore, (s) => s.values);
+  const baseline = useStore(pedalStore, (s) => s.baseline);
+  // Pre-Amp / Drive / Presence are live, preset-synced params — send + mirror into the store.
+  const set = (id: ParamId, wire: number) => (v: number) => {
+    sendParam(wire, v);
+    pedalStore.getState().setValueLocal(id, v);
+  };
 
   useEffect(() => {
     if (!ready) return;
@@ -92,7 +103,7 @@ export default function Amp() {
   }
 
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 20 }}>
+    <KnobScroll style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 20 }}>
       <View
         style={{
           backgroundColor: theme.panel,
@@ -124,7 +135,30 @@ export default function Amp() {
             />
           ))}
         </View>
+        <View style={{ flexDirection: "row", justifyContent: "space-around", marginTop: 6 }}>
+          <Knob
+            label="Pre-Amp"
+            value={values.preamp ?? 64}
+            ghost={baseline.preamp}
+            display={`${rawToPct(values.preamp ?? 64)}%`}
+            onChange={set("preamp", PARAMS.preamp.paramId ?? 0x01)}
+          />
+          <Knob
+            label="Drive"
+            value={values.drive ?? 64}
+            ghost={baseline.drive}
+            display={`${rawToPct(values.drive ?? 64)}%`}
+            onChange={set("drive", PARAMS.drive.paramId ?? 0x05)}
+          />
+          <Knob
+            label="Presence"
+            value={values.presence ?? 64}
+            ghost={baseline.presence}
+            display={`${rawToPct(values.presence ?? 64)}%`}
+            onChange={set("presence", PARAMS.presence.paramId ?? 0x04)}
+          />
+        </View>
       </Section>
-    </ScrollView>
+    </KnobScroll>
   );
 }
