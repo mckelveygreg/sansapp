@@ -8,7 +8,7 @@ keeps the signing certs and profiles encrypted in a private git repo — no manu
 
 - `app.config.ts` — bundle id `com.mckelveygreg.sansapp`, version `1.0.0`, build `1`, the Bluetooth
   usage strings, and `ITSAppUsesNonExemptEncryption=false` (skips the export-compliance prompt).
-- `Gemfile` — `fastlane` + `cocoapods`.
+- No `Gemfile`/bundler — install fastlane with Homebrew (`brew install fastlane`); it bundles its own Ruby.
 - `fastlane/` — `Fastfile` (iOS lanes `certs`/`beta`/`release` + Android lanes `beta`/`release`),
   `Appfile`, `Matchfile`, `Gymfile`,
   `Deliverfile`, `Snapfile`, and `metadata/` (App Store name, subtitle, description, keywords,
@@ -21,7 +21,7 @@ keeps the signing certs and profiles encrypted in a private git repo — no manu
 1. **Apple Developer Program** membership ($99/yr) and an **App Store Connect** account.
 2. A **private git repo** to hold the signing material, e.g. `mckelveygreg/sansapp-certs` (empty is
    fine). This is what `match` writes to.
-3. Install the toolchain: `bundle install` (needs Ruby + Xcode command-line tools).
+3. Install fastlane: `brew install fastlane` (bundles its own Ruby). Also `brew install cocoapods` if you don't have it, plus Xcode command-line tools.
 4. Set these environment variables (a local `.env` that you do **not** commit, or your shell):
    ```sh
    export FASTLANE_APPLE_ID="you@example.com"      # your Apple Developer email
@@ -30,12 +30,12 @@ keeps the signing certs and profiles encrypted in a private git repo — no manu
    export MATCH_PASSWORD="a-strong-passphrase"     # encrypts the certs in that repo
    ```
 5. **Register the app** in App Store Connect once (bundle id `com.mckelveygreg.sansapp`, name
-   "SansApp"). Either create it in the ASC UI, or run `bundle exec fastlane produce -u "$FASTLANE_APPLE_ID"`.
+   "SansApp"). Either create it in the ASC UI, or run `fastlane produce -u "$FASTLANE_APPLE_ID"`.
 
 ## Create the signing certs (once, interactive — Apple 2FA)
 
 ```sh
-MATCH_READONLY=false bundle exec fastlane ios certs
+MATCH_READONLY=false fastlane ios certs
 ```
 
 This creates the distribution certificate + App Store provisioning profile and stores them
@@ -58,8 +58,8 @@ UITest target, so the simplest path for v1 is manual:
 ## Ship it
 
 ```sh
-bundle exec fastlane ios beta       # build + upload to TestFlight
-bundle exec fastlane ios release    # build + upload binary & metadata to App Store Connect
+fastlane ios beta       # build + upload to TestFlight
+fastlane ios release    # build + upload binary & metadata to App Store Connect
 ```
 
 Neither lane auto-submits — you review and press **Submit for Review** in App Store Connect. Bump
@@ -96,8 +96,8 @@ equivalent (the internal track) is the right place to start.
 **Ship it:**
 
 ```sh
-bundle exec fastlane android beta      # signed AAB → Play internal testing track
-bundle exec fastlane android release   # signed AAB → production (staged as a draft)
+fastlane android beta      # signed AAB → Play internal testing track
+fastlane android release   # signed AAB → production (staged as a draft)
 ```
 
 Google requires the **very first** AAB to be uploaded by hand in the Play Console (the API can't

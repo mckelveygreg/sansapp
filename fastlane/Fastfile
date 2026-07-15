@@ -1,8 +1,8 @@
 # SansApp iOS release lanes — roll-your-own, no EAS / paid service. See docs/RELEASE.md.
 #
-# One-time (interactive, needs your Apple 2FA):  bundle exec fastlane ios certs
-# TestFlight:                                     bundle exec fastlane ios beta
-# App Store (uploads binary + metadata):          bundle exec fastlane ios release
+# One-time (interactive, needs your Apple 2FA):  fastlane ios certs
+# TestFlight:                                     fastlane ios beta
+# App Store (uploads binary + metadata):          fastlane ios release
 default_platform(:ios)
 
 XCODEPROJ = "ios/SansApp.xcodeproj"
@@ -58,8 +58,8 @@ end
 # (CNG), so we sign via Gradle's `android.injected.signing.*` properties rather than editing
 # build.gradle — nothing sensitive is committed.
 #
-#   Internal testing track:   bundle exec fastlane android beta
-#   Production (draft):       bundle exec fastlane android release
+#   Internal testing track:   fastlane android beta
+#   Production (draft):       fastlane android release
 platform :android do
   desc "Regenerate the native Android project (Expo prebuild)"
   lane :prep do
