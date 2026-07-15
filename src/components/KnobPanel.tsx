@@ -7,6 +7,8 @@ import { Knob } from "./Knob";
 export interface KnobPanelProps {
   ids: ParamId[];
   values: Partial<Record<ParamId, number>>;
+  /** Preset baseline per knob — drives each Knob's "changed" highlight + ghost tick. */
+  baseline: Partial<Record<ParamId, number>>;
   onChange: (id: ParamId, value: number) => void;
 }
 
@@ -28,7 +30,7 @@ const DEEP_LINK: Partial<Record<ParamId, string>> = {
 };
 
 /** A wrapping grid of knobs bound to `values` — used by the editor and Red Zone screens. */
-export function KnobPanel({ ids, values, onChange }: KnobPanelProps) {
+export function KnobPanel({ ids, values, baseline, onChange }: KnobPanelProps) {
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap, justifyContent: "center" }}>
       {ids.map((id) => {
@@ -38,6 +40,7 @@ export function KnobPanel({ ids, values, onChange }: KnobPanelProps) {
             key={id}
             label={PARAMS[id].label}
             value={values[id] ?? 64}
+            ghost={baseline[id]}
             onChange={(v) => onChange(id, v)}
             onPress={href ? () => router.push(href) : undefined}
           />
