@@ -1,24 +1,43 @@
 /**
- * Amp — the AMPLIFIER (amp-model) selector. Selecting an amp applies its captured bundle LIVE
- * (read edit buffer → patch → 05 20 write). Everything cab/IR (select, blend, design, upload, gain)
- * lives on the dedicated IR page (/ir) — this tab is ONLY the amp voicing, so there's exactly one
- * place to adjust each thing (no Amp/IR crossover). RN app surface.
+ * Amp — the AMPLIFIER page. An "amp model" is a recipe: it writes 8 voicing bytes (Pre-Amp, Drive,
+ * Presence + the hidden Buzz/Punch/Punch-Freq/Punch-Q + a level-match). This page exposes all of them
+ * as live knobs so the factory models are re-voiceable starting points — and lets you SAVE the
+ * current voicing as your own custom amp (persisted, shown beside the factory models). Cabs/IRs live
+ * on the dedicated IR page. RN app surface.
  */
 import { Link } from "expo-router";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Alert, Platform, Pressable, Text, View } from "react-native";
 import { useStore } from "zustand";
 import { Knob } from "../src/components/Knob";
 import { KnobScroll } from "../src/components/KnobScroll";
 import { radius, theme } from "../src/components/theme";
-import { applyAmpBundle, detectAmpModel, hasAmpBundle } from "../src/protocol/amp";
+import {
+  applyAmpBundle,
+  applyAmpBundleBytes,
+  bundleMatches,
+  detectAmpModel,
+  hasAmpBundle,
+  readAmpBundle,
+} from "../src/protocol/amp";
 import { AMP_MODELS } from "../src/protocol/constants";
 import { rawToPct, sendParam } from "../src/midi/liveParam";
 import { getSession, pedalStore } from "../src/midi/pedal";
+import { type AmpPreset, loadAmpPresets, saveAmpPresets } from "../src/midi/ampPresets";
 import { PARAMS, type ParamId } from "../src/protocol/params";
 
 const EDIT = 0x7f;
+// The store-backed knobs an amp bundle drives (Preset Level 0x40 is level-match, not a knob here).
+const AMP_KNOBS: { id: ParamId; label: string }[] = [
+  { id: "preamp", label: "Pre-Amp" },
+  { id: "drive", label: "Drive" },
+  { id: "presence", label: "Presence" },
+  { id: "buzz", label: "Buzz" },
+  { id: "punch", label: "Punch" },
+  { id: "punchFreq", label: "Punch Freq" },
+  { id: "punchQ", label: "Punch Q" },
+];
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -33,16 +52,22 @@ function Chip({
   label,
   active,
   dim,
+  accent,
   onPress,
+  onLongPress,
 }: {
   label: string;
   active: boolean;
   dim?: boolean;
+  accent?: boolean;
   onPress: () => void;
+  onLongPress?: () => void;
 }) {
+  const border = active ? theme.accent : accent ? theme.amber : theme.panelEdge;
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
       style={{
         paddingHorizontal: 13,
         paddingVertical: 9,
@@ -51,7 +76,7 @@ function Chip({
         minWidth: 96,
         alignItems: "center",
         opacity: dim ? 0.5 : 1,
-        borderColor: active ? theme.accent : theme.panelEdge,
+        borderColor: border,
         backgroundColor: active ? theme.accent : theme.panel,
       }}
     >
@@ -62,15 +87,28 @@ function Chip({
 
 export default function Amp() {
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
-  const [amp, setAmp] = useState(0);
   const values = useStore(pedalStore, (s) => s.values);
   const baseline = useStore(pedalStore, (s) => s.baseline);
-  // Pre-Amp / Drive / Presence are live, preset-synced params — send + mirror into the store.
+  const slot = useStore(pedalStore, (s) => s.slot);
+  const [customs, setCustoms] = useState<AmpPreset[]>([]);
+  const [active, setActive] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+
   const set = (id: ParamId, wire: number) => (v: number) => {
     sendParam(wire, v);
     pedalStore.getState().setValueLocal(id, v);
   };
+  // Reflect an applied bundle's bytes into the knobs (so they move to the model's/custom's values).
+  const reflect = (blob: Uint8Array) => {
+    for (const { id } of AMP_KNOBS)
+      pedalStore.getState().setValueLocal(id, blob[PARAMS[id].blobOffset]!);
+  };
 
+  useEffect(() => {
+    void loadAmpPresets().then(setCustoms);
+  }, []);
+
+  // Highlight the matching model/custom, re-checked on connect + on any preset change.
   useEffect(() => {
     if (!ready) return;
     const session = getSession();
@@ -79,27 +117,95 @@ export default function Amp() {
     void session
       .readEditBuffer()
       .then((buf) => {
-        const name = detectAmpModel(buf.raw);
-        const idx = name ? AMP_MODELS.indexOf(name) : -1;
-        if (live && idx >= 0) setAmp(idx);
+        if (!live) return;
+        const factory = detectAmpModel(buf.raw);
+        if (factory) {
+          setActive(factory);
+          return;
+        }
+        const custom = customs.find((c) => bundleMatches(buf.raw, c.bytes));
+        setActive(custom ? custom.name : null);
       })
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [ready]);
+  }, [ready, slot, customs]);
 
-  async function selectAmp(i: number) {
-    setAmp(i);
-    const name = AMP_MODELS[i]!;
+  async function applyBundle(name: string, apply: (blob: Uint8Array) => Uint8Array) {
+    setActive(name);
     const session = getSession();
-    if (!session || !hasAmpBundle(name)) return;
+    if (!session) {
+      setStatus("Connect to apply an amp.");
+      return;
+    }
     try {
       const buf = await session.readEditBuffer();
-      await session.writePreset(EDIT, applyAmpBundle(buf.raw, name));
+      const next = apply(buf.raw);
+      await session.writePreset(EDIT, next);
+      reflect(next);
+      setStatus(`Applied "${name}".`);
     } catch {
-      // not connected / write failed — selection stays local
+      setStatus("Apply failed — check the connection.");
     }
+  }
+
+  async function saveCurrent() {
+    const session = getSession();
+    if (!session) {
+      setStatus("Connect to save the current amp.");
+      return;
+    }
+    try {
+      const buf = await session.readEditBuffer();
+      const bytes = readAmpBundle(buf.raw);
+      const doSave = (name: string) => {
+        const next = [...customs.filter((c) => c.name !== name), { name, bytes }];
+        setCustoms(next);
+        setActive(name);
+        void saveAmpPresets(next);
+        setStatus(`Saved "${name}".`);
+      };
+      const fallback = `My Amp ${customs.length + 1}`;
+      if (Platform.OS === "ios") {
+        Alert.prompt(
+          "Save custom amp",
+          "Name this amp voicing:",
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Save",
+              onPress: (name?: string) => {
+                const n = name?.trim();
+                if (n) doSave(n);
+              },
+            },
+          ],
+          "plain-text",
+          fallback,
+        );
+      } else {
+        doSave(fallback);
+      }
+    } catch {
+      setStatus("Couldn't read the current amp.");
+    }
+  }
+
+  function deleteCustom(name: string) {
+    Alert.alert(`Delete "${name}"?`, "Remove this saved amp voicing.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => {
+          const next = customs.filter((c) => c.name !== name);
+          setCustoms(next);
+          void saveAmpPresets(next);
+          if (active === name) setActive(null);
+        },
+      },
+    ]);
   }
 
   return (
@@ -115,7 +221,8 @@ export default function Amp() {
       >
         <Text style={{ color: theme.textDim, fontSize: 12, lineHeight: 18 }}>
           {ready ? "Amp models apply live over MIDI. " : "Connect to control the pedal. "}
-          Cabs & IRs — select, blend, design and upload — live on the{" "}
+          Each model is a recipe for the knobs below — tweak them, then Save your own. Cabs & IRs
+          are on the{" "}
           <Link href="/ir" style={{ color: theme.accent }}>
             IR page
           </Link>
@@ -125,40 +232,93 @@ export default function Amp() {
 
       <Section title="AMPLIFIER">
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          {AMP_MODELS.map((name, i) => (
+          {AMP_MODELS.map((name) => (
             <Chip
               key={name}
               label={name}
-              active={i === amp}
+              active={active === name}
               dim={!hasAmpBundle(name)}
-              onPress={() => void selectAmp(i)}
+              onPress={() => void applyBundle(name, (b) => applyAmpBundle(b, name))}
             />
           ))}
         </View>
-        <View style={{ flexDirection: "row", justifyContent: "space-around", marginTop: 6 }}>
-          <Knob
-            label="Pre-Amp"
-            value={values.preamp ?? 64}
-            ghost={baseline.preamp}
-            display={`${rawToPct(values.preamp ?? 64)}%`}
-            onChange={set("preamp", PARAMS.preamp.paramId ?? 0x01)}
-          />
-          <Knob
-            label="Drive"
-            value={values.drive ?? 64}
-            ghost={baseline.drive}
-            display={`${rawToPct(values.drive ?? 64)}%`}
-            onChange={set("drive", PARAMS.drive.paramId ?? 0x05)}
-          />
-          <Knob
-            label="Presence"
-            value={values.presence ?? 64}
-            ghost={baseline.presence}
-            display={`${rawToPct(values.presence ?? 64)}%`}
-            onChange={set("presence", PARAMS.presence.paramId ?? 0x04)}
-          />
-        </View>
+
+        {customs.length > 0 ? (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {customs.map((c) => (
+              <Chip
+                key={c.name}
+                label={c.name}
+                active={active === c.name}
+                accent
+                onPress={() => void applyBundle(c.name, (b) => applyAmpBundleBytes(b, c.bytes))}
+                onLongPress={() => deleteCustom(c.name)}
+              />
+            ))}
+          </View>
+        ) : null}
+
+        <Pressable
+          onPress={() => void saveCurrent()}
+          style={{
+            alignSelf: "flex-start",
+            paddingHorizontal: 13,
+            paddingVertical: 9,
+            borderRadius: 8,
+            borderWidth: 1,
+            borderColor: theme.panelEdge,
+            borderStyle: "dashed",
+          }}
+        >
+          <Text style={{ color: theme.accent, fontSize: 13, fontWeight: "600" }}>
+            ＋ Save current amp…
+          </Text>
+        </Pressable>
+        {customs.length > 0 ? (
+          <Text style={{ color: theme.textDim, fontSize: 11 }}>
+            Long-press a saved amp to delete it.
+          </Text>
+        ) : null}
       </Section>
+
+      <View
+        style={{
+          backgroundColor: theme.panel,
+          borderColor: theme.panelEdge,
+          borderWidth: 1,
+          borderRadius: radius,
+          padding: 16,
+          gap: 18,
+        }}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            justifyContent: "space-around",
+            rowGap: 18,
+          }}
+        >
+          {AMP_KNOBS.map(({ id, label }) => (
+            <Knob
+              key={id}
+              label={label}
+              value={values[id] ?? 64}
+              ghost={baseline[id]}
+              display={`${rawToPct(values[id] ?? 64)}%`}
+              onChange={set(id, PARAMS[id].paramId ?? 0)}
+            />
+          ))}
+        </View>
+        <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
+          Pre-Amp / Drive / Presence are the front-panel controls; Buzz / Punch / Punch Freq / Punch
+          Q are the hidden voicing an amp model sets (ranges uncalibrated, shown as raw %).
+        </Text>
+      </View>
+
+      {status ? (
+        <Text style={{ color: theme.textDim, fontSize: 12, lineHeight: 18 }}>{status}</Text>
+      ) : null}
     </KnobScroll>
   );
 }

@@ -46,3 +46,22 @@ export function detectAmpModel(blob: Uint8Array): string | null {
   }
   return null;
 }
+
+/** The current amp-voicing bytes (at AMP_BUNDLE_OFFSETS) — for saving a custom amp. */
+export function readAmpBundle(blob: Uint8Array): number[] {
+  return AMP_BUNDLE_OFFSETS.map((o) => blob[o]!);
+}
+
+/** Apply an explicit amp-voicing byte set (e.g. a saved custom) onto a blob. */
+export function applyAmpBundleBytes(blob: Uint8Array, bytes: readonly number[]): Uint8Array {
+  const next = blob.slice();
+  AMP_BUNDLE_OFFSETS.forEach((o, i) => {
+    if (bytes[i] !== undefined) next[o] = bytes[i]! & 0x7f;
+  });
+  return next;
+}
+
+/** Does `bytes` match this blob's current amp-voicing bytes? (matches a saved custom to the state) */
+export function bundleMatches(blob: Uint8Array, bytes: readonly number[]): boolean {
+  return AMP_BUNDLE_OFFSETS.every((o, i) => blob[o] === bytes[i]);
+}

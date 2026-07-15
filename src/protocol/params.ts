@@ -107,6 +107,12 @@ export const PARAMS = {
   lookahead: knob("lookahead", "Look-ahead", "dynamics", 0x55, 0x33, true),
   ambienceDecay: knob("ambienceDecay", "Ambience Decay", "ambience", 0x37, 0x15, true),
   ambienceTime: knob("ambienceTime", "Ambience Time", "ambience", 0x36, 0x14, true),
+  // Amp-voicing params — the "hidden" bytes an amp-model bundle sets besides Pre-Amp/Drive/Presence.
+  // Exposed so the amp models become re-voiceable starting points. Ranges uncalibrated (shown raw %).
+  buzz: knob("buzz", "Buzz", "preamp", 0x24, 0x02, true),
+  punch: knob("punch", "Punch", "preamp", 0x25, 0x03, true),
+  punchFreq: knob("punchFreq", "Punch Freq", "preamp", 0x2d, 0x0b, true),
+  punchQ: knob("punchQ", "Punch Q", "preamp", 0x4f, 0x2d, true),
 } as const satisfies Record<string, ParamDef>;
 
 export type ParamId = keyof typeof PARAMS;
