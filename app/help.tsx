@@ -28,6 +28,7 @@ const GUIDE: Section[] = [
     lines: [
       "The Editor is the pedal's front panel on your phone: drag a knob up/down to change it. The deep pages (Amp, EQ, Comp, Gate, Auto Filter, Ambience, Chorus) hold the rest.",
       "Edits are live — they change the pedal's current sound (its edit buffer), not any saved preset, until you Save. So tweak freely; nothing is overwritten until you choose a slot.",
+      "A knob that's moved off its preset glows amber with a tick marking the preset value — long-press it to snap back to the preset.",
     ],
   },
   {
