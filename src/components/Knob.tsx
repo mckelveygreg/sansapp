@@ -39,7 +39,11 @@ export function Knob({ label, value, onChange, size = 84, display, onPress, ghos
   const startValue = useRef(value);
   const valueRef = useRef(value);
   valueRef.current = value;
+  const ghostRef = useRef(ghost);
+  ghostRef.current = ghost;
   const moved = useRef(false);
+  const longFired = useRef(false);
+  const longTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [active, setActive] = useState(false);
 
   const responder = useRef(
@@ -55,13 +59,31 @@ export function Knob({ label, value, onChange, size = 84, display, onPress, ghos
       onPanResponderGrant: () => {
         startValue.current = valueRef.current;
         moved.current = false;
+        longFired.current = false;
         setActive(true);
         uiStore.getState().setAdjusting(true); // lock the surrounding KnobScroll
         haptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
+        // Long-press (hold, no drag) on a knob that's moved off its preset → snap back to the preset.
+        longTimer.current = setTimeout(() => {
+          const g = ghostRef.current;
+          if (
+            !moved.current &&
+            g != null &&
+            Math.round(toDisplay(g)) !== Math.round(toDisplay(valueRef.current))
+          ) {
+            longFired.current = true;
+            onChange(g); // revert this knob (also sends live to the pedal)
+            haptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
+          }
+        }, 500);
       },
       onPanResponderMove: (_e, g) => {
         if (Math.abs(g.dy) <= TAP_SLOP && Math.abs(g.dx) <= TAP_SLOP) return; // ignore jitter / taps
         moved.current = true;
+        if (longTimer.current) {
+          clearTimeout(longTimer.current);
+          longTimer.current = null;
+        }
         const next = dragToValue(startValue.current, g.dy);
         if (Math.round(toDisplay(next)) !== Math.round(toDisplay(valueRef.current))) {
           haptic(() => Haptics.selectionAsync());
@@ -71,11 +93,23 @@ export function Knob({ label, value, onChange, size = 84, display, onPress, ghos
       onPanResponderRelease: () => {
         setActive(false);
         uiStore.getState().setAdjusting(false);
+        if (longTimer.current) {
+          clearTimeout(longTimer.current);
+          longTimer.current = null;
+        }
+        if (longFired.current) {
+          longFired.current = false;
+          return; // the long-press already reverted; don't also treat it as a tap
+        }
         if (!moved.current && onPress) onPress(); // tap → open deep page
       },
       onPanResponderTerminate: () => {
         setActive(false);
         uiStore.getState().setAdjusting(false);
+        if (longTimer.current) {
+          clearTimeout(longTimer.current);
+          longTimer.current = null;
+        }
       },
     }),
   ).current;
