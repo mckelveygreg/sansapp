@@ -15,6 +15,16 @@ platform :ios do
     cocoapods(podfile: "ios/Podfile")
   end
 
+  desc "Register the App ID (Developer Portal) + app record (App Store Connect). Run ONCE before certs."
+  lane :register do
+    produce(
+      app_identifier: "com.mckelveygreg.sansapp",
+      app_name: "SansApp",
+      language: "English",
+      sku: "com.mckelveygreg.sansapp",
+    )
+  end
+
   desc "Create/renew signing certs + profiles in the private match repo (run once; needs 2FA)"
   lane :certs do
     match(type: "appstore", readonly: false)

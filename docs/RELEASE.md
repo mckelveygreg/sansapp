@@ -30,8 +30,10 @@ keeps the signing certs and profiles encrypted in a private git repo — no manu
    MATCH_GIT_URL       # the private certs repo from step 2
    MATCH_PASSWORD      # a strong passphrase that encrypts that repo
    ```
-5. **Register the app** in App Store Connect once (bundle id `com.mckelveygreg.sansapp`, name
-   "SansApp"). Either create it in the ASC UI, or run `fastlane produce -u "$FASTLANE_APPLE_ID"`.
+5. **Register the app once** — creates the App ID on the Developer Portal *and* the App Store
+   Connect record (match needs the App ID before it can make a profile): `fastlane ios register`.
+   App Store *display names* must be globally unique — if "SansApp" is taken, change `app_name` in
+   the `register` lane (the bundle id stays the same).
 
 ## Create the signing certs (once, interactive — Apple 2FA)
 
