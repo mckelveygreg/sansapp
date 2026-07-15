@@ -22,12 +22,13 @@ keeps the signing certs and profiles encrypted in a private git repo — no manu
 2. A **private git repo** to hold the signing material, e.g. `mckelveygreg/sansapp-certs` (empty is
    fine). This is what `match` writes to.
 3. Install fastlane: `brew install fastlane` (bundles its own Ruby). Also `brew install cocoapods` if you don't have it, plus Xcode command-line tools.
-4. Set these environment variables (a local `.env` that you do **not** commit, or your shell):
+4. Copy **`.env.example` → `.env`** (git-ignored) and fill it in. fastlane **auto-loads `.env`** from
+   the repo root, so there's no `source` step — just run the lanes from the project directory:
    ```sh
-   export FASTLANE_APPLE_ID="you@example.com"      # your Apple Developer email
-   export FASTLANE_TEAM_ID="XXXXXXXXXX"            # Apple Developer team id (portal → Membership)
-   export MATCH_GIT_URL="git@github.com:mckelveygreg/sansapp-certs.git"
-   export MATCH_PASSWORD="a-strong-passphrase"     # encrypts the certs in that repo
+   FASTLANE_APPLE_ID   # email on your Apple Developer account
+   FASTLANE_TEAM_ID    # Apple Developer team id (portal → Membership)
+   MATCH_GIT_URL       # the private certs repo from step 2
+   MATCH_PASSWORD      # a strong passphrase that encrypts that repo
    ```
 5. **Register the app** in App Store Connect once (bundle id `com.mckelveygreg.sansapp`, name
    "SansApp"). Either create it in the ASC UI, or run `fastlane produce -u "$FASTLANE_APPLE_ID"`.
