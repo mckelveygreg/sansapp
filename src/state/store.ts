@@ -26,6 +26,8 @@ export interface PedalState {
   names: Record<number, string>;
   /** Current control values (from the recalled preset + live edits), keyed by ParamId. */
   values: Partial<Record<ParamId, number>>;
+  /** The loaded preset's values — the baseline to compare against (per-knob "changed" + ghost). */
+  baseline: Partial<Record<ParamId, number>>;
   /** Unsaved edits since the last recall/save. */
   dirty: boolean;
   /** Recent human-readable MIDI log lines (ring buffer). */
@@ -56,6 +58,7 @@ export function createPedalStore() {
     name: null,
     names: {},
     values: {},
+    baseline: {},
     dirty: false,
     log: [],
 
@@ -66,6 +69,7 @@ export function createPedalStore() {
         slot,
         name,
         values: { ...values },
+        baseline: { ...values },
         dirty: false,
         names: slot != null && name != null ? { ...s.names, [slot]: name } : s.names,
       })),
@@ -75,7 +79,7 @@ export function createPedalStore() {
     noteExternal: (id, value) => set((s) => ({ values: { ...s.values, [id]: value } })),
     pushLog: (line) => set((s) => ({ log: [...s.log.slice(-(LOG_CAP - 1)), line] })),
     clearLog: () => set({ log: [] }),
-    markSaved: () => set({ dirty: false }),
+    markSaved: () => set((s) => ({ dirty: false, baseline: { ...s.values } })),
   }));
 }
 

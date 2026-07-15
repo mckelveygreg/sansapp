@@ -23,6 +23,8 @@ export interface KnobProps {
   display?: string;
   /** If set, a tap (not a drag) calls this — used to open a deep-edit page. Shows a chevron badge. */
   onPress?: () => void;
+  /** The preset's baseline value; when it differs from `value`, shows a ghost tick + amber label. */
+  ghost?: number;
 }
 
 const TICKS = 11;
@@ -33,7 +35,7 @@ const haptic = (fn: () => Promise<unknown>) => {
   if (Platform.OS !== "web") void fn().catch(() => {});
 };
 
-export function Knob({ label, value, onChange, size = 84, display, onPress }: KnobProps) {
+export function Knob({ label, value, onChange, size = 84, display, onPress, ghost }: KnobProps) {
   const startValue = useRef(value);
   const valueRef = useRef(value);
   valueRef.current = value;
@@ -81,6 +83,10 @@ export function Knob({ label, value, onChange, size = 84, display, onPress }: Kn
   const angle = valueToAngle(value);
   const dial = size * 0.66;
   const readout = display ?? toDisplay(value).toFixed(1);
+  // Ghost = the preset's value for this knob. When the live value has moved off it, mark the knob
+  // "changed" (amber label) and show a faint tick where the preset was — the delta at a glance.
+  const changed = ghost != null && Math.round(toDisplay(ghost)) !== Math.round(toDisplay(value));
+  const ghostAngle = ghost != null ? valueToAngle(ghost) : null;
 
   return (
     <View style={{ alignItems: "center", width: size + 14 }}>
@@ -155,6 +161,22 @@ export function Knob({ label, value, onChange, size = 84, display, onPress }: Kn
           );
         })}
 
+        {changed && ghostAngle != null ? (
+          <View
+            style={{
+              position: "absolute",
+              width: size,
+              height: size,
+              alignItems: "center",
+              transform: [{ rotate: `${ghostAngle}deg` }],
+            }}
+          >
+            <View
+              style={{ width: 3, height: 9, borderRadius: 1.5, backgroundColor: theme.amber }}
+            />
+          </View>
+        ) : null}
+
         <View
           style={{
             width: dial,
@@ -202,8 +224,15 @@ export function Knob({ label, value, onChange, size = 84, display, onPress }: Kn
         </View>
       </View>
 
-      <Text style={{ color: theme.textDim, fontSize: 11, marginTop: 6, letterSpacing: 1 }}>
-        {label.toUpperCase()}
+      <Text
+        style={{
+          color: changed ? theme.amber : theme.textDim,
+          fontSize: 11,
+          marginTop: 6,
+          letterSpacing: 1,
+        }}
+      >
+        {changed ? `${label.toUpperCase()} •` : label.toUpperCase()}
       </Text>
     </View>
   );

@@ -31,6 +31,7 @@ export default function Editor() {
   const insets = useSafeAreaInsets();
   const connection = useStore(pedalStore, (s) => s.connection);
   const values = useStore(pedalStore, (s) => s.values);
+  const baseline = useStore(pedalStore, (s) => s.baseline);
   const slot = useStore(pedalStore, (s) => s.slot);
   const name = useStore(pedalStore, (s) => s.name);
   const dirty = useStore(pedalStore, (s) => s.dirty);
@@ -131,13 +132,13 @@ export default function Editor() {
           <EqCurve values={values} />
         </Section>
         <Section title="PREAMP · EQ">
-          <KnobPanel ids={PREAMP} values={values} onChange={setValue} />
+          <KnobPanel ids={PREAMP} values={values} baseline={baseline} onChange={setValue} />
         </Section>
         <Section title="MIX · OUTPUT">
-          <KnobPanel ids={OUTPUT} values={values} onChange={setValue} />
+          <KnobPanel ids={OUTPUT} values={values} baseline={baseline} onChange={setValue} />
         </Section>
         <Section title="RED ZONE" accent>
-          <KnobPanel ids={RED_ZONE} values={values} onChange={setValue} />
+          <KnobPanel ids={RED_ZONE} values={values} baseline={baseline} onChange={setValue} />
         </Section>
       </View>
     </KnobScroll>
