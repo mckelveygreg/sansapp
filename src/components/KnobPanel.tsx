@@ -1,5 +1,6 @@
 import { router } from "expo-router";
 import { View } from "react-native";
+import { displayFor } from "../protocol/display";
 import { PARAMS, type ParamId } from "../protocol/params";
 import { gap } from "./theme";
 import { Knob } from "./Knob";
@@ -13,9 +14,13 @@ export interface KnobPanelProps {
 }
 
 // Knobs that have a deep-edit page: tapping the knob opens it (the Knob shows a chevron badge).
-// Every knob whose section has a deep page is listed; drive/presence/blend/preamp have no deep
-// page (no chevron). Keep in sync with the KNOB_PAGES routes in app/_layout.tsx.
+// Rule: any knob that also appears on a deep page links to it. Pre-Amp/Drive/Presence live on the
+// Amp page (with the hidden Buzz/Punch voicing); only Blend has no deep page. Keep in sync with the
+// KNOB_PAGES routes in app/_layout.tsx.
 const DEEP_LINK: Partial<Record<ParamId, string>> = {
+  preamp: "/amp",
+  drive: "/amp",
+  presence: "/amp",
   comp: "/comp",
   ratio: "/comp",
   filter: "/filter",
@@ -40,6 +45,7 @@ export function KnobPanel({ ids, values, baseline, onChange }: KnobPanelProps) {
             key={id}
             label={PARAMS[id].label}
             value={values[id] ?? 64}
+            display={displayFor(id, values[id] ?? 64)}
             ghost={baseline[id]}
             onChange={(v) => onChange(id, v)}
             onPress={href ? () => router.push(href) : undefined}
