@@ -24,6 +24,11 @@ export interface ParamNotifyEvent {
 
 const EDIT_BUFFER_SLOT = 0x7f;
 
+// The heartbeat skips its probe if we sent anything within this window — recent traffic already
+// proves the link is alive, and probing mid-burst (e.g. a run of setParam knob-moves saturating the
+// BLE TX) can time out and cause a FALSE disconnect. Must be < the heartbeat interval.
+const HEARTBEAT_QUIET_MS = 2500;
+
 const PARAM_BY_RAW = new Map<number, ParamId>();
 for (const id of PARAM_IDS) {
   const raw = PARAMS[id].paramId;
@@ -50,6 +55,8 @@ export class DeviceSession {
   private readonly pushedPresetCbs = new Set<(slot: number, preset: Preset) => void>();
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private hbFails = 0;
+  /** Wall-clock ms of the last outbound send — the heartbeat treats recent traffic as "link alive". */
+  private lastSendAt = 0;
   /** Serializes reply-expecting requests so only one round-trip is on the wire at a time. */
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -278,6 +285,7 @@ export class DeviceSession {
   }
 
   private send(m: Exclude<PedalMessage, { kind: "unknown" }>): void {
+    this.lastSendAt = Date.now();
     this.io.send(encode(m));
   }
 
@@ -293,6 +301,10 @@ export class DeviceSession {
    */
   private async heartbeat(): Promise<void> {
     if (this.state !== "ready" || this.pending.size > 0) return;
+    // Recent outbound traffic = link alive. setParam knob-moves are fire-and-forget (no pending
+    // entry), so a burst wouldn't be caught by the check above; probing into that saturated TX can
+    // time out and falsely disconnect. Skip this tick — the traffic itself is the liveness proof.
+    if (Date.now() - this.lastSendAt < HEARTBEAT_QUIET_MS) return;
     try {
       const settings = await this.readBlock(0x55, 0);
       this.hbFails = 0;
