@@ -3,7 +3,9 @@
  * Lives in src/ (not app/) so expo-router doesn't scan it as a route.
  */
 import { DeviceSession } from "../device/session";
-import { applyAmbienceBundle, detectAmbienceType } from "../protocol/ambience";
+import { AMBIENCE_BUNDLES, AMBIENCE_PROFILE_WIRES } from "../protocol/ambience";
+import { encode } from "../protocol/messages";
+import { liveSetId } from "../protocol/params";
 import { encodePreset, withName } from "../protocol/preset";
 import { ambienceStore } from "../state/ambience";
 import { ensureBluetoothMidi } from "./bleMidi";
@@ -121,19 +123,16 @@ export async function renamePreset(slot: number, name: string): Promise<void> {
 }
 
 /**
- * Switch the ambience engine (Room…Echo Verb, index into AMBIENCE_ENGINES). There's no single "type"
- * param — like EliteControl, we overlay the engine's byte bundle onto the live edit buffer and write
- * it back (05 20 0A 7F).
+ * Switch the ambience type (Room…Echo Verb, index into AMBIENCE_ENGINES). Like EliteControl, we
+ * LIVE-SET the type's 10 profile params (05 50 each) — no edit-buffer write, no commit. This is what
+ * actually sticks; the old blob-write approach was silently discarded by the pedal.
  */
-export async function setAmbienceType(index: number): Promise<void> {
-  if (!session) throw new Error("Not connected");
-  const buf = await session.readEditBuffer();
-  await session.writePreset(0x7f, applyAmbienceBundle(buf.raw, index));
-  // Read back to confirm the engine bundle actually landed in the edit buffer.
-  const check = await session.readEditBuffer();
-  if (detectAmbienceType(check.raw) !== index) {
-    throw new Error("ambience engine write did not take");
-  }
+export function setAmbienceType(index: number): void {
+  const vals = AMBIENCE_BUNDLES[index];
+  if (!session || !vals) return;
+  AMBIENCE_PROFILE_WIRES.forEach((wire, i) => {
+    session!.sendRaw(encode({ kind: "setParam", param: liveSetId(wire), value: vals[i]! & 0x7f }));
+  });
   ambienceStore.getState().patch({ type: index });
   pedalStore.getState().pushLog(`🌫 ambience type → ${index}`);
 }
