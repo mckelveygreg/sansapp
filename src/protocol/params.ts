@@ -117,6 +117,16 @@ export const PARAMS = {
   // n, values between blend neighbours). Store-backed so the IR stack reflects the LOADED preset's
   // cab instead of a guess. blobOffset 0x30 = wire 0x0e + 0x22; confirmed against the 128-preset bank.
   irBlend: knob("irBlend", "IR", "ir", 0x30, 0x0e, true),
+  // Auto Filter extras (RE 2026-07-15): a master enable toggle (0x3c, defaults OFF) plus Attack/
+  // Release (0x3e/0x3f) — store-backed so they read back from the preset (Level is `filter` 0x3d).
+  // The auto-filter has NO cutoff/resonance param; these are all it exposes over the wire.
+  autoFilterOn: knob("autoFilterOn", "Auto Filter", "redzone", 0x5e, 0x3c, true),
+  filterAttack: knob("filterAttack", "Filter Attack", "redzone", 0x60, 0x3e, true),
+  filterRelease: knob("filterRelease", "Filter Release", "redzone", 0x61, 0x3f, true),
+  // Dynamics extras (RE 2026-07-15): output soft-clip (0x21) + the gate's own attack (0x26, completes
+  // gate timing alongside gateRelease 0x27). Ranges uncalibrated on the pedal — shown as raw %.
+  softClip: knob("softClip", "Soft Clip", "dynamics", 0x43, 0x21, true),
+  gateAttack: knob("gateAttack", "Gate Attack", "dynamics", 0x48, 0x26, true),
 } as const satisfies Record<string, ParamDef>;
 
 export type ParamId = keyof typeof PARAMS;

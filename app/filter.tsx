@@ -1,15 +1,16 @@
 /**
- * Auto Filter — the pedal's envelope filter: an auto-wah (Tech 21 documents it as "similar to the
- * Mu-Tron III"). A resonant filter whose peak SWEEPS up as you dig in and falls on release — it
- * makes the vocal "wah/quack", it does NOT clean up mud (use the high-pass in IR Studio for that).
+ * Auto Filter — the pedal's envelope filter (auto-wah, Mu-Tron III style): a resonant peak that
+ * SWEEPS up as you dig in and falls on release. The pedal's ENTIRE auto-filter surface is: a master
+ * enable (0x3c), Level = sweep depth (0x3d, the red-zone FILTER knob), and Attack/Release timing
+ * (0x3e/0x3f). There is no cutoff/resonance param (confirmed by RE). All store-backed now, so every
+ * control reads back from the preset and shows the amber ghost.
  *
- * LIVE: Level = the red-zone FILTER knob (0x3d); Attack/Release = 0x3e/0x3f (corrected 2026-07-14).
- * The graph shows the filter at the bottom and top of its sweep (shaded band = where the resonant
- * peak travels); Attack/Release set how fast it opens/closes. Raw 0–127 on the wire. RN surface.
+ * The graph shows the sweep band (Level sets its top freq + resonance). Attack/Release are timing,
+ * so they don't move a static frequency curve — that's expected, not a bug. RN surface.
  */
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "expo-router";
-import { Text, useWindowDimensions, View } from "react-native";
+import { Switch, Text, useWindowDimensions, View } from "react-native";
 import { KnobScroll } from "../src/components/KnobScroll";
 import { useStore } from "zustand";
 import { IrGraph } from "../src/components/IrGraph";
@@ -19,7 +20,7 @@ import { FootNote, GraphCard, IntroNote } from "../src/components/panels";
 import { radius, theme } from "../src/components/theme";
 import { generateIr } from "../src/dsp/generators";
 import { frequencyResponse, logGrid } from "../src/dsp/ir";
-import { AUTO_FILTER_PARAMS } from "../src/protocol/params";
+import { PARAMS, type ParamId } from "../src/protocol/params";
 import { filterLevelLabel, filterTimePct } from "../src/protocol/units";
 import { sendParam } from "../src/midi/liveParam";
 import { pedalStore } from "../src/midi/pedal";
@@ -35,11 +36,11 @@ const wahCurve = (fc: number, q: number) =>
 export default function AutoFilter() {
   const { width } = useWindowDimensions();
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
-  // Level = the red-zone FILTER knob (param 0x41 = PARAMS.filter, store-backed) — read from the pedal
-  // store so it reflects recall/Apply. Attack/Release are send-only (no read-back), kept local.
   const level = useStore(pedalStore, (s) => s.values.filter) ?? 64;
-  const [attack, setAttack] = useState(30);
-  const [release, setRelease] = useState(40);
+  const attack = useStore(pedalStore, (s) => s.values.filterAttack) ?? 64;
+  const release = useStore(pedalStore, (s) => s.values.filterRelease) ?? 64;
+  const on = (useStore(pedalStore, (s) => s.values.autoFilterOn) ?? 0) > 0;
+  const baseline = useStore(pedalStore, (s) => s.baseline);
 
   const q = 1.6 + (level / 127) * 4;
   const restHz = 180;
@@ -53,14 +54,10 @@ export default function AutoFilter() {
     { db: open, color: theme.amber, width: 2.6, fillFrom: closed, fillColor: theme.amber },
   ];
 
-  // Level writes to the pedal store (source of truth); Attack/Release are local send-only.
-  const onLevel = (v: number) => {
-    sendParam(AUTO_FILTER_PARAMS.level, v);
-    pedalStore.getState().setValueLocal("filter", v);
-  };
-  const set = (setter: (v: number) => void, param: number) => (v: number) => {
-    setter(v);
-    sendParam(param, v);
+  // Store-backed: send the live edit (index → liveSetId inside sendParam) + record it for read-back.
+  const setP = (id: ParamId) => (v: number) => {
+    sendParam(PARAMS[id].paramId ?? 0, v);
+    pedalStore.getState().setValueLocal(id, v);
   };
 
   return (
@@ -95,27 +92,61 @@ export default function AutoFilter() {
           gap: 16,
         }}
       >
-        <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 12 }}>
-          <Knob label="Level" value={level} display={filterLevelLabel(level)} onChange={onLevel} />
+        <View
+          style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
+        >
+          <Text style={{ color: theme.text, fontWeight: "700", letterSpacing: 0.5 }}>
+            AUTO FILTER
+          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1 }}>
+              {on ? "ON" : "OFF"}
+            </Text>
+            <Switch
+              value={on}
+              onValueChange={(v) => setP("autoFilterOn")(v ? 1 : 0)}
+              trackColor={{ false: theme.panelEdge, true: theme.accent }}
+              thumbColor="#fff"
+            />
+          </View>
+        </View>
+        <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            justifyContent: "center",
+            gap: 12,
+            opacity: on ? 1 : 0.45,
+          }}
+        >
+          <Knob
+            label="Level"
+            value={level}
+            ghost={baseline.filter}
+            display={filterLevelLabel(level)}
+            onChange={setP("filter")}
+          />
           <Knob
             label="Attack"
             value={attack}
+            ghost={baseline.filterAttack}
             display={`${filterTimePct(attack)}%`}
-            onChange={set(setAttack, AUTO_FILTER_PARAMS.attack)}
+            onChange={setP("filterAttack")}
           />
           <Knob
             label="Release"
             value={release}
+            ghost={baseline.filterRelease}
             display={`${filterTimePct(release)}%`}
-            onChange={set(setRelease, AUTO_FILTER_PARAMS.release)}
+            onChange={setP("filterRelease")}
           />
         </View>
       </View>
 
       <FootNote>
-        Live over MIDI when connected (Level = the FILTER knob, bipolar −100…+100% with Bypass at
-        centre; Attack/Release set the sweep speed). To clean up muddy lows instead, use the
-        high-pass in{" "}
+        Live over MIDI when connected. The toggle engages the auto-wah; Level (the FILTER knob) is
+        the sweep depth (bipolar −100…+100% with Bypass at centre); Attack/Release set the sweep
+        speed. To clean up muddy lows instead, use the high-pass in{" "}
         <Link href="/ir" style={{ color: theme.accent }}>
           IR Studio
         </Link>

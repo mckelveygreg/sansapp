@@ -16,9 +16,9 @@ import { Knob } from "../src/components/Knob";
 import { KnobScroll } from "../src/components/KnobScroll";
 import { FootNote, GraphCard, IntroNote } from "../src/components/panels";
 import { radius, theme } from "../src/components/theme";
-import { sendParam } from "../src/midi/liveParam";
+import { rawToPct, sendParam } from "../src/midi/liveParam";
 import { pedalStore } from "../src/midi/pedal";
-import { COMP_PARAMS, GATE_PARAMS } from "../src/protocol/params";
+import { COMP_PARAMS, GATE_PARAMS, PARAMS, type ParamId } from "../src/protocol/params";
 import { dynamicsStore } from "../src/state/dynamics";
 import {
   compAttackMs,
@@ -75,6 +75,9 @@ export default function Compressor() {
   const threshold = useStore(pedalStore, (s) => s.values.comp) ?? 64;
   const ratio = useStore(pedalStore, (s) => s.values.ratio) ?? 64;
   const baseline = useStore(pedalStore, (s) => s.baseline);
+  // RE-2026-07-15 additions, store-backed via PARAMS: output soft-clip + the gate's own attack.
+  const softClip = useStore(pedalStore, (s) => s.values.softClip) ?? 127;
+  const gateAttack = useStore(pedalStore, (s) => s.values.gateAttack) ?? 0;
 
   // Knob onChange gives an absolute 0–127; send it live + update the shared dynamics store.
   const set = (key: "compOutput" | "compAttack" | "compRelease", param: number) => (v: number) => {
@@ -101,6 +104,11 @@ export default function Compressor() {
       sendParam(param, v);
       dynamicsStore.getState().patch({ [key]: v });
     };
+  // Store-backed extras (Soft Clip, Gate Attack) — send live + record for read-back/ghost.
+  const setP = (id: ParamId) => (v: number) => {
+    sendParam(PARAMS[id].paramId ?? 0, v);
+    pedalStore.getState().setValueLocal(id, v);
+  };
 
   // Transfer-curve params — the graph shows the pure compression SHAPE. Make-up/output is a vertical
   // level shift, not part of the shape, so it's excluded (makeupDb 0); ratio then only bends the
@@ -172,6 +180,13 @@ export default function Compressor() {
             display={`${compReleaseMs(d.compRelease).toFixed(0)}ms`}
             onChange={set("compRelease", COMP_PARAMS.release)}
           />
+          <Knob
+            label="Soft Clip"
+            value={softClip}
+            ghost={baseline.softClip}
+            display={`${rawToPct(softClip)}%`}
+            onChange={setP("softClip")}
+          />
         </View>
         <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
           <ToggleRow
@@ -203,6 +218,13 @@ export default function Compressor() {
             ghost={baseline.gateRatio}
             display={`${gateRatio(d.gateRatio).toFixed(1)}:1`}
             onChange={setGate("gateRatio", GATE_PARAMS.ratio)}
+          />
+          <Knob
+            label="Attack"
+            value={gateAttack}
+            ghost={baseline.gateAttack}
+            display={`${rawToPct(gateAttack)}%`}
+            onChange={setP("gateAttack")}
           />
           <Knob
             label="Release"
