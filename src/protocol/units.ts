@@ -22,7 +22,7 @@ export const compOutputDb = (r: number): number => lin(r, -30, 18); // −30.0 �
 export const compAttackMs = (r: number): number => logMap(r, 1, 100); // 1 … 100 ms (log)
 export const compReleaseMs = (r: number): number => logMap(r, 10, 1000); // 10 … 1000 ms (log)
 
-/* ── Gate (noise gate, on the Gate & Master Level page) ──────────────────────── */
+/* ── Gate (noise gate, on the Dynamics page) ─────────────────────────────────── */
 // Captured 2026-07-08: Threshold raw 0 = Bypass, then ≈−90…−30 dB (−30 max + Bypass floor confirmed
 // from the min/max screenshots; low end estimated). Ratio 1–10:1 linear; Release 10–1000 ms log.
 // Bypass at raw 0, then ≈ −99 … −30 dB (EliteControl min/mid/max read-outs 2026-07-14: raw≈64 → −64.5,

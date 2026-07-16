@@ -10,8 +10,7 @@ import { radius, theme } from "./theme";
 const SECTIONS = [
   { href: "/amp", label: "Amp" },
   { href: "/eq", label: "EQ" },
-  { href: "/comp", label: "Comp" },
-  { href: "/gate", label: "Gate & Level" },
+  { href: "/comp", label: "Dynamics" },
   { href: "/filter", label: "Filter" },
   { href: "/ambience", label: "Ambience" },
   { href: "/chorus", label: "Chorus" },

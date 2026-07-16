@@ -12,7 +12,6 @@ const KNOB_PAGES: Record<string, string> = {
   amp: "Amp",
   eq: "Parametric EQ",
   comp: "Dynamics",
-  gate: "Master Level",
   filter: "Auto Filter",
   ambience: "Ambience",
   chorus: "Chorus",
