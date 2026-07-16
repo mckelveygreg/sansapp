@@ -18,7 +18,7 @@ import { FootNote, GraphCard, IntroNote } from "../src/components/panels";
 import { radius, theme } from "../src/components/theme";
 import { sendParam } from "../src/midi/liveParam";
 import { pedalStore } from "../src/midi/pedal";
-import { COMP_PARAMS } from "../src/protocol/params";
+import { COMP_PARAMS, GATE_PARAMS } from "../src/protocol/params";
 import { dynamicsStore } from "../src/state/dynamics";
 import {
   compAttackMs,
@@ -28,8 +28,20 @@ import {
   compThresholdDb,
   compThresholdLabel,
   gateRatio,
+  gateReleaseMs,
   gateThresholdDb,
+  gateThresholdLabel,
 } from "../src/protocol/units";
+
+const card = {
+  backgroundColor: theme.panel,
+  borderColor: theme.panelEdge,
+  borderWidth: 1,
+  borderRadius: radius,
+  padding: 16,
+  gap: 16,
+} as const;
+const sectionLabel = { color: theme.accent, fontWeight: "700", letterSpacing: 1 } as const;
 
 function ToggleRow({
   label,
@@ -82,6 +94,13 @@ export default function Compressor() {
     sendParam(param, on ? 1 : 0);
     dynamicsStore.getState().patch({ [key]: on });
   };
+  // The gate/expander shares this page's dynamics graph (its lower-left segment), so its knobs live
+  // here too — one "Dynamics" page. Store-backed via dynamicsStore, same as the compressor knobs.
+  const setGate =
+    (key: "gateThreshold" | "gateRatio" | "gateRelease", param: number) => (v: number) => {
+      sendParam(param, v);
+      dynamicsStore.getState().patch({ [key]: v });
+    };
 
   // Transfer-curve params — the graph shows the pure compression SHAPE. Make-up/output is a vertical
   // level shift, not part of the shape, so it's excluded (makeupDb 0); ratio then only bends the
@@ -99,8 +118,8 @@ export default function Compressor() {
   return (
     <KnobScroll style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 16 }}>
       <IntroNote ready={ready}>
-        The pedal&apos;s compressor. The graph is the input→output transfer curve (dashed = 1:1);
-        the gate is the lower-left, the compressor the upper-right.
+        Dynamics — compressor + noise gate on one input→output transfer curve (dashed = 1:1). The
+        compressor is the upper-right; the gate / expander the lower-left.
       </IntroNote>
 
       <GraphCard>
@@ -168,10 +187,37 @@ export default function Compressor() {
         </View>
       </View>
 
+      <View style={card}>
+        <Text style={sectionLabel}>GATE / EXPANDER</Text>
+        <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
+          <Knob
+            label="Threshold"
+            value={d.gateThreshold}
+            ghost={baseline.gateThreshold}
+            display={gateThresholdLabel(d.gateThreshold)}
+            onChange={setGate("gateThreshold", GATE_PARAMS.threshold)}
+          />
+          <Knob
+            label="Ratio"
+            value={d.gateRatio}
+            ghost={baseline.gateRatio}
+            display={`${gateRatio(d.gateRatio).toFixed(1)}:1`}
+            onChange={setGate("gateRatio", GATE_PARAMS.ratio)}
+          />
+          <Knob
+            label="Release"
+            value={d.gateRelease}
+            ghost={baseline.gateRelease}
+            display={`${gateReleaseMs(d.gateRelease).toFixed(0)} ms`}
+            onChange={setGate("gateRelease", GATE_PARAMS.release)}
+          />
+        </View>
+      </View>
+
       <FootNote>
         Live over MIDI when connected. Units are calibrated to EliteControl&apos;s read-outs.
-        Threshold is the main COMP knob — at its floor the compressor reads Bypass. Set the gate on
-        the Gate &amp; Level page; it shares this graph.
+        Compressor (upper-right of the graph) tames peaks above its Threshold; the Gate/Expander
+        (lower-left) cleans up hiss below its. Master output Level is on the Master Level page.
       </FootNote>
     </KnobScroll>
   );
