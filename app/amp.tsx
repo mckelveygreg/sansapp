@@ -16,8 +16,8 @@ import { Knob } from "../src/components/Knob";
 import { KnobScroll } from "../src/components/KnobScroll";
 import { radius, theme } from "../src/components/theme";
 import {
-  applyAmpBundle,
-  applyAmpBundleBytes,
+  AMP_BUNDLE_OFFSETS,
+  AMP_BUNDLES,
   bundleMatches,
   detectAmpModel,
   hasAmpBundle,
@@ -29,7 +29,6 @@ import { getSession, pedalStore } from "../src/midi/pedal";
 import { type AmpPreset, loadAmpPresets, saveAmpPresets } from "../src/midi/ampPresets";
 import { PARAMS, type ParamId } from "../src/protocol/params";
 
-const EDIT = 0x7f;
 // The store-backed knobs an amp bundle drives (Preset Level 0x40 is level-match, not a knob here).
 const AMP_KNOBS: { id: ParamId; label: string }[] = [
   { id: "preamp", label: "Pre-Amp" },
@@ -108,31 +107,32 @@ export default function Amp() {
     sendParam(wire, v);
     pedalStore.getState().setValueLocal(id, v);
   };
-  // Reflect an applied bundle's bytes into the knobs (so they move to the model's/custom's values).
-  const reflect = (blob: Uint8Array) => {
-    for (const { id } of AMP_KNOBS)
-      pedalStore.getState().setValueLocal(id, blob[PARAMS[id].blobOffset]!);
-  };
 
   useEffect(() => {
     void loadAmpPresets().then(setCustoms);
   }, []);
 
-  async function applyBundle(name: string, apply: (blob: Uint8Array) => Uint8Array) {
-    const session = getSession();
-    if (!session) {
+  // Apply an amp model/custom by LIVE-SETTING its bundle params (05 50 each, index→set-id via
+  // liveSetId) — the write path that actually sticks. An edit-buffer write is discarded by the pedal
+  // (same bug the ambience type had). Then reflect the values into the knobs/store.
+  function applyBundle(name: string, vals: readonly number[]) {
+    if (!getSession()) {
       setStatus("Connect to apply an amp.");
       return;
     }
-    try {
-      const buf = await session.readEditBuffer();
-      const next = apply(buf.raw);
-      await session.writePreset(EDIT, next);
-      reflect(next);
-      setStatus(`Applied "${name}".`);
-    } catch {
-      setStatus("Apply failed — check the connection.");
+    if (!vals.length) {
+      setStatus(`No captured bundle for "${name}".`);
+      return;
     }
+    AMP_BUNDLE_OFFSETS.forEach((off, i) => sendParam(off - 0x22, vals[i] ?? 0));
+    const byOffset = new Map<number, number>(
+      AMP_BUNDLE_OFFSETS.map((off, i) => [off, vals[i] ?? 0]),
+    );
+    for (const { id } of AMP_KNOBS) {
+      const v = byOffset.get(PARAMS[id].blobOffset);
+      if (v !== undefined) pedalStore.getState().setValueLocal(id, v);
+    }
+    setStatus(`Applied "${name}".`);
   }
 
   async function saveCurrent() {
@@ -143,7 +143,11 @@ export default function Amp() {
     }
     try {
       const buf = await session.readEditBuffer();
-      const bytes = readAmpBundle(buf.raw);
+      // The edit-buffer read doesn't reflect live knob tweaks, so overlay the store's live values
+      // before snapshotting the bundle — otherwise we'd save the preset's original amp, not yours.
+      const raw = buf.raw.slice();
+      for (const { id } of AMP_KNOBS) raw[PARAMS[id].blobOffset] = (values[id] ?? 0) & 0x7f;
+      const bytes = readAmpBundle(raw);
       const doSave = (name: string) => {
         const next = [...customs.filter((c) => c.name !== name), { name, bytes }];
         setCustoms(next); // `active` re-derives from the store and lights up the new custom
@@ -221,7 +225,7 @@ export default function Amp() {
               label={name}
               active={active === name}
               dim={!hasAmpBundle(name)}
-              onPress={() => void applyBundle(name, (b) => applyAmpBundle(b, name))}
+              onPress={() => applyBundle(name, AMP_BUNDLES[name] ?? [])}
             />
           ))}
         </View>
@@ -234,7 +238,7 @@ export default function Amp() {
                 label={c.name}
                 active={active === c.name}
                 accent
-                onPress={() => void applyBundle(c.name, (b) => applyAmpBundleBytes(b, c.bytes))}
+                onPress={() => applyBundle(c.name, c.bytes)}
                 onLongPress={() => deleteCustom(c.name)}
               />
             ))}
