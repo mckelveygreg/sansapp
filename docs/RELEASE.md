@@ -133,6 +133,11 @@ create the initial release); after that the lanes run unattended. Bump `android.
 - **App Review needs the hardware.** SansApp's editing needs the physical pedal + a MIDI adapter,
   which the reviewer won't have. `fastlane/metadata/review_information/notes.txt` explains that every
   screen is browsable without a pedal and no account/data is involved — keep that note current.
+- **App Review contact info is PII, kept in `.env.local`.** ASC requires a contact first/last name,
+  email, and phone for review. Rather than commit them, the lanes read `APP_REVIEW_FIRST_NAME`,
+  `APP_REVIEW_LAST_NAME`, `APP_REVIEW_EMAIL`, and `APP_REVIEW_PHONE` from `.env.local` (git-ignored)
+  and hand them to `deliver` (the review *notes* stay in `review_information/notes.txt`). The phone
+  must be `+`-prefixed with a country code. Missing vars fail fast with a clear message.
 - **Icon alpha.** `assets/icon.png` has an alpha channel; Expo flattens the App Store icon on
   prebuild. If ASC ever rejects the 1024² icon for transparency, flatten it:
   `sips -s format png assets/icon.png --out /tmp/i.png` then composite onto an opaque background.
