@@ -11,6 +11,7 @@ import type { ReactNode } from "react";
 import { Alert, Platform, Pressable, Text, View } from "react-native";
 import { useStore } from "zustand";
 import { AmpVoicePrint } from "../src/components/AmpVoicePrint";
+import { GainStaging } from "../src/components/GainStaging";
 import { Knob } from "../src/components/Knob";
 import { KnobScroll } from "../src/components/KnobScroll";
 import { radius, theme } from "../src/components/theme";
@@ -306,6 +307,8 @@ export default function Amp() {
           Q are the hidden voicing an amp model sets (ranges uncalibrated, shown as raw %).
         </Text>
       </View>
+
+      <GainStaging values={values} />
 
       {status ? (
         <Text style={{ color: theme.textDim, fontSize: 12, lineHeight: 18 }}>{status}</Text>
