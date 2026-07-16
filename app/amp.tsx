@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Alert, Platform, Pressable, Text, View } from "react-native";
 import { useStore } from "zustand";
+import { AmpVoicePrint } from "../src/components/AmpVoicePrint";
 import { Knob } from "../src/components/Knob";
 import { KnobScroll } from "../src/components/KnobScroll";
 import { radius, theme } from "../src/components/theme";
@@ -272,6 +273,15 @@ export default function Amp() {
           gap: 18,
         }}
       >
+        <Text style={{ color: theme.text, fontWeight: "700", letterSpacing: 0.5, fontSize: 13 }}>
+          VOICE PRINT
+        </Text>
+        <AmpVoicePrint values={values} />
+        <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
+          An artistic read of the drive character — not measured Hz. Pre-Amp = height, Drive squares
+          the peaks, Buzz = fizz, Presence = colour; Punch = line weight, Punch Freq = oscillation
+          spacing, Punch Q = fill.
+        </Text>
         <View
           style={{
             flexDirection: "row",
