@@ -31,13 +31,9 @@ export default function Ambience() {
   const time = useStore(ambienceStore, (s) => s.time);
   const baseline = useStore(pedalStore, (s) => s.baseline);
 
-  async function selectType(i: number) {
-    ambienceStore.getState().patch({ type: i }); // optimistic; setAmbienceType re-confirms on success
-    try {
-      await setAmbienceType(i);
-    } catch {
-      // not connected / write failed — selection stays as picked
-    }
+  function selectType(i: number) {
+    ambienceStore.getState().patch({ type: i }); // optimistic (shows even when disconnected)
+    setAmbienceType(i); // live-sets the type's 10 profile params when connected; re-patches the store
   }
 
   const onLevel = (v: number) => {
@@ -65,7 +61,7 @@ export default function Ambience() {
             return (
               <Pressable
                 key={name}
-                onPress={() => void selectType(i)}
+                onPress={() => selectType(i)}
                 style={{
                   paddingHorizontal: 13,
                   paddingVertical: 9,

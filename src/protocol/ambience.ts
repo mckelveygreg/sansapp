@@ -1,33 +1,39 @@
 /**
- * Ambience type = a bundle of preset-blob bytes (there's no single "type" index). Selecting a type
- * in EliteControl rewrites these offsets via a `05 20` edit-buffer write. Captured 2026-07-05, one
- * type at a time; rows are index-aligned to AMBIENCE_ENGINES (Room…Echo Verb). To apply a type:
- * read the edit buffer, patch these bytes, write it back. Framework-free.
+ * Ambience type = a profile of 10 params. Binary RE (2026-07-15) of EliteControl: picking an
+ * ambience type LIVE-SETS these 10 params (`05 50`) from a per-type table — it does NOT write the
+ * edit buffer, does NOT commit, and does NOT touch "Reverb Mode" (0x39). The 7 types (Room…Echo Verb)
+ * are all this same mechanism; 0x13 "Reverb Extension Factor" (2–5) is the coarse family selector and
+ * the other 9 params differentiate within it. Values below are index-aligned to AMBIENCE_ENGINES and
+ * exactly match EliteControl's profile table. Framework-free.
  *
- * Re-validated 2026-07-08 by a clean per-engine proxy pass (docs/CAPTURE-PLAYBOOK.md → selector
- * session): the identity bytes below (0x32–0x3A, 0x5C, 0x5D) matched these values exactly for all 7
- * engines. Also observed: offset 0x5E flips 0→1 on the first engine select — the "ambience engaged"
- * flag — so applyAmbienceBundle sets it too, otherwise selecting a type on a preset whose ambience
- * was off would be silent.
+ * (The earlier edit-buffer-write approach never stuck — the pedal discards 0x7F writes — and it also
+ * wrongly set blob 0x5E, which is the AUTO-FILTER ENABLE, not an "ambience engaged" flag.)
  */
 
-/** Blob offsets that define the ambience type/voicing. */
-export const AMBIENCE_BUNDLE_OFFSETS = [
-  0x32, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x5c, 0x5d, 0x5f,
+/** The 10 param WIRE indices an ambience type live-sets (set-id = index+4 via liveSetId). */
+export const AMBIENCE_PROFILE_WIRES = [
+  0x10, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x3a, 0x3b,
 ] as const;
 
-/** Per-type values at AMBIENCE_BUNDLE_OFFSETS (index = AMBIENCE_ENGINES index). */
+/** Blob offsets of those 10 params (wire + 0x22) — for reading a type back off a loaded preset. */
+export const AMBIENCE_BUNDLE_OFFSETS = AMBIENCE_PROFILE_WIRES.map((w) => w + 0x22);
+
+/** Per-type values for AMBIENCE_PROFILE_WIRES (index = AMBIENCE_ENGINES index). */
 export const AMBIENCE_BUNDLES: readonly (readonly number[])[] = [
-  [47, 20, 3, 49, 127, 93, 127, 15, 0, 0, 34], // Room
-  [64, 8, 2, 64, 127, 64, 64, 20, 4, 127, 34], // Hall
-  [109, 100, 2, 71, 127, 73, 26, 23, 26, 0, 34], // Spring
-  [86, 120, 2, 127, 127, 45, 127, 42, 4, 127, 34], // Plate
-  [74, 84, 4, 52, 0, 0, 127, 0, 67, 60, 34], // Chorus Verb
-  [64, 64, 5, 0, 127, 64, 127, 15, 0, 0, 34], // Echo
-  [64, 70, 5, 0, 127, 32, 127, 10, 0, 0, 34], // Echo Verb
+  [47, 20, 3, 49, 127, 93, 127, 15, 0, 0], // Room
+  [64, 8, 2, 64, 127, 64, 64, 20, 4, 127], // Hall
+  [109, 100, 2, 71, 127, 73, 26, 23, 26, 0], // Spring
+  [86, 120, 2, 127, 127, 45, 127, 42, 4, 127], // Plate
+  [74, 84, 4, 52, 0, 0, 127, 0, 67, 60], // Chorus Verb
+  [64, 64, 5, 0, 127, 64, 127, 15, 0, 0], // Echo
+  [64, 70, 5, 0, 127, 32, 127, 10, 0, 0], // Echo Verb
 ];
 
-/** Return a copy of `blob` with the ambience-type bytes set for `typeIndex`. */
+/**
+ * Bake a type's 10 profile bytes into a copy of `blob` — for saving a type INTO a preset blob
+ * (writePreset to a slot). Live audio changes go through the live-set path (setAmbienceType), which
+ * is what actually sticks; this is only for the persist-to-slot path.
+ */
 export function applyAmbienceBundle(blob: Uint8Array, typeIndex: number): Uint8Array {
   const vals = AMBIENCE_BUNDLES[typeIndex];
   if (!vals) return blob.slice();
@@ -35,16 +41,13 @@ export function applyAmbienceBundle(blob: Uint8Array, typeIndex: number): Uint8A
   AMBIENCE_BUNDLE_OFFSETS.forEach((o, i) => {
     next[o] = vals[i]! & 0x7f;
   });
-  next[0x5e] = 1; // engage the ambience block (observed 0→1 on engine select, 2026-07-08)
   return next;
 }
 
 /**
- * Best-guess current ambience type from a blob, or -1 if nothing is close. Uses NEAREST match, not
- * exact: some of these offsets are per-engine ADJUSTABLE params (e.g. 0x32 was read back at 69 where
- * the Echo Verb default is 64), so a strict match returned -1 on real presets and the picker showed
- * nothing selected. The engines differ from each other by several bytes, so a small tolerance can't
- * cross-identify them.
+ * Best-guess current ambience type from a preset blob, or -1 if nothing is close. NEAREST match
+ * (not exact): some of these offsets are per-engine ADJUSTABLE params, so a strict match misses real
+ * presets. The engines differ by several bytes, so a small tolerance can't cross-identify them.
  */
 export function detectAmbienceType(blob: Uint8Array): number {
   let best = -1;

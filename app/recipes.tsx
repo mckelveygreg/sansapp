@@ -262,7 +262,7 @@ export default function Recipes() {
               let engineFailed = false;
               for (const s of engines) {
                 try {
-                  await setAmbienceType(s.applyEngine!);
+                  setAmbienceType(s.applyEngine!);
                 } catch {
                   engineFailed = true;
                 }
