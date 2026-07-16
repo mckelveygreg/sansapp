@@ -7,11 +7,29 @@ import { applyAmbienceBundle, detectAmbienceType } from "../protocol/ambience";
 import { encodePreset, withName } from "../protocol/preset";
 import { ambienceStore } from "../state/ambience";
 import { ensureBluetoothMidi } from "./bleMidi";
+import { loadNameCache, saveNameCache } from "./nameCache";
 import { requestMIDIAccess } from "./requestAccess";
 import { listPortNames, midiIOAutodetect, midiIOFromWebMidi } from "./webMidiAdapter";
 import { bindSession, createPedalStore, type PedalController } from "../state/store";
 
 export const pedalStore = createPedalStore();
+
+// Persist the slot→name map so the Presets list is populated on launch (and offline), surviving
+// restarts. Hydrate once at startup — any live read already in the store wins over the cache — then
+// save (debounced) whenever the names map changes (syncNames, or a per-preset name learned on load).
+void loadNameCache().then((cached) => {
+  if (Object.keys(cached).length > 0) {
+    pedalStore.getState().setNames({ ...cached, ...pedalStore.getState().names });
+  }
+});
+let nameSaveTimer: ReturnType<typeof setTimeout> | undefined;
+let lastNames = pedalStore.getState().names;
+pedalStore.subscribe((s) => {
+  if (s.names === lastNames) return;
+  lastNames = s.names;
+  clearTimeout(nameSaveTimer);
+  nameSaveTimer = setTimeout(() => void saveNameCache(lastNames), 400);
+});
 
 let controller: PedalController | null = null;
 let session: DeviceSession | null = null;
