@@ -8,6 +8,15 @@ import { encode } from "../protocol/messages";
 import { liveSetId } from "../protocol/params";
 import { encodePreset, withName } from "../protocol/preset";
 import { ambienceStore } from "../state/ambience";
+import { dynamicsStore } from "../state/dynamics";
+import {
+  DEMO_AMBIENCE,
+  DEMO_DYNAMICS,
+  DEMO_NAME,
+  DEMO_NAMES,
+  DEMO_SLOT,
+  DEMO_VALUES,
+} from "../state/demoState";
 import { ensureBluetoothMidi } from "./bleMidi";
 import { loadNameCache, saveNameCache } from "./nameCache";
 import { requestMIDIAccess } from "./requestAccess";
@@ -74,6 +83,21 @@ export function disconnectPedal(): void {
   controller?.dispose();
   controller = null;
   session = null;
+}
+
+/**
+ * Seed the stores with synthetic demo state (no hardware) — for App Store screenshots and previewing
+ * the UI without a pedal. Reached via `sansapp://connect?demo=1`; never fires in normal use. There's
+ * no controller, so knob edits are local-only (no MIDI). Disconnect returns to the real flow.
+ */
+export function loadDemoState(): void {
+  const st = pedalStore.getState();
+  st.loadPreset(DEMO_SLOT, DEMO_VALUES, DEMO_NAME);
+  st.setNames({ ...st.names, ...DEMO_NAMES });
+  dynamicsStore.getState().patch(DEMO_DYNAMICS);
+  ambienceStore.getState().patch(DEMO_AMBIENCE);
+  st.setConnection("ready");
+  st.pushLog("● demo state loaded (no hardware)");
 }
 
 /** Update the cached slot→name map for one slot so the Presets list re-renders immediately. */

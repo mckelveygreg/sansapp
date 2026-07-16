@@ -22,13 +22,17 @@ keeps the signing certs and profiles encrypted in a private git repo — no manu
 2. A **private git repo** to hold the signing material, e.g. `mckelveygreg/sansapp-certs` (empty is
    fine). This is what `match` writes to.
 3. Install fastlane: `brew install fastlane` (bundles its own Ruby). Also `brew install cocoapods` if you don't have it, plus Xcode command-line tools.
-4. Copy **`.env.example` → `.env`** (git-ignored) and fill it in. fastlane **auto-loads `.env`** from
-   the repo root, so there's no `source` step — just run the lanes from the project directory:
+4. Copy **`.env.example` → `.env.local`** (git-ignored) and fill it in. The Fastfile loads it, so
+   there's no `source` step — just run the lanes from the project directory. (It must be
+   `.env.local`, not `.env`: Expo CLI refuses to load personal secrets — like the Apple
+   app-specific password — from a non-`.local` env file, and the lanes shell out to
+   `expo prebuild`.)
    ```sh
-   FASTLANE_APPLE_ID   # email on your Apple Developer account
-   FASTLANE_TEAM_ID    # Apple Developer team id (portal → Membership)
-   MATCH_GIT_URL       # the private certs repo from step 2
-   MATCH_PASSWORD      # a strong passphrase that encrypts that repo
+   FASTLANE_APPLE_ID                             # email on your Apple Developer account
+   FASTLANE_TEAM_ID                              # Apple Developer team id (portal → Membership)
+   MATCH_GIT_URL                                 # the private certs repo from step 2
+   MATCH_PASSWORD                                # a strong passphrase that encrypts that repo
+   FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD  # account.apple.com → App-Specific Passwords (binary upload)
    ```
 5. **Register the app once** — creates the App ID on the Developer Portal _and_ the App Store
    Connect record (match needs the App ID before it can make a profile): `fastlane ios register`.
@@ -43,20 +47,26 @@ MATCH_READONLY=false fastlane ios certs
 
 This creates the distribution certificate + App Store provisioning profile and stores them
 (encrypted) in your `sansapp-certs` repo. After this, `beta`/`release` fetch them read-only, so it
-works unattended. If Xcode signing needs pointing at the profile the first time, open
-`ios/SansApp.xcworkspace` → Signing & Capabilities and select the `match AppStore …` profile (manual
-signing); it sticks across prebuilds via the exported profile.
+works unattended. No Xcode signing setup is needed: `expo prebuild` regenerates `ios/` with no
+team or profile, so the `sync_signing` lane re-applies manual signing (team, `Apple Distribution`,
+the match profile) to the fresh project on every build.
 
 ## Screenshots
 
-App Store requires at least one **6.7"** iPhone screenshot set (1290×2796). A stock Expo app has no
-UITest target, so the simplest path for v1 is manual:
+App Store requires one **6.9"** iPhone screenshot set (1320×2868; iPhone-only app, so no iPad set).
+Automated — no UITest target:
 
-1. Build/run on a 6.7" device or the iPhone 16 Pro Max simulator.
-2. Capture the key screens: **Editor** (with the tone graph), **IR page**, **Presets**, **Backup**.
-3. Drop the PNGs in `fastlane/screenshots/en-US/`. `deliver` uploads them.
+```sh
+fastlane ios screenshots    # or: npm run screenshots -- --build
+```
 
-(If you later add a UITest target, `fastlane snapshot` automates this via `Snapfile`.)
+This boots the iPhone 16 Pro Max simulator, builds the app, starts the pedal emulator
+(`tools/emulate.ts` — the simulator shares the Mac's CoreMIDI, so the app genuinely connects),
+deep-links through the key screens (`sansapp://connect?auto=1` connects without a tap), and
+captures Editor, Presets, IR, Amp, and Backup into `fastlane/screenshots/en-US/`. `deliver`
+uploads whatever is in that directory. Re-run it whenever the UI changes.
+
+(If you later add a UITest target, `fastlane snapshot` via `Snapfile` is the heavier alternative.)
 
 ## Ship it
 
@@ -87,7 +97,7 @@ equivalent (the internal track) is the right place to start.
    ```
 3. A **Play service-account JSON** with the "Release" permission (Play Console → Setup → API access),
    for unattended uploads.
-4. Environment variables (a local `.env` you don't commit):
+4. Environment variables (in the same git-ignored `.env.local`):
    ```sh
    export ANDROID_KEYSTORE_PATH="/abs/path/sansapp-upload.keystore"
    export ANDROID_KEYSTORE_PASSWORD="…"
