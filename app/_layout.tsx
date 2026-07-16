@@ -11,8 +11,8 @@ import { theme } from "../src/components/theme";
 const KNOB_PAGES: Record<string, string> = {
   amp: "Amp",
   eq: "Parametric EQ",
-  comp: "Compressor",
-  gate: "Gate & Master Level",
+  comp: "Dynamics",
+  gate: "Master Level",
   filter: "Auto Filter",
   ambience: "Ambience",
   chorus: "Chorus",
