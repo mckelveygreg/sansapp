@@ -50,7 +50,7 @@ platform :ios do
     )
   end
 
-  desc "Capture App Store screenshots on the simulator against the pedal emulator"
+  desc "Capture App Store screenshots on the simulator (in-app demo mode — no hardware)"
   lane :screenshots do
     sh("cd .. && npm run screenshots -- --build")
   end
@@ -79,6 +79,19 @@ platform :ios do
     sync_signing
     build_app
     deliver # reads Deliverfile + fastlane/metadata + fastlane/screenshots
+  end
+
+  # Metadata/screenshot updates for an ALREADY-uploaded build — no rebuild, no binary re-upload.
+  # Split in two so a flaky screenshot upload can't block a text-only change (and vice versa).
+
+  desc "Push text metadata only (keywords, description, notes) — no rebuild, no binary, no screenshots"
+  lane :metadata do
+    deliver(skip_binary_upload: true, skip_screenshots: true)
+  end
+
+  desc "Upload screenshots only — no rebuild, no binary, no text metadata"
+  lane :screenshots_upload do
+    deliver(skip_binary_upload: true, skip_metadata: true)
   end
 end
 
