@@ -72,12 +72,12 @@ export const PARAMS = {
   comp: knob("comp", "Comp", "dynamics", 0x2c, 0x0a, true),
   mid: knob("mid", "Mid", "tone", 0x2e, 0x0c, true),
   // Parametric Mid Filter (deep page): MID knob = Gain (0x0c above), Freq/Q below.
-  freq: knob("freq", "Freq", "redzone", 0x2f, 0x0d, true),
+  freq: knob("freq", "Mid Freq", "redzone", 0x2f, 0x0d, true),
   // ─────────────────────────────────────────────────────────────────────────────────────────
   // Deep-param controls. Each wire id is the pedal's own parameter index (the same index the
   // desktop editor uses), confirmed against hardware; the ids satisfy blobOffset − wireId = 0x22,
   // the same rule as the main panel. Blob offsets are the read-back positions. See docs/PARAM-MAP.md.
-  q: knob("q", "Q", "redzone", 0x51, 0x2f, true), // mid Q
+  q: knob("q", "Mid Q", "redzone", 0x51, 0x2f, true), // mid Q
   // ratio (compressor) = 0x19. The COMPRESSOR block is 0x19-0x1c — its Ratio sweeps 1:1→20:1
   // (compression), vs the separate Expander block's 1:1→1:16 (downward expansion). See COMP_PARAMS.
   ratio: knob("ratio", "Ratio", "dynamics", 0x3b, 0x19, true),
