@@ -4,7 +4,7 @@
  * notifications. Pure and framework-free so it runs on the phone, in Node, and in tests.
  */
 
-import { PARAM_IDS, PARAMS } from "../protocol/params";
+import { PARAM_IDS, PARAMS, liveSetId } from "../protocol/params";
 import type { ParamId } from "../protocol/params";
 import { decode, encode } from "../protocol/messages";
 import type { PedalMessage } from "../protocol/messages";
@@ -155,7 +155,8 @@ export class DeviceSession {
   setParam(paramId: ParamId, value: number): void {
     const raw = PARAMS[paramId].paramId;
     if (raw === undefined) return;
-    this.send({ kind: "setParam", param: raw, value: value & 0x7f });
+    // Map index → live-set wire id (deep params set on index+4). Notify path keeps the raw index.
+    this.send({ kind: "setParam", param: liveSetId(raw), value: value & 0x7f });
   }
 
   /**
