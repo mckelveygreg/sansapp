@@ -113,6 +113,10 @@ export const PARAMS = {
   punch: knob("punch", "Punch", "preamp", 0x25, 0x03, true),
   punchFreq: knob("punchFreq", "Punch Freq", "preamp", 0x2d, 0x0b, true),
   punchQ: knob("punchQ", "Punch Q", "preamp", 0x4f, 0x2d, true),
+  // IR select/morph — the continuous 0x0E value the IR page's mic rides (0 = Off/flat, ~16·n = cab
+  // n, values between blend neighbours). Store-backed so the IR stack reflects the LOADED preset's
+  // cab instead of a guess. blobOffset 0x30 = wire 0x0e + 0x22; confirmed against the 128-preset bank.
+  irBlend: knob("irBlend", "IR", "ir", 0x30, 0x0e, true),
 } as const satisfies Record<string, ParamDef>;
 
 export type ParamId = keyof typeof PARAMS;

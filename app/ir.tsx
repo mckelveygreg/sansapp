@@ -319,7 +319,8 @@ export default function IrStudio() {
   const [pulled, setPulled] = useState<Record<number, Pulled>>({});
   const [pulling, setPulling] = useState(false);
   const [pullProg, setPullProg] = useState<{ done: number; total: number } | null>(null);
-  const [morph, setMorph] = useState(16); // 0x0E value; 16 = slot 1. Not sent until the user acts.
+  // IR position (0x0E) is store-backed — the mic reflects the LOADED preset's cab, not a guess.
+  const morph = useStore(pedalStore, (s) => s.values.irBlend) ?? 0;
 
   // Load cached curves on mount so we don't re-read the pedal every visit — Refresh re-pulls.
   useEffect(() => {
@@ -365,10 +366,10 @@ export default function IrStudio() {
     );
   }
 
-  // Live blend: send 0x0E as the mic moves. Off (0) = flat.
+  // Live blend: send 0x0E as the mic moves + record it in the store (source of truth for the stack).
   function setBlendValue(v: number) {
-    setMorph(v);
     sendParam(0x0e, v);
+    pedalStore.getState().setValueLocal("irBlend", v);
   }
   function selectSlot(pos: number) {
     setBlendValue(slotToValue(pos));

@@ -136,7 +136,19 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     } catch {
       // no settings block — leave slot unknown
     }
-    store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null);
+    // The edit buffer's own name field is unreliable (often reads "INIT"), so take the name from the
+    // stored slot instead — a plain read (05 40 <slot>), no recall, pedal unchanged. Values still
+    // come from the edit buffer (the live, possibly-edited sound).
+    let name = preset.name?.trim() || null;
+    if (slot != null) {
+      try {
+        const saved = await session.readPreset(slot);
+        name = saved.name?.trim() || name;
+      } catch {
+        // slot read failed — keep the edit-buffer name
+      }
+    }
+    store.getState().loadPreset(slot, preset.values, name);
     syncDeepStores(preset);
     store.getState().pushLog(`● loaded current preset${slot != null ? ` (${slot + 1})` : ""}`);
     return preset;
