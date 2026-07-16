@@ -33,6 +33,16 @@ platform :ios do
   desc "Fetch signing certs + profiles (read-only) — used by build/beta/release"
   lane :sync_signing do
     match(type: "appstore", readonly: true)
+    # prebuild regenerates ios/ with no team/profile, so signing must be re-applied every build.
+    update_code_signing_settings(
+      path: XCODEPROJ,
+      use_automatic_signing: false,
+      team_id: ENV["FASTLANE_TEAM_ID"],
+      bundle_identifier: "com.mckelveygreg.sansapp",
+      code_sign_identity: "Apple Distribution",
+      profile_name: lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING]["com.mckelveygreg.sansapp"],
+      targets: ["SansApp"],
+    )
   end
 
   desc "Build a signed App Store .ipa into ./build"

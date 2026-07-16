@@ -43,9 +43,9 @@ MATCH_READONLY=false fastlane ios certs
 
 This creates the distribution certificate + App Store provisioning profile and stores them
 (encrypted) in your `sansapp-certs` repo. After this, `beta`/`release` fetch them read-only, so it
-works unattended. If Xcode signing needs pointing at the profile the first time, open
-`ios/SansApp.xcworkspace` → Signing & Capabilities and select the `match AppStore …` profile (manual
-signing); it sticks across prebuilds via the exported profile.
+works unattended. No Xcode signing setup is needed: `expo prebuild` regenerates `ios/` with no
+team or profile, so the `sync_signing` lane re-applies manual signing (team, `Apple Distribution`,
+the match profile) to the fresh project on every build.
 
 ## Screenshots
 
