@@ -8,6 +8,24 @@
 # fastlane only auto-loads .env, so pull in .env.local explicitly.
 Dotenv.overload(File.expand_path("../.env.local", __dir__)) if File.exist?(File.expand_path("../.env.local", __dir__))
 
+# App Review contact details (name/email/phone) are PII, so they come from .env.local (gitignored) —
+# never committed to this public repo. The non-PII review notes stay in metadata/review_information/
+# notes.txt. Passed to deliver, whose Fastfile values take precedence over any files.
+def app_review_info
+  env = {
+    first_name: "APP_REVIEW_FIRST_NAME",
+    last_name: "APP_REVIEW_LAST_NAME",
+    email_address: "APP_REVIEW_EMAIL",
+    phone_number: "APP_REVIEW_PHONE",
+  }
+  missing = env.values.select { |k| ENV[k].to_s.strip.empty? }
+  UI.user_error!("Set these App Review vars in .env.local: #{missing.join(', ')}") unless missing.empty?
+  info = env.transform_values { |k| ENV[k].strip }
+  notes = File.expand_path("metadata/review_information/notes.txt", __dir__)
+  info[:notes] = File.read(notes).strip if File.exist?(notes)
+  info
+end
+
 default_platform(:ios)
 
 XCODEPROJ = "ios/SansApp.xcodeproj"
@@ -78,7 +96,7 @@ platform :ios do
     prep
     sync_signing
     build_app
-    deliver # reads Deliverfile + fastlane/metadata + fastlane/screenshots
+    deliver(app_review_information: app_review_info) # + Deliverfile/metadata/screenshots
   end
 
   # Metadata/screenshot updates for an ALREADY-uploaded build — no rebuild, no binary re-upload.
@@ -86,7 +104,7 @@ platform :ios do
 
   desc "Push text metadata only (keywords, description, notes) — no rebuild, no binary, no screenshots"
   lane :metadata do
-    deliver(skip_binary_upload: true, skip_screenshots: true)
+    deliver(app_review_information: app_review_info, skip_binary_upload: true, skip_screenshots: true)
   end
 
   desc "Upload screenshots only — no rebuild, no binary, no text metadata"
