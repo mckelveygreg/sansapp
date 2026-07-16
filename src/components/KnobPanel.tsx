@@ -15,7 +15,8 @@ export interface KnobPanelProps {
 
 // Knobs that have a deep-edit page: tapping the knob opens it (the Knob shows a chevron badge).
 // Rule: any knob that also appears on a deep page links to it. Pre-Amp/Drive/Presence live on the
-// Amp page (with the hidden Buzz/Punch voicing); only Blend has no deep page. Keep in sync with the
+// Amp page (with the hidden Buzz/Punch voicing); comp/ratio open Dynamics (comp + gate). Blend and
+// Level have no deep page (Level is just the master output, edited here). Keep in sync with the
 // KNOB_PAGES routes in app/_layout.tsx.
 const DEEP_LINK: Partial<Record<ParamId, string>> = {
   preamp: "/amp",
@@ -26,7 +27,6 @@ const DEEP_LINK: Partial<Record<ParamId, string>> = {
   filter: "/filter",
   ambiance: "/ambience",
   chorus: "/chorus",
-  level: "/gate", // "/gate" is the Gate & Master Level page
   low: "/eq",
   mid: "/eq",
   high: "/eq",

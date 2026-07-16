@@ -25,7 +25,7 @@ const ZONES: readonly Zone[] = [
 
 /** Heuristic 0..1 "grit" from the drive-side controls. Drive is the dirt knob; Pre-Amp drives it
  *  harder (so they compound); Buzz adds high-frequency fizz. Guide only — not measured. */
-export function gritEstimate(values: Readonly<Partial<Record<ParamId, number>>>): number {
+function gritEstimate(values: Readonly<Partial<Record<ParamId, number>>>): number {
   const n = (id: ParamId) => Math.min(1, Math.max(0, (values[id] ?? 0) / 127));
   const drive = n("drive");
   const preamp = n("preamp");

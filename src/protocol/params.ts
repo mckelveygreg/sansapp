@@ -186,7 +186,7 @@ export const AMBIENCE_PARAMS = {
 } as const;
 
 /**
- * Gate & Master Level deep page (behind the LEVEL knob). Threshold 0x09 (confirmed), Release 0x27
+ * Gate / expander (on the Dynamics page, with the compressor). Threshold 0x09 (confirmed), Release 0x27
  * (Gate Release), and the gate's ratio stage maps to the Expander Ratio (0x1d — inferred). Master
  * Level is the main output level (0x00). Ranges: Threshold Bypass then ≈−90…−30 dB, Ratio 1–10:1,
  * Release 10–1000 ms. Read back from the preset via the PARAMS entries above (gateThreshold /

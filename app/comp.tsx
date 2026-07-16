@@ -217,7 +217,7 @@ export default function Compressor() {
       <FootNote>
         Live over MIDI when connected. Units are calibrated to EliteControl&apos;s read-outs.
         Compressor (upper-right of the graph) tames peaks above its Threshold; the Gate/Expander
-        (lower-left) cleans up hiss below its. Master output Level is on the Master Level page.
+        (lower-left) cleans up hiss below its. Master output Level is on the editor (Output).
       </FootNote>
     </KnobScroll>
   );
