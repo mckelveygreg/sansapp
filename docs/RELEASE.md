@@ -79,6 +79,17 @@ Neither lane auto-submits — you review and press **Submit for Review** in App 
 `ios.buildNumber` (or let `beta` auto-increment against TestFlight) and `version` in `app.config.ts`
 for later releases.
 
+To tweak store listing text or screenshots for a build that's **already uploaded**, skip the
+rebuild:
+
+```sh
+fastlane ios metadata            # push text metadata only (keywords, description, notes)
+fastlane ios screenshots_upload  # push screenshots only
+```
+
+Splitting them means a flaky screenshot upload (App Store Connect's API sometimes 500s and retries
+forever) can't block a text-only change.
+
 ## Google Play (Android)
 
 Android ships the same way — local fastlane, no cloud — but with Gradle + `supply` instead of Xcode.
