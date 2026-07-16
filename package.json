@@ -26,6 +26,7 @@
     "ble-check": "tsx tools/ble-check.ts",
     "capture": "tsx tools/capture.ts",
     "emulate": "tsx tools/emulate.ts",
+    "screenshots": "tsx tools/screenshots.ts",
     "replay": "tsx tools/replay.ts",
     "send": "tsx tools/send.ts",
     "probe": "tsx tools/probe-hardware.ts",

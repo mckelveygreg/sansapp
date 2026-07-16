@@ -3,6 +3,11 @@
 # One-time (interactive, needs your Apple 2FA):  fastlane ios certs
 # TestFlight:                                     fastlane ios beta
 # App Store (uploads binary + metadata):          fastlane ios release
+# Secrets live in .env.local (not .env): Expo CLI refuses to load personal secrets — e.g. the
+# Apple app-specific password — from a non-.local env file, and `prep` shells out to expo prebuild.
+# fastlane only auto-loads .env, so pull in .env.local explicitly.
+Dotenv.overload(File.expand_path("../.env.local", __dir__)) if File.exist?(File.expand_path("../.env.local", __dir__))
+
 default_platform(:ios)
 
 XCODEPROJ = "ios/SansApp.xcodeproj"
@@ -43,6 +48,11 @@ platform :ios do
       profile_name: lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING]["com.mckelveygreg.sansapp"],
       targets: ["SansApp"],
     )
+  end
+
+  desc "Capture App Store screenshots on the simulator against the pedal emulator"
+  lane :screenshots do
+    sh("cd .. && npm run screenshots -- --build")
   end
 
   desc "Build a signed App Store .ipa into ./build"

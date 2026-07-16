@@ -51,3 +51,4 @@ fastlane/README.md
 fastlane/test_output/
 vendor/
 .env
+.env.local

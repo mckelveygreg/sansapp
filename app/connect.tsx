@@ -1,15 +1,19 @@
 /** Connection screen — connect + hardware guidance. RN app surface. */
-import { router } from "expo-router";
-import { useState } from "react";
+import { router, useLocalSearchParams } from "expo-router";
+import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { useStore } from "zustand";
 import { ConnectionPill } from "../src/components/ConnectionPill";
 import { radius, theme } from "../src/components/theme";
-import { connectPedal, disconnectPedal, pedalStore } from "../src/midi/pedal";
+import { connectPedal, disconnectPedal, loadDemoState, pedalStore } from "../src/midi/pedal";
 
 export default function Connect() {
   const connection = useStore(pedalStore, (s) => s.connection);
   const [error, setError] = useState<string | null>(null);
+  // sansapp://connect?auto=1 connects on open — a Shortcuts-friendly quick-connect, and what
+  // tools/screenshots.ts uses to drive the app. ?demo=1 loads synthetic state (no hardware) so the
+  // UI can be previewed and screenshotted without a pedal.
+  const { auto, demo } = useLocalSearchParams<{ auto?: string; demo?: string }>();
 
   async function onConnect() {
     try {
@@ -19,6 +23,11 @@ export default function Connect() {
       setError(e instanceof Error ? e.message : String(e));
     }
   }
+
+  useEffect(() => {
+    if (demo === "1") loadDemoState();
+    else if (auto === "1") void onConnect();
+  }, [auto, demo]);
 
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 16 }}>
