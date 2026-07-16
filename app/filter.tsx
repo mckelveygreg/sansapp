@@ -9,7 +9,6 @@
  * so they don't move a static frequency curve — that's expected, not a bug. RN surface.
  */
 import { useMemo } from "react";
-import { Link } from "expo-router";
 import { Switch, Text, useWindowDimensions, View } from "react-native";
 import { KnobScroll } from "../src/components/KnobScroll";
 import { useStore } from "zustand";
@@ -145,12 +144,9 @@ export default function AutoFilter() {
 
       <FootNote>
         Live over MIDI when connected. The toggle engages the auto-wah; Level (the FILTER knob) is
-        the sweep depth (bipolar −100…+100% with Bypass at centre); Attack/Release set the sweep
-        speed. To clean up muddy lows instead, use the high-pass in{" "}
-        <Link href="/ir" style={{ color: theme.accent }}>
-          IR Studio
-        </Link>
-        . The sweep drawing is illustrative; the % values are hardware-calibrated.
+        the sweep depth (bipolar −100…+100% with Bypass at centre); Attack/Release set how fast the
+        peak opens and falls back. The sweep drawing is illustrative; the % values are
+        hardware-calibrated.
       </FootNote>
     </KnobScroll>
   );
