@@ -5,10 +5,12 @@
  * edit buffer (it does NOT overwrite any saved slot until you Save). Settings whose control can't be
  * set over MIDI yet (e.g. the Ambience *type* selector) are listed as "set by hand". RN app surface.
  */
+import { Redirect } from "expo-router";
 import { useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { useStore } from "zustand";
 import { radius, theme } from "../src/components/theme";
+import { FEATURES } from "../src/config/features";
 import { sendParam } from "../src/midi/liveParam";
 import { getSession, pedalStore, setAmbienceType } from "../src/midi/pedal";
 import { ambienceStore } from "../src/state/ambience";
@@ -221,6 +223,13 @@ const card = {
 } as const;
 
 export default function Recipes() {
+  // Personal, in-progress feature — off in the public app. Reachable only when the flag is set;
+  // otherwise redirect out so even a direct deep link (sansapp://recipes) lands on the editor.
+  if (!FEATURES.recipes) return <Redirect href="/" />;
+  return <RecipesScreen />;
+}
+
+function RecipesScreen() {
   const connection = useStore(pedalStore, (s) => s.connection);
   const ready = connection === "ready";
   const [result, setResult] = useState<{ id: string; text: string } | null>(null);

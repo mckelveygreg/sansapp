@@ -5,18 +5,23 @@
  */
 import { Link } from "expo-router";
 import { Pressable, ScrollView, Text } from "react-native";
+import { FEATURES } from "../config/features";
 import { radius, theme } from "./theme";
 
+// Alphabetical by label. Recipes stays last (its natural alphabetical slot) and is hidden unless the
+// EXPO_PUBLIC_ENABLE_RECIPES flag is on — it's a personal, in-progress feature (see config/features).
 const SECTIONS = [
-  { href: "/amp", label: "Amp" },
-  { href: "/eq", label: "EQ" },
-  { href: "/comp", label: "Dynamics" },
-  { href: "/filter", label: "Filter" },
   { href: "/ambience", label: "Ambience" },
+  { href: "/amp", label: "Amp" },
   { href: "/chorus", label: "Chorus" },
+  { href: "/comp", label: "Dynamics" },
+  { href: "/eq", label: "EQ" },
+  { href: "/filter", label: "Filter" },
   { href: "/ir", label: "IR Studio" },
   { href: "/recipes", label: "Recipes" },
 ] as const;
+
+const visibleSections = SECTIONS.filter((s) => s.href !== "/recipes" || FEATURES.recipes);
 
 export function SectionBar() {
   return (
@@ -25,7 +30,7 @@ export function SectionBar() {
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={{ gap: 8, paddingVertical: 2 }}
     >
-      {SECTIONS.map((s) => (
+      {visibleSections.map((s) => (
         <Link key={s.href} href={s.href} asChild>
           <Pressable
             style={{
