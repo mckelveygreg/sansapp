@@ -109,7 +109,9 @@ platform :ios do
 
   desc "Upload screenshots only — no rebuild, no binary, no text metadata"
   lane :screenshots_upload do
-    deliver(skip_binary_upload: true, skip_metadata: true)
+    # overwrite_screenshots clears ASC's set first, so the listing exactly mirrors
+    # fastlane/screenshots/ — no duplicates or stale shots left from a half-finished upload.
+    deliver(skip_binary_upload: true, skip_metadata: true, overwrite_screenshots: true)
   end
 end
 
