@@ -60,11 +60,12 @@ Automated — no UITest target:
 fastlane ios screenshots    # or: npm run screenshots -- --build
 ```
 
-This boots the iPhone 16 Pro Max simulator, builds the app, starts the pedal emulator
-(`tools/emulate.ts` — the simulator shares the Mac's CoreMIDI, so the app genuinely connects),
-deep-links through the key screens (`sansapp://connect?auto=1` connects without a tap), and
-captures Editor, Presets, IR, Amp, and Backup into `fastlane/screenshots/en-US/`. `deliver`
-uploads whatever is in that directory. Re-run it whenever the UI changes.
+This boots the iPhone 16 Pro Max simulator, builds the app, launches it standalone, and loads
+synthetic demo state via `sansapp://connect?demo=1`. (The iOS Simulator can't reach the Mac's
+CoreMIDI, so there's no live pedal in the sim — demo mode paints a populated, connected-looking UI
+instead, with no hardware.) It then deep-links through Editor, Presets, IR, Amp, and Backup and
+captures them into `fastlane/screenshots/en-US/`. `deliver` uploads whatever is in that directory.
+Re-run it whenever the UI changes.
 
 (If you later add a UITest target, `fastlane snapshot` via `Snapfile` is the heavier alternative.)
 
@@ -136,7 +137,7 @@ create the initial release); after that the lanes run unattended. Bump `android.
 - **App Review contact info is PII, kept in `.env.local`.** ASC requires a contact first/last name,
   email, and phone for review. Rather than commit them, the lanes read `APP_REVIEW_FIRST_NAME`,
   `APP_REVIEW_LAST_NAME`, `APP_REVIEW_EMAIL`, and `APP_REVIEW_PHONE` from `.env.local` (git-ignored)
-  and hand them to `deliver` (the review *notes* stay in `review_information/notes.txt`). The phone
+  and hand them to `deliver` (the review _notes_ stay in `review_information/notes.txt`). The phone
   must be `+`-prefixed with a country code. Missing vars fail fast with a clear message.
 - **Icon alpha.** `assets/icon.png` has an alpha channel; Expo flattens the App Store icon on
   prebuild. If ASC ever rejects the 1024² icon for transparency, flatten it:
