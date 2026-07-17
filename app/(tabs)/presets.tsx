@@ -8,11 +8,11 @@ import { Alert, FlatList, Pressable, Text, TextInput, View } from "react-native"
 import { useStore } from "zustand";
 import { readAllPresets } from "../../src/device/library";
 import { radius, theme } from "../../src/components/theme";
+import { recallWithUnsavedGuard } from "../../src/components/unsavedGuard";
 import { exportPreset, importPresetInto } from "../../src/midi/bundleIo";
 import { pickFileBytes } from "../../src/midi/exportFile";
 import {
   copyPreset,
-  getController,
   getSession,
   pedalStore,
   renamePreset,
@@ -165,7 +165,8 @@ export default function Presets() {
 
   function onRowPress(item: number) {
     if (pending == null) {
-      getController()?.recall(item);
+      // Guard the switch: if the current sound has unsaved edits, prompt Save / Discard / Stay first.
+      recallWithUnsavedGuard(item);
       return;
     }
     const { kind, from } = pending;

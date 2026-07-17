@@ -1,0 +1,44 @@
+diff --git a/node_modules/@motiz88/react-native-midi/ios/ReactNativeMidiModule.swift b/node_modules/@motiz88/react-native-midi/ios/ReactNativeMidiModule.swift
+index 1977df7..a2293eb 100644
+--- a/node_modules/@motiz88/react-native-midi/ios/ReactNativeMidiModule.swift
++++ b/node_modules/@motiz88/react-native-midi/ios/ReactNativeMidiModule.swift
+@@ -147,13 +147,22 @@ public class ReactNativeMidiModule: Module {
+     }
+     
+     private func send(id _: Int32, portNumber: Int32, message: Uint8Array, timestamp: Double?) throws {
+-        let destination = MIDIDestination.find(with: MIDIUniqueID(portNumber))
++        // PATCH (sansApp): the CoreMIDI destination for a BLE peripheral vanishes the instant the link
++        // drops, and iOS reports it to us with a lag. The upstream code force-unwrapped `destination!`
++        // and `output!`, so any send during that window was a Swift fatal crash JS could not catch.
++        // Guard both and THROW a catchable error instead, so the JS layer can swallow/handle it.
++        guard let destination = MIDIDestination.find(with: MIDIUniqueID(portNumber)) else {
++            throw NSError(domain: "ReactNativeMidi", code: 1, userInfo: [NSLocalizedDescriptionKey: "MIDI destination \(portNumber) not found (device disconnected)"])
++        }
++        guard let output = output else {
++            throw NSError(domain: "ReactNativeMidi", code: 2, userInfo: [NSLocalizedDescriptionKey: "MIDI output not initialized"])
++        }
+         let uint8Ptr = message.rawPointer.bindMemory(to: UInt8.self, capacity: message.length)
+         let uint8Buf = UnsafeBufferPointer(start: uint8Ptr, count: message.length)
+         // TODO: Long messages (break into multiple packets?)
+         let midiTimestamp = UInt64(((timestamp != nil) ? (timestamp! * 1_000_000.0) : 0).rounded())
+-        try output!.send(
+-            bytes: Array(uint8Buf), timestamp: midiTimestamp, to: destination!
++        try output.send(
++            bytes: Array(uint8Buf), timestamp: midiTimestamp, to: destination
+         )
+     }
+     
+@@ -161,8 +170,11 @@ public class ReactNativeMidiModule: Module {
+         // TODO: "The implementation will need to ensure the MIDI stream is left in a good state,
+         // so if the output port is in the middle of a sysex message, a sysex termination byte (0xf7)
+         // should be sent."
+-        let destination = MIDIDestination.find(with: MIDIUniqueID(portNumber))
+-        try destination!.flushOutput()
++        // PATCH (sansApp): guard the destination instead of force-unwrapping (see send()).
++        guard let destination = MIDIDestination.find(with: MIDIUniqueID(portNumber)) else {
++            throw NSError(domain: "ReactNativeMidi", code: 1, userInfo: [NSLocalizedDescriptionKey: "MIDI destination \(portNumber) not found (device disconnected)"])
++        }
++        try destination.flushOutput()
+     }
+     
+     private func requestMIDIAccess() throws -> Bool  {

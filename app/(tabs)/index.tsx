@@ -2,18 +2,15 @@
  * Editor screen — the hybrid knob panel bound to the tested store/session core.
  * RN app surface (tsconfig.json), not the Node core.
  */
-import { Link } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { KnobScroll } from "../../src/components/KnobScroll";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "zustand";
-import { ConnectionPill } from "../../src/components/ConnectionPill";
 import { EqCurve } from "../../src/components/EqCurve";
 import { KnobPanel } from "../../src/components/KnobPanel";
 import { Section } from "../../src/components/Section";
 import { SectionBar } from "../../src/components/SectionBar";
-import { SevenSegment } from "../../src/components/SevenSegment";
 import { radius, theme } from "../../src/components/theme";
 import type { ParamId } from "../../src/protocol/params";
 import { connectPedal, getController, pedalStore } from "../../src/midi/pedal";
@@ -32,11 +29,15 @@ export default function Editor() {
   const connection = useStore(pedalStore, (s) => s.connection);
   const values = useStore(pedalStore, (s) => s.values);
   const baseline = useStore(pedalStore, (s) => s.baseline);
-  const slot = useStore(pedalStore, (s) => s.slot);
-  const name = useStore(pedalStore, (s) => s.name);
-  const dirty = useStore(pedalStore, (s) => s.dirty);
   const [error, setError] = useState<string | null>(null);
   const ready = connection === "ready";
+
+  // Clear a stale connect error the moment we're actually connected — no matter how the connection
+  // was (re)established (this screen, the Connect modal, or a reconnect). Fixes the banner lingering
+  // after a successful reconnect.
+  useEffect(() => {
+    if (ready) setError(null);
+  }, [ready]);
 
   async function onConnect() {
     try {
@@ -47,67 +48,12 @@ export default function Editor() {
     }
   }
 
-  // Step to the previous/next preset (wraps 1↔128) and recall it on the pedal.
-  const go = (d: number) => getController()?.recall(((((slot ?? 0) + d) % 128) + 128) % 128);
-
   return (
     <KnobScroll
       style={{ flex: 1 }}
       contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24, gap: 16 }}
     >
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-          <SevenSegment text={slot != null ? String(slot + 1).padStart(3, " ") : "---"} />
-          <View>
-            <Text style={{ color: theme.text, fontSize: 16, fontWeight: "800" }}>
-              {name ?? (slot != null ? `Preset ${slot + 1}` : "SansApp")}
-              {dirty ? <Text style={{ color: theme.accent }}> •</Text> : null}
-            </Text>
-            <Text style={{ color: theme.textDim, fontSize: 12 }}>
-              {slot != null ? `Preset ${slot + 1} · Bass Driver DI Elite` : "Bass Driver DI Elite"}
-            </Text>
-          </View>
-        </View>
-        <Link href="/connect" asChild>
-          <Pressable>
-            <ConnectionPill state={connection} />
-          </Pressable>
-        </Link>
-      </View>
-
-      {ready ? (
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <Pressable
-            onPress={() => go(-1)}
-            style={{
-              flex: 1,
-              paddingVertical: 12,
-              borderRadius: radius,
-              borderWidth: 1,
-              borderColor: theme.panelEdge,
-              backgroundColor: theme.panel,
-              alignItems: "center",
-            }}
-          >
-            <Text style={{ color: theme.text, fontWeight: "700" }}>‹ Prev preset</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => go(1)}
-            style={{
-              flex: 1,
-              paddingVertical: 12,
-              borderRadius: radius,
-              borderWidth: 1,
-              borderColor: theme.panelEdge,
-              backgroundColor: theme.panel,
-              alignItems: "center",
-            }}
-          >
-            <Text style={{ color: theme.text, fontWeight: "700" }}>Next preset ›</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
+      {/* Preset stepping lives in the persistent header transport now (works from every screen). */}
       {!ready ? (
         <Pressable
           onPress={onConnect}
