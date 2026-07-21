@@ -68,6 +68,39 @@ platform :ios do
     )
   end
 
+  # --- DEVELOPMENT signing (local on-device debug builds; NOT the App Store pipeline above) ---------
+  # match defaults to `type: appstore` — a distribution/"Beta" profile that CANNOT sideload over a
+  # cable (install fails: "Attempted to install a Beta profile without the proper entitlement"). To run
+  # a local `expo run:ios --device` / xcodebuild debug build on hardware you need a DEVELOPMENT cert +
+  # profile with the target device registered. These lanes mirror `certs` / `sync_signing` for `type:
+  # development`. dev_signing is read-only (git + MATCH_PASSWORD only, no Apple 2FA); certs_dev is the
+  # one interactive step.
+
+  desc "Interactive (needs 2FA): register a device + create/renew the DEVELOPMENT cert & profile in the match repo. Set DEV_DEVICE_UDID (and optionally DEV_DEVICE_NAME)."
+  lane :certs_dev do
+    udid = ENV["DEV_DEVICE_UDID"].to_s.strip
+    UI.user_error!("Set DEV_DEVICE_UDID to the target iPhone's UDID (see `xcrun devicectl list devices`).") if udid.empty?
+    register_devices(devices: { (ENV["DEV_DEVICE_NAME"] || "dev device") => udid })
+    # readonly:false so match creates the dev cert/profile if missing; force_for_new_devices regenerates
+    # the profile to include the device just registered above.
+    match(type: "development", readonly: false, force_for_new_devices: true)
+  end
+
+  desc "Fetch DEVELOPMENT signing (read-only, no 2FA) + apply it to the Xcode project — for local device debug builds"
+  lane :dev_signing do
+    match(type: "development", readonly: true)
+    # Same reason as sync_signing: prebuild leaves ios/ with no team/profile, so re-apply every build.
+    update_code_signing_settings(
+      path: XCODEPROJ,
+      use_automatic_signing: false,
+      team_id: ENV["FASTLANE_TEAM_ID"],
+      bundle_identifier: "com.mckelveygreg.sansapp",
+      code_sign_identity: "Apple Development",
+      profile_name: lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING]["com.mckelveygreg.sansapp"],
+      targets: ["SansApp"],
+    )
+  end
+
   desc "Capture App Store screenshots on the simulator (in-app demo mode — no hardware)"
   lane :screenshots do
     sh("cd .. && npm run screenshots -- --build")

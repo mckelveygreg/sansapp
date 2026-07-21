@@ -53,6 +53,9 @@ export async function importPresetInto(
 export interface RestoreResult {
   presets: number;
   irs: number;
+  /** Steps that failed to confirm (e.g. a dropped commit echo) and were skipped, so a whole restore
+   * isn't aborted by one bad write. */
+  failed: number;
 }
 
 /** Restore a `.p3b`: preset dumps become writes; each user-IR is re-uploaded (acked) via uploadIr. */
@@ -64,18 +67,25 @@ export async function restoreBundle(
   const plan = restorePlan(parseBundle(bytes));
   let presets = 0;
   let irs = 0;
+  let failed = 0;
   for (let i = 0; i < plan.length; i++) {
     const step = plan[i]!;
-    if ("irFrames" in step) {
-      await uploadIr(session, step.irFrames);
-      irs++;
-    } else {
-      await session.writePreset(step.slot, step.blob);
-      presets++;
+    try {
+      if ("irFrames" in step) {
+        await uploadIr(session, step.irFrames);
+        irs++;
+      } else {
+        await session.writePreset(step.slot, step.blob);
+        presets++;
+      }
+    } catch {
+      // One step failed to confirm (e.g. a commit echo dropped over BLE, or a transient write error).
+      // Skip it and keep restoring the rest — a 128-preset restore shouldn't abort on a single hiccup.
+      failed++;
     }
     onProgress?.(i + 1, plan.length);
   }
-  return { presets, irs };
+  return { presets, irs, failed };
 }
 
 /**

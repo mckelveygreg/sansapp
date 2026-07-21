@@ -106,7 +106,10 @@ export default function Backup() {
       const r = await restoreBundle(session, picked.bytes, (done, total) =>
         setMsg(`Restoring… ${done}/${total}`),
       );
-      setMsg(`Restored ${r.presets} presets${r.irs ? ` + ${r.irs} IRs` : ""}`);
+      setMsg(
+        `Restored ${r.presets} presets${r.irs ? ` + ${r.irs} IRs` : ""}` +
+          (r.failed ? ` · ${r.failed} failed — reconnect and restore again to retry` : ""),
+      );
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     } finally {

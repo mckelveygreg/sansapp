@@ -29,6 +29,13 @@ export interface PedalState {
   values: Partial<Record<ParamId, number>>;
   /** The loaded preset's values — the baseline to compare against (per-knob "changed" + ghost). */
   baseline: Partial<Record<ParamId, number>>;
+  /**
+   * The last-loaded preset's original 256-byte blob — the base to overlay when SAVING the current
+   * sound, so bytes the app doesn't model (IR data + name, expander, tuner, reserved regions) survive.
+   * null until the first load. (We build the save blob from this + live values, like EliteControl —
+   * the pedal has no 0x7F edit buffer to read back.)
+   */
+  raw: Uint8Array | null;
   /** Unsaved edits since the last recall/save. */
   dirty: boolean;
   /** Recent human-readable MIDI log lines (ring buffer). */
@@ -40,6 +47,7 @@ export interface PedalState {
     slot: number | null,
     values: Partial<Record<ParamId, number>>,
     name?: string | null,
+    raw?: Uint8Array | null,
   ) => void;
   setNames: (names: Record<number, string>) => void;
   setValueLocal: (id: ParamId, value: number) => void;
@@ -60,17 +68,19 @@ export function createPedalStore() {
     names: {},
     values: {},
     baseline: {},
+    raw: null,
     dirty: false,
     log: [],
 
     setConnection: (connection) => set({ connection }),
     setLayer: (layer) => set({ layer }),
-    loadPreset: (slot, values, name = null) =>
+    loadPreset: (slot, values, name = null, raw = null) =>
       set((s) => ({
         slot,
         name,
         values: { ...values },
         baseline: { ...values },
+        raw, // base blob for save-from-state; null (e.g. demo mode) disables the overlay save
         dirty: false,
         names: slot != null && name != null ? { ...s.names, [slot]: name } : s.names,
       })),
@@ -125,9 +135,10 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
   // Re-read the pedal's current preset into the store WITHOUT changing the pedal — used on connect
   // and whenever the pedal changes preset on its own (below).
   const loadCurrent = async (): Promise<Preset> => {
-    const preset = await session.readEditBuffer(); // 05 40 7F — read only, pedal unchanged
-    // Settings block 0, byte 0 = the pedal's active preset slot. Use it so we show the real preset
-    // number, not "current". Falls back to null if the read fails.
+    // There is NO live "edit buffer" — 0x7F is just program 127 (binary-confirmed via EliteControl RE).
+    // The current sound = the pedal's ACTIVE program, whose slot is byte 0 of settings block 0. Read
+    // THAT program for its values, name, AND base blob (stashed for save-from-state). Only if the slot
+    // is unknown (settings read failed) do we fall back to a raw 0x7F read.
     let slot: number | null = null;
     try {
       const settings = await session.readBlock(0x55, 0);
@@ -136,19 +147,16 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     } catch {
       // no settings block — leave slot unknown
     }
-    // The edit buffer's own name field is unreliable (often reads "INIT"), so take the name from the
-    // stored slot instead — a plain read (05 40 <slot>), no recall, pedal unchanged. Values still
-    // come from the edit buffer (the live, possibly-edited sound).
-    let name = preset.name?.trim() || null;
-    if (slot != null) {
-      try {
-        const saved = await session.readPreset(slot);
-        name = saved.name?.trim() || name;
-      } catch {
-        // slot read failed — keep the edit-buffer name
-      }
+    let preset: Preset;
+    try {
+      preset = slot != null ? await session.readPreset(slot) : await session.readEditBuffer();
+    } catch {
+      // The active slot's dump dropped (flaky BLE). Fall back to a 0x7F read so the editor is still
+      // populated instead of aborting the whole connect with a blank screen + a null base blob.
+      preset = await session.readEditBuffer();
     }
-    store.getState().loadPreset(slot, preset.values, name);
+    const name = preset.name?.trim() || null;
+    store.getState().loadPreset(slot, preset.values, name, preset.raw);
     syncDeepStores(preset);
     store.getState().pushLog(`● loaded current preset${slot != null ? ` (${slot + 1})` : ""}`);
     return preset;
@@ -161,7 +169,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     // INSTANTLY (number + name + every knob/deep param), exactly like EliteControl. This is the
     // primary path; the heartbeat slot-check below is only a backstop for a dropped BLE push.
     session.onPushedPreset((slot, preset) => {
-      store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null);
+      store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null, preset.raw);
       syncDeepStores(preset);
       store.getState().pushLog(`⤺ pedal → preset ${slot + 1}: ${preset.name.trim()}`);
     }),
@@ -195,7 +203,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     },
     async recall(slot) {
       const preset = await session.recallPreset(slot);
-      store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null);
+      store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null, preset.raw);
       syncDeepStores(preset); // gate/comp/ambience deep params, from this preset's real values
       store.getState().pushLog(`▶ recalled ${slot}: ${preset.name}`);
       return preset;

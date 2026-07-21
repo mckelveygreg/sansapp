@@ -105,4 +105,53 @@ describe("DeviceSession ↔ PedalModel", () => {
     const session = new DeviceSession(appIO, 80);
     await expect(session.readPreset(0)).rejects.toThrow(/timeout/);
   });
+
+  it("paces a reply-expecting read behind a fire-and-forget send (BLE anti-drop)", async () => {
+    // Over BLE the pedal drops a read that lands in the same connection interval as a preceding
+    // fire-and-forget send (setParam knob-move, hello, 0x5B, writePreset commit) — those bypass the
+    // request queue. request() must wait out sendGapMs since the last send so the read reaches the
+    // wire in a fresh interval. Regression guard for the connect→loadCurrent edit-buffer timeout.
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    const recv: { kind: string; t: number }[] = [];
+    devIO.onMessage((bytes) => {
+      const m = decode(bytes);
+      recv.push({ kind: m.kind, t: Date.now() });
+      for (const reply of model.handle(m)) devIO.send(encode(reply));
+    });
+    const GAP = 50;
+    const session = new DeviceSession(appIO, 1000, 0, GAP); // sendGapMs = 50
+
+    await session.connect();
+    recv.length = 0; // ignore handshake traffic; focus on the send→read collision below
+
+    session.setParam("drive", 42); // fire-and-forget, bypasses the request queue
+    const p = await session.readPreset(7); // must NOT collide with the setParam above
+    expect(p.raw[0x27]).toBe(7);
+
+    const sent = recv.find((r) => r.kind === "setParam");
+    const read = recv.find((r) => r.kind === "requestPreset");
+    expect(sent && read).toBeTruthy();
+    // Without the pacing this gap is ~0 (both fire in adjacent microtasks) and the read would be
+    // dropped on real hardware; with it, the read waits out (most of) the send gap.
+    expect(read!.t - sent!.t).toBeGreaterThanOrEqual(GAP - 10);
+  });
+
+  it("rides out a transient send failure while replies are still arriving (no disconnect)", async () => {
+    // Regression: an IR refresh's read burst can trip a transient CoreMIDI destination drop; a lone
+    // send throw must NOT tear down the session when the link is provably alive (recent replies).
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel(makePresets()));
+    const session = new DeviceSession(appIO, 500, 5000, 0);
+    await session.connect(); // handshake replies set "last received" ≈ now
+    expect(session.state).toBe("ready");
+
+    const realSend = appIO.send;
+    appIO.send = () => {
+      throw new Error("destination not found"); // simulate a transient port drop
+    };
+    session.setParam("drive", 42); // fire-and-forget → send() throws → onSendFailure
+    expect(session.state).toBe("ready"); // tolerated: we just received, so the link is alive
+    appIO.send = realSend;
+  });
 });

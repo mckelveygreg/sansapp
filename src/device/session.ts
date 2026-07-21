@@ -24,10 +24,22 @@ export interface ParamNotifyEvent {
 
 const EDIT_BUFFER_SLOT = 0x7f;
 
+// A slot write is STAGED by `05 20` then persisted by the `05 50 0A 12 <slot>` commit; the pedal echoes
+// a `05 41 <slot>` dump on success. Over BLE that fire-and-forget commit can drop (write staged, never
+// persisted — the copy/save-didn't-stick bug), so writePreset awaits the echo and re-sends the commit
+// up to this many times before giving up.
+const COMMIT_ATTEMPTS = 3;
+
 // The heartbeat skips its probe if we sent anything within this window — recent traffic already
 // proves the link is alive, and probing mid-burst (e.g. a run of setParam knob-moves saturating the
 // BLE TX) can time out and cause a FALSE disconnect. Must be < the heartbeat interval.
 const HEARTBEAT_QUIET_MS = 2500;
+
+// A send() throw only counts as a real disconnect if the link has ALSO been silent (no reply) this
+// long. Over BLE a lone throw is often a transient CoreMIDI destination drop under a heavy read burst
+// (e.g. the IR refresh) that recovers on its own — while replies are still arriving we ride it out.
+// Sustained silence + a failing send = the port is genuinely gone.
+const LINK_SILENCE_MS = 2500;
 
 const PARAM_BY_RAW = new Map<number, ParamId>();
 for (const id of PARAM_IDS) {
@@ -57,6 +69,9 @@ export class DeviceSession {
   private hbFails = 0;
   /** Wall-clock ms of the last outbound send — the heartbeat treats recent traffic as "link alive". */
   private lastSendAt = 0;
+  /** Wall-clock ms of the last message RECEIVED. Recent replies prove the link is alive even when an
+   * individual send throws (a transient CoreMIDI drop under a heavy read burst) — see onSendFailure. */
+  private lastReceiveAt = 0;
   /** Serializes reply-expecting requests so only one round-trip is on the wire at a time. */
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -168,17 +183,30 @@ export class DeviceSession {
    * 2026-07-08 by capturing an EliteControl Save.
    */
   async writePreset(slot: number, blob: Uint8Array): Promise<void> {
+    const s = slot & 0x7f;
+    // Stage the blob; the pedal acks with 05 21.
     await this.request(
-      { kind: "writePreset", slot, blob, checksumOk: true },
+      { kind: "writePreset", slot: s, blob, checksumOk: true },
       (m) => m.kind === "writeAck",
     );
-    // Commit ONLY when saving to a numbered slot. The edit buffer (0x7F) must NOT be committed:
-    // setParam 0x12=127 makes the pedal jump to "program 128" and dump the working sound. Edit-buffer
-    // writes take effect live with no commit — this matches EliteControl (its edit-buffer writes
-    // have no 0x12; only its slot Save does).
-    if ((slot & 0x7f) !== EDIT_BUFFER_SLOT) {
-      this.send({ kind: "setParam", param: 0x12, value: slot & 0x7f });
+    // Commit it: `05 50 0A 12 <slot>` (value == destination slot — byte-for-byte EliteControl's Save,
+    // confirmed against captures/elite-save.jsonl; NOT a param write). On success the pedal echoes a
+    // `05 41 <slot>` dump — await that as CONFIRMATION and re-send the commit if it doesn't arrive.
+    // EliteControl fires-and-forgets over its reliable USB link; over BLE the commit can silently drop,
+    // leaving the write staged but never persisted (the copy/save-didn't-stick bug). Throws — leaving
+    // the slot unchanged, since an uncommitted write is discarded — if the pedal never confirms.
+    for (let attempt = 0; attempt < COMMIT_ATTEMPTS; attempt++) {
+      try {
+        await this.request(
+          { kind: "setParam", param: 0x12, value: s },
+          (m) => m.kind === "presetDump" && m.slot === s,
+        );
+        return;
+      } catch {
+        // No echo — the commit likely dropped over BLE; re-send it (committing twice is idempotent).
+      }
     }
+    throw new Error(`preset ${s + 1} save not confirmed by the pedal`);
   }
 
   /**
@@ -203,9 +231,9 @@ export class DeviceSession {
     );
   }
 
-  /** Send a pre-encoded SysEx message verbatim (e.g. replaying an IR-upload chunk on restore). */
+  /** Send a pre-encoded SysEx message verbatim (e.g. an IR read/upload chunk). */
   sendRaw(bytes: Uint8Array): void {
-    this.io.send(bytes);
+    this.rawSend(bytes);
   }
 
   /** Read the live edit buffer. */
@@ -219,12 +247,23 @@ export class DeviceSession {
       p.reject(new Error("disconnected"));
     }
     this.pending.clear();
-    this.unsub();
-    this.io.close();
+    // unsub()/io.close() can throw on an already-dead port (BLE drop). Guard them so disconnect() is
+    // safe to call from send()'s error path — it must never throw back into a UI event handler.
+    try {
+      this.unsub();
+    } catch {
+      /* already torn down */
+    }
+    try {
+      this.io.close();
+    } catch {
+      /* port already gone */
+    }
     this.setState("disconnected");
   }
 
   private handleIncoming(m: PedalMessage): void {
+    this.lastReceiveAt = Date.now(); // any reply proves the link is alive (see onSendFailure)
     let matched = false;
     for (const p of this.pending) {
       if (p.match(m)) {
@@ -267,8 +306,22 @@ export class DeviceSession {
     out: Exclude<PedalMessage, { kind: "unknown" }>,
     match: (m: PedalMessage) => boolean,
   ): Promise<PedalMessage> {
-    const run = () =>
-      new Promise<PedalMessage>((resolve, reject) => {
+    const run = async () => {
+      // Pace the read off the LAST outbound byte on the wire. Over BLE the pedal drops a reply-
+      // expecting read that arrives in the same connection interval as a preceding fire-and-forget
+      // send (the hello, the 0x5B control, a setParam knob-move, or a writePreset commit) — those
+      // sends bypass this queue, so a read fired right behind one never gets a reply and rejects with
+      // "timeout awaiting reply to <kind>". Waiting out the remainder of sendGapMs since the last send
+      // guarantees the read lands in a fresh interval. The hello→read case was verified on hardware
+      // (2026-07-14); generalizing it here also covers the every-connect edit-buffer read
+      // (connect→loadCurrent) and the back-to-back writePreset commits in copy/swapPresets. Request→
+      // request is already paced by the prior round-trip, so this adds nothing there. sendGapMs=0
+      // (tests, wired USB tools) skips it entirely — no BLE connection-interval batching to dodge.
+      if (this.sendGapMs > 0) {
+        const sinceSend = Date.now() - this.lastSendAt;
+        if (sinceSend < this.sendGapMs) await this.delay(this.sendGapMs - sinceSend);
+      }
+      return new Promise<PedalMessage>((resolve, reject) => {
         const timer = setTimeout(() => {
           this.pending.delete(entry);
           reject(new Error(`timeout awaiting reply to ${out.kind}`));
@@ -277,6 +330,7 @@ export class DeviceSession {
         this.pending.add(entry);
         this.send(out);
       });
+    };
     const result = this.queue.then(run, run); // chain after the previous request settles
     this.queue = result.then(
       () => undefined,
@@ -286,8 +340,36 @@ export class DeviceSession {
   }
 
   private send(m: Exclude<PedalMessage, { kind: "unknown" }>): void {
+    this.rawSend(encode(m));
+  }
+
+  /**
+   * The single low-level write. Stamps lastSendAt (so the heartbeat backs off during a send burst —
+   * including the IR read/upload stream, which goes through the public sendRaw) and routes a
+   * torn-down-port throw through onSendFailure. Both send() and sendRaw() funnel here so they can't
+   * drift in their failure/back-off handling.
+   */
+  private rawSend(bytes: Uint8Array): void {
     this.lastSendAt = Date.now();
-    this.io.send(encode(m));
+    try {
+      this.io.send(bytes);
+    } catch {
+      this.onSendFailure();
+    }
+  }
+
+  /**
+   * A send threw: io.send couldn't reach the MIDI port (InvalidStateError, or "destination not found"
+   * from the patched native module). Over BLE this is often a TRANSIENT CoreMIDI drop under a heavy
+   * read burst (e.g. the IR refresh) that recovers on its own — so a single throw must NOT tear down
+   * the session (doing so mid-IR-refresh killed the link and blanked the remaining slots). Only
+   * disconnect when the link has ALSO gone silent (no reply within LINK_SILENCE_MS): a genuinely dead
+   * port fails every send AND stops replying. A real drop is still caught within ~one heartbeat, while
+   * a transient during active traffic (replies still arriving) is ridden out. disconnect() (via the
+   * state teardown) is hardened not to throw, so this never crashes the caller.
+   */
+  private onSendFailure(): void {
+    if (Date.now() - this.lastReceiveAt >= LINK_SILENCE_MS) this.setState("disconnected");
   }
 
   private delay(ms: number): Promise<void> {

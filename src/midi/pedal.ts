@@ -6,6 +6,7 @@ import { DeviceSession } from "../device/session";
 import { AMBIENCE_BUNDLES, AMBIENCE_PROFILE_WIRES } from "../protocol/ambience";
 import { encode } from "../protocol/messages";
 import { liveSetId } from "../protocol/params";
+import { buildPresetBlob } from "../protocol/buildPreset";
 import { encodePreset, withName } from "../protocol/preset";
 import { ambienceStore } from "../state/ambience";
 import { dynamicsStore } from "../state/dynamics";
@@ -72,17 +73,46 @@ export async function connectPedal(portMatch?: string): Promise<void> {
   // 150 ms handshake pacing (BLE drops back-to-back sends — verified on hardware 2026-07-14).
   session = new DeviceSession(found.io, 4000, 5000, 150);
   controller = bindSession(session, pedalStore);
+  // Symmetric teardown: a DROPPED link (heartbeat detects it → state "disconnected") must release the
+  // session/controller just like the manual Disconnect button does — otherwise a stale controller keeps
+  // sending into a now-closed CoreMIDI port and HARD-CRASHES the app (native force-unwrap). bindSession's
+  // own onState (which sets the store's connection flag) is registered first, so it runs before this.
+  session.onState((s) => {
+    if (s === "disconnected") teardownSession();
+  });
   await session.connect();
   pedalStore.getState().pushLog(`🔌 connected via ${found.name}`);
   // Show the pedal's CURRENT tone (read-only) — do NOT recall a slot, which would change the pedal.
-  await controller.loadCurrent();
+  // Best-effort: the session is already "ready", so a hiccup reading the current tone must NOT fail
+  // the whole connection. Leave the user connected (they can recall a preset) instead of tearing down.
+  try {
+    await controller.loadCurrent();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    pedalStore
+      .getState()
+      .pushLog(`⚠ connected, but couldn't read current tone (${msg}) — recall a preset`);
+  }
+}
+
+/**
+ * Release the session + controller and close the MIDI port. Idempotent. Used by BOTH the manual
+ * Disconnect button and the dropped-link path (connectPedal's onState handler above), so a dead link
+ * can never leave a live controller that sends into a closed port and crashes the app.
+ */
+function teardownSession(): void {
+  const deadSession = session;
+  const deadController = controller;
+  // Null FIRST: disconnect() below re-fires "disconnected", which re-enters this via the onState
+  // handler — with the refs already cleared, that re-entry is a harmless no-op.
+  session = null;
+  controller = null;
+  deadSession?.disconnect(); // rejects pending + closes io; sets store "disconnected" if not already
+  deadController?.dispose();
 }
 
 export function disconnectPedal(): void {
-  session?.disconnect(); // fires the disconnected state to the store
-  controller?.dispose();
-  controller = null;
-  session = null;
+  teardownSession();
 }
 
 /**
@@ -128,12 +158,30 @@ export async function swapPresets(a: number, b: number): Promise<void> {
   pedalStore.getState().pushLog(`⇄ swapped ${a + 1} ↔ ${b + 1}`);
 }
 
-/** Save the pedal's current (edited) sound — the live edit buffer — into a slot. */
+/**
+ * Save the pedal's current (edited) sound into a slot — built from the app's OWN state, exactly like
+ * EliteControl. We do NOT read 0x7F: there is no live edit buffer; 0x7F is program 127, so reading it
+ * saved the wrong preset (the "patch 128 landed in slot 1" bug). The blob overlays the live values +
+ * deep params onto the last-loaded base blob (pedalStore.raw); writePreset commits it and confirms.
+ */
 export async function saveCurrentTo(slot: number): Promise<void> {
   if (!session) throw new Error("Not connected");
-  const buf = await session.readEditBuffer(); // 05 40 7F — read only
-  await session.writePreset(slot, buf.raw);
-  cacheName(slot, buf.name);
+  const st = pedalStore.getState();
+  if (!st.raw) throw new Error("No preset loaded yet — connect and load a preset first");
+  const blob = buildPresetBlob(
+    st.raw,
+    st.values,
+    st.name ?? "",
+    dynamicsStore.getState(),
+    ambienceStore.getState(),
+  );
+  await session.writePreset(slot, blob);
+  cacheName(slot, st.name ?? "");
+  // Clear the dirty/baseline ("changed" ghost) ONLY when we saved to the CURRENTLY-LOADED slot — then
+  // the working sound really is the saved state. Saving the current sound to a DIFFERENT slot leaves
+  // the loaded preset's edits unsaved to ITS slot, so the dirty state must stand (otherwise the
+  // unsaved-changes guard would let the user switch away and silently lose them).
+  if (slot === st.slot) pedalStore.getState().markSaved();
   pedalStore.getState().pushLog(`💾 saved current sound → ${slot + 1}`);
 }
 

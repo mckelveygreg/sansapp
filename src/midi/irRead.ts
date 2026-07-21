@@ -28,12 +28,17 @@ export const IR_READ_AB: Record<number, [number, number]> = {
 /** The two user-writable IR slots (1–6 are factory — never upload there). */
 export const USER_IR_SLOTS = [7, 8] as const;
 
-/** Send `05 69 0A a b` and decode the IR the pedal streams back. Resolves null on timeout/failure. */
+/**
+ * Send `05 69 0A a b` and decode the IR the pedal streams back. Resolves null on timeout/failure.
+ * The reply is an 11-frame `05 60/65/66` stream (~2.7 kB); over BLE (WIDI) it takes ~3 s+, so the
+ * timeout is generous — 4000 ms was cutting the stream off before its `05 66` end (false-empty reads,
+ * confirmed by a read-only hardware probe 2026-07-17).
+ */
 export function readIr(
   session: DeviceSession,
   a: number,
   b: number,
-  timeoutMs = 4000,
+  timeoutMs = 6000,
 ): Promise<DecodedIr | null> {
   return new Promise((resolve) => {
     const packed: number[] = [];

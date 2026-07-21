@@ -29,6 +29,12 @@ export default function Connect() {
     else if (auto === "1") void onConnect();
   }, [auto, demo]);
 
+  // Clear a stale connect error once connected (e.g. after a successful Reconnect). Without this the
+  // previous attempt's error text lingered under the button even after the pedal came back.
+  useEffect(() => {
+    if (connection === "ready") setError(null);
+  }, [connection]);
+
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 16 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>

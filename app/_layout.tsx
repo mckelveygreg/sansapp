@@ -2,6 +2,8 @@
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { HeaderConnection, TransportTitle } from "../src/components/AppHeader";
+import { ErrorBoundary } from "../src/components/ErrorBoundary";
 import { theme } from "../src/components/theme";
 
 // Knob-heavy deep pages are pushed as CARDS with the swipe gesture OFF — a modal's swipe-down-to-
@@ -28,27 +30,43 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
-      <Stack
-        screenOptions={{
-          headerStyle: { backgroundColor: theme.panel },
-          headerTintColor: theme.text,
-          contentStyle: { backgroundColor: theme.bg },
-          // Show only the ‹ chevron on deep-page back buttons — otherwise iOS labels it with the
-          // previous route's name, which is the "(tabs)" group (looks buggy). Minimal = icon only.
-          headerBackButtonDisplayMode: "minimal",
-        }}
-      >
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        {Object.entries(KNOB_PAGES).map(([name, title]) => (
-          <Stack.Screen key={name} name={name} options={{ title, gestureEnabled: false }} />
-        ))}
-        {Object.entries(MODAL_PAGES).map(([name, title]) => (
-          <Stack.Screen key={name} name={name} options={{ title, presentation: "modal" }} />
-        ))}
-        {/* Recipes + Help are scroll-only reference pages (no knobs) — normal cards, swipe-back OK. */}
-        <Stack.Screen name="recipes" options={{ title: "Recipes" }} />
-        <Stack.Screen name="help" options={{ title: "Help" }} />
-      </Stack>
+      <ErrorBoundary>
+        <Stack
+          screenOptions={{
+            headerStyle: { backgroundColor: theme.panel },
+            headerTintColor: theme.text,
+            contentStyle: { backgroundColor: theme.bg },
+            // Show only the ‹ chevron on deep-page back buttons — otherwise iOS labels it with the
+            // previous route's name, which is the "(tabs)" group (looks buggy). Minimal = icon only.
+            headerBackButtonDisplayMode: "minimal",
+            // Deep pages keep their own title; the connection pill rides along on the right so link
+            // status shows everywhere. ((tabs) sets headerShown:false — its header carries preset + pill.)
+            headerRight: () => <HeaderConnection />,
+          }}
+        >
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          {Object.entries(KNOB_PAGES).map(([name, title]) => (
+            <Stack.Screen
+              key={name}
+              name={name}
+              options={{
+                title,
+                gestureEnabled: false,
+                // Knob pages show the preset transport in place of a text title, so you can step
+                // presets without leaving the page. (The native ‹ back + connection pill flank it.)
+                headerTitle: () => <TransportTitle />,
+                headerTitleAlign: "left",
+              }}
+            />
+          ))}
+          {Object.entries(MODAL_PAGES).map(([name, title]) => (
+            <Stack.Screen key={name} name={name} options={{ title, presentation: "modal" }} />
+          ))}
+          {/* Recipes + Help are scroll-only reference pages (no knobs) — normal cards, swipe-back OK. */}
+          <Stack.Screen name="recipes" options={{ title: "Recipes" }} />
+          <Stack.Screen name="help" options={{ title: "Help" }} />
+        </Stack>
+      </ErrorBoundary>
     </SafeAreaProvider>
   );
 }

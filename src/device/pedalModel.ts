@@ -75,7 +75,17 @@ export class PedalModel {
         else if (msg.slot < this.presets.length) this.presets[msg.slot] = msg.blob.slice();
         return [{ kind: "writeAck", code: 0x21 }];
       }
-      // hello handled; control/setParam/paramNotify/dumps: no reply
+      case "setParam": {
+        // 0x12 = <slot> is the SAVE commit — the real pedal persists the staged slot and echoes a
+        // 05 41 <slot> dump (confirmed via captures/elite-save.jsonl). Every other setParam is
+        // live-only: no reply, not reflected in reads.
+        if (msg.param === 0x12) {
+          const blob = this.blobFor(msg.value);
+          return [{ kind: "presetDump", slot: msg.value, blob: blob.slice(), checksumOk: true }];
+        }
+        return [];
+      }
+      // hello handled; control/paramNotify/dumps: no reply
       default:
         return [];
     }

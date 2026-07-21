@@ -339,8 +339,7 @@ export default function IrStudio() {
   }, []);
 
   async function pullFromPedal() {
-    const session = getSession();
-    if (!session) {
+    if (!getSession()) {
       setStatus("Connect to the pedal first.");
       return;
     }
@@ -348,21 +347,40 @@ export default function IrStudio() {
     setPullProg({ done: 0, total: IR_SLOTS });
     setStatus("Reading IRs from the pedal…");
     const next: Record<number, Pulled> = {};
+    let lostLink = false;
     for (let pos = 1; pos <= IR_SLOTS; pos++) {
+      // Re-fetch each slot: if the link drops mid-read the session is nulled — bail instead of
+      // hammering a dead session and silently blanking the remaining slots.
+      const session = getSession();
+      if (!session) {
+        lostLink = true;
+        break;
+      }
       const ir = await readIrSlot(session, pos);
       if (ir) {
         const samples = Float64Array.from(ir.samples);
         next[pos] = { name: ir.name || slotFallback(pos), ir: samples, db: curveOf(samples) };
       }
       setPullProg({ done: pos, total: IR_SLOTS });
+      // Pace the reads so the back-to-back burst doesn't saturate the BLE TX (which was tripping a
+      // transient drop). The reads bypass the request queue, so they aren't otherwise paced.
+      if (pos < IR_SLOTS) await new Promise((r) => setTimeout(r, 120));
     }
-    setPulled(next);
-    persist(next);
+    // A full pull REPLACES the cache (a slot that read empty is now genuinely empty). A pull cut short
+    // by a link loss only read part of the slots, so MERGE over the existing cache — don't wipe the
+    // slots we never got to.
+    const result = lostLink ? { ...pulled, ...next } : next;
+    setPulled(result);
+    persist(result);
     setPulling(false);
     setPullProg(null);
     const n = Object.keys(next).length;
     setStatus(
-      n ? `Pulled ${n} IR${n > 1 ? "s" : ""} from the pedal.` : "No IRs read (check the slot map).",
+      lostLink
+        ? "Lost the pedal connection while reading — reconnect and try again."
+        : n
+          ? `Pulled ${n} IR${n > 1 ? "s" : ""} from the pedal.`
+          : "No IRs read (check the slot map).",
     );
   }
 
@@ -411,6 +429,18 @@ export default function IrStudio() {
   const [uploadSlot, setUploadSlot] = useState<7 | 8>(7);
   const [gainDbs, setGainDbs] = useState<Record<number, number>>({ 7: 0, 8: 0 });
   const [modes, setModes] = useState<Record<number, boolean>>({ 7: false, 8: false });
+  const presetRaw = useStore(pedalStore, (s) => s.raw);
+  // Reflect the LOADED preset's REAL per-slot IR mode (stored in the preset blob at USER_IR_MODE
+  // paramId + 0x22 = 0x4a/0x4b) instead of always starting OFF. 0 = the factory cab, 1 = your uploaded
+  // user IR. Re-syncs whenever a different preset loads (its blob changes).
+  useEffect(() => {
+    if (presetRaw) {
+      setModes({
+        7: (presetRaw[USER_IR_MODE[7]! + 0x22] ?? 0) > 0,
+        8: (presetRaw[USER_IR_MODE[8]! + 0x22] ?? 0) > 0,
+      });
+    }
+  }, [presetRaw]);
 
   const setGain = (slot: 7 | 8, db: number) => {
     const clamped = Math.max(-USER_IR_GAIN_DB_RANGE, Math.min(USER_IR_GAIN_DB_RANGE, db));
@@ -810,9 +840,16 @@ export default function IrStudio() {
                 justifyContent: "space-between",
               }}
             >
-              <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1 }}>
-                USE SLOT {uploadSlot} (this preset)
-              </Text>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1 }}>
+                  SLOT {uploadSlot} CAB · THIS PRESET
+                </Text>
+                <Text style={{ color: theme.text, fontSize: 13, fontWeight: "700" }}>
+                  {modes[uploadSlot]
+                    ? "Your custom IR"
+                    : `Factory · ${uploadSlot === 7 ? "Voice 12L" : "Brit V30"}`}
+                </Text>
+              </View>
               <Switch
                 value={modes[uploadSlot] ?? false}
                 onValueChange={(v) => setMode(uploadSlot, v)}
@@ -826,8 +863,10 @@ export default function IrStudio() {
               onStep={(d) => setGain(uploadSlot, (gainDbs[uploadSlot] ?? 0) + d)}
             />
             <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
-              Slots 7 & 8 hold custom cabs shared across presets; the toggle is per-preset.
-              Uploading replaces the shared cab data.
+              Slots 7 & 8 each hold BOTH a factory cab and your uploaded cab. This switch picks
+              which one this preset plays — off = factory (
+              {uploadSlot === 7 ? "Voice 12L" : "Brit V30"}), on = your custom IR. Uploading only
+              replaces your custom cab; the factory cab always comes back when the switch is off.
             </Text>
             <View style={{ flexDirection: "row", gap: 10 }}>
               <Pressable

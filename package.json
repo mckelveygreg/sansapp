@@ -6,6 +6,7 @@
   "license": "GPL-3.0-only",
   "main": "expo-router/entry",
   "scripts": {
+    "postinstall": "patch-package",
     "lint": "oxlint",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
@@ -63,6 +64,7 @@
     "fallow": "^2.104.0",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
+    "patch-package": "^8.0.1",
     "tsx": "^4.22.5",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"

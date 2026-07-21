@@ -2,6 +2,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import type { ColorValue } from "react-native";
+import { HeaderConnection, TransportTitle } from "../../src/components/AppHeader";
 import { theme } from "../../src/components/theme";
 
 type IoniconName = keyof typeof Ionicons.glyphMap;
@@ -18,6 +19,11 @@ export default function TabsLayout() {
       screenOptions={{
         headerStyle: { backgroundColor: theme.panel },
         headerTintColor: theme.text,
+        // Persistent header: preset transport (prev/next + 7-seg + name) as the title + connection
+        // pill on the right, on every tab.
+        headerTitle: () => <TransportTitle />,
+        headerTitleAlign: "left",
+        headerRight: () => <HeaderConnection />,
         sceneStyle: { backgroundColor: theme.bg },
         tabBarStyle: { backgroundColor: theme.panel, borderTopColor: theme.panelEdge },
         tabBarActiveTintColor: theme.accent,
