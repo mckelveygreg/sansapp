@@ -15,7 +15,8 @@
     "src/protocol/constants.ts:AMP_MODELS",
     "src/protocol/constants.ts:AMBIENCE_ENGINES",
     "src/protocol/messages.ts:isPedalSysEx",
-    "src/ui/knobMath.ts:KNOB_SWEEP_DEG"
+    "src/ui/knobMath.ts:KNOB_SWEEP_DEG",
+    "src/protocol/amp.ts:applyAmpBundleBytes"
   ],
   "unused_types": [
     "src/protocol/params.ts:ParamDef",

@@ -28,7 +28,7 @@
     "@expo/ngrok"
   ],
   "duplicates": {
-    "minOccurrences": 3
+    "minOccurrences": 4
   },
   "rules": {
     "unused-dependencies": "warn",
