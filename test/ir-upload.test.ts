@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { decode } from "../src/protocol/messages";
 import type { PedalMessage } from "../src/protocol/messages";
 import { uploadIr } from "../src/midi/irUpload";
 
@@ -6,6 +7,7 @@ import { uploadIr } from "../src/midi/irUpload";
 // like the real pedal. Only the surface uploadIr uses (sendRaw + onMessage).
 class FakeSession {
   sent: number[][] = [];
+  times: number[] = []; // wall-clock ms per send, so a test can assert the sends are gapped
   private cbs = new Set<(m: PedalMessage) => void>();
   ackEnd = true;
   onMessage(cb: (m: PedalMessage) => void) {
@@ -17,6 +19,7 @@ class FakeSession {
   }
   sendRaw(b: Uint8Array) {
     this.sent.push([...b]);
+    this.times.push(Date.now());
     const sub = b[5];
     if (sub === 0x60) queueMicrotask(() => this.emit({ kind: "writeAck", code: 0x63 }));
     if (sub === 0x66 && this.ackEnd)
@@ -52,5 +55,23 @@ describe("uploadIr", () => {
   it("throws on a too-short sequence", async () => {
     const s = new FakeSession();
     await expect(uploadIr(s as never, [frame(0x60)], {})).rejects.toThrow(/begin/);
+  });
+
+  it("gaps the post-upload activate sends (IR-select + 2 gains) so BLE doesn't drop them", async () => {
+    const s = new FakeSession();
+    const GAP = 20;
+    await uploadIr(s as never, upload, { chunkDelayMs: GAP, activateValue: 48 });
+    // The 3 activate setParams follow the 11 upload frames (begin + 9 chunks + end).
+    const activate = s.sent.slice(11);
+    expect(activate).toHaveLength(3);
+    expect(activate.map((f) => decode(Uint8Array.from(f)))).toEqual([
+      { kind: "setParam", param: 0x0e, value: 48 }, // IR select
+      { kind: "setParam", param: 0x39, value: 0 }, // gain A
+      { kind: "setParam", param: 0x3a, value: 0 }, // gain B
+    ]);
+    // Consecutive activate sends are separated by ~GAP (not fired in adjacent microtasks).
+    for (let i = 12; i < s.times.length; i++) {
+      expect(s.times[i]! - s.times[i - 1]!).toBeGreaterThanOrEqual(GAP - 10);
+    }
   });
 });

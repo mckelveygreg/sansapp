@@ -90,11 +90,16 @@ export async function uploadIr(
   // Optionally switch the pedal to the just-uploaded IR (matches EliteControl's post-import step),
   // so it's immediately active rather than only sitting in the slot.
   if (activateValue !== undefined) {
-    for (const [param, value] of [
+    const activate = [
       [IR_SELECT, activateValue],
       [IR_GAIN_A, 0],
       [IR_GAIN_B, 0],
-    ] as const) {
+    ] as const;
+    // Gap these like the chunk stream — over BLE the pedal silently drops fire-and-forget sends that
+    // land in one connection interval, so an ungapped IR-select + 2 gains loses most of the burst.
+    for (let i = 0; i < activate.length; i++) {
+      if (i > 0) await delay(chunkDelayMs);
+      const [param, value] = activate[i]!;
       session.sendRaw(encode({ kind: "setParam", param, value }));
     }
   }

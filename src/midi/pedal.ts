@@ -4,7 +4,6 @@
  */
 import { DeviceSession } from "../device/session";
 import { AMBIENCE_BUNDLES, AMBIENCE_PROFILE_WIRES } from "../protocol/ambience";
-import { encode } from "../protocol/messages";
 import { liveSetId } from "../protocol/params";
 import { buildPresetBlob } from "../protocol/buildPreset";
 import { encodePreset, withName } from "../protocol/preset";
@@ -197,14 +196,17 @@ export async function renamePreset(slot: number, name: string): Promise<void> {
 /**
  * Switch the ambience type (Room…Echo Verb, index into AMBIENCE_ENGINES). Like EliteControl, we
  * LIVE-SET the type's 10 profile params (05 50 each) — no edit-buffer write, no commit. This is what
- * actually sticks; the old blob-write approach was silently discarded by the pedal.
+ * actually sticks; the old blob-write approach was silently discarded by the pedal. The 10 sends are
+ * PACED (setParamsPaced) so BLE doesn't silently drop the burst — the same reason connect() gaps its
+ * fire-and-forget sends; firing them back-to-back lost most of the profile on the wire.
  */
-export function setAmbienceType(index: number): void {
+export async function setAmbienceType(index: number): Promise<void> {
   const vals = AMBIENCE_BUNDLES[index];
-  if (!session || !vals) return;
-  AMBIENCE_PROFILE_WIRES.forEach((wire, i) => {
-    session!.sendRaw(encode({ kind: "setParam", param: liveSetId(wire), value: vals[i]! & 0x7f }));
-  });
-  ambienceStore.getState().patch({ type: index });
+  if (!vals) return;
+  ambienceStore.getState().patch({ type: index }); // optimistic UI, even when disconnected
+  if (!session) return;
+  await session.setParamsPaced(
+    AMBIENCE_PROFILE_WIRES.map((wire, i) => ({ param: liveSetId(wire), value: vals[i]! & 0x7f })),
+  );
   pedalStore.getState().pushLog(`🌫 ambience type → ${index}`);
 }

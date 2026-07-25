@@ -154,4 +154,36 @@ describe("DeviceSession ↔ PedalModel", () => {
     expect(session.state).toBe("ready"); // tolerated: we just received, so the link is alive
     appIO.send = realSend;
   });
+
+  it("setParamsPaced fires every param (masked), gapped so BLE doesn't drop the burst", async () => {
+    // The 10-param ambience profile lost most sends when fired back-to-back — the pedal drops
+    // fire-and-forget sends that land in one BLE connection interval. setParamsPaced gaps them by
+    // sendGapMs (the same pacing connect() uses). Verify each param reaches the wire, value masked
+    // to 7 bits, and consecutive sends are separated by ~sendGapMs (not adjacent microtasks).
+    const [appIO, devIO] = createLoopback();
+    const seen: { param: number; value: number; t: number }[] = [];
+    devIO.onMessage((bytes) => {
+      const m = decode(bytes);
+      if (m.kind === "setParam") seen.push({ param: m.param, value: m.value, t: Date.now() });
+    });
+    const GAP = 20;
+    const session = new DeviceSession(appIO, 1000, 0, GAP); // sendGapMs = GAP
+
+    const sets = [
+      { param: 0x14, value: 47 },
+      { param: 0x16, value: 0x85 }, // > 0x7f → masked to 0x05
+      { param: 0x17, value: 3 },
+    ];
+    await session.setParamsPaced(sets);
+    await new Promise((r) => setTimeout(r, 5)); // flush the last loopback microtask
+
+    expect(seen.map((s) => ({ param: s.param, value: s.value }))).toEqual([
+      { param: 0x14, value: 47 },
+      { param: 0x16, value: 0x05 },
+      { param: 0x17, value: 3 },
+    ]);
+    for (let i = 1; i < seen.length; i++) {
+      expect(seen[i]!.t - seen[i - 1]!.t).toBeGreaterThanOrEqual(GAP - 10);
+    }
+  });
 });

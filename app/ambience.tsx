@@ -32,8 +32,9 @@ export default function Ambience() {
   const baseline = useStore(pedalStore, (s) => s.baseline);
 
   function selectType(i: number) {
-    ambienceStore.getState().patch({ type: i }); // optimistic (shows even when disconnected)
-    setAmbienceType(i); // live-sets the type's 10 profile params when connected; re-patches the store
+    // Patches the store optimistically (instant highlight, even when disconnected), then paces the
+    // type's 10 profile params onto the wire when connected. Fire-and-forget: don't block the tap.
+    void setAmbienceType(i);
   }
 
   const onLevel = (v: number) => {

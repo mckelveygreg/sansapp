@@ -11,7 +11,6 @@ import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { useStore } from "zustand";
 import { radius, theme } from "../src/components/theme";
 import { FEATURES } from "../src/config/features";
-import { sendParam } from "../src/midi/liveParam";
 import { getSession, pedalStore, setAmbienceType } from "../src/midi/pedal";
 import { ambienceStore } from "../src/state/ambience";
 import { AMBIENCE_ENGINES } from "../src/protocol/constants";
@@ -21,6 +20,7 @@ import {
   CHORUS_PARAMS,
   PARAMS,
   PARAM_IDS,
+  liveSetId,
   type ParamId,
 } from "../src/protocol/params";
 
@@ -267,18 +267,29 @@ function RecipesScreen() {
                 return;
               }
               // Engine changes rewrite the edit buffer, so they must run BEFORE the setParams (which
-              // aren't reflected in an edit-buffer read-back and would otherwise be clobbered).
+              // aren't reflected in an edit-buffer read-back and would otherwise be clobbered). Await
+              // each so the engine's own paced profile sends finish before the params (also removes
+              // the old fire-and-forget race).
               let engineFailed = false;
               for (const s of engines) {
                 try {
-                  setAmbienceType(s.applyEngine!);
+                  await setAmbienceType(s.applyEngine!);
                 } catch {
                   engineFailed = true;
                 }
               }
+              // Live-set the params PACED so BLE doesn't drop the burst (the pedal drops fire-and-
+              // forget sends that land in one connection interval). sendParam mapped through liveSetId
+              // (deep params set on index+4); do the same here so the on-wire ids are identical.
+              await session.setParamsPaced(
+                applyable.map((s) => ({
+                  param: liveSetId(s.apply!.param),
+                  value: s.apply!.raw & 0x7f,
+                })),
+              );
+              // Reflect into the editor knobs + shared ambience store (not on the wire).
               for (const s of applyable) {
                 if (!s.apply) continue;
-                sendParam(s.apply.param, s.apply.raw); // live MIDI
                 const id = PARAM_BY_WIRE[s.apply.param];
                 if (id) pedalStore.getState().setValueLocal(id, s.apply.raw); // reflect editor knobs
                 // Ambience Decay/Time are send-only — mirror into the shared store so the Ambience

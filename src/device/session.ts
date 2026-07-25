@@ -175,6 +175,19 @@ export class DeviceSession {
   }
 
   /**
+   * Fire a batch of live-set params, gapped by sendGapMs so BLE doesn't drop the burst (the pedal
+   * silently drops fire-and-forget sends landing in one connection interval — same reason connect()
+   * paces its sends). A single setParam is fine; a rapid run like the 10-param ambience profile loses
+   * most messages without this gap. `param` is the already-live-set-mapped wire id.
+   */
+  async setParamsPaced(sets: readonly { param: number; value: number }[]): Promise<void> {
+    for (let i = 0; i < sets.length; i++) {
+      if (i > 0) await this.delay(this.sendGapMs);
+      this.send({ kind: "setParam", param: sets[i]!.param, value: sets[i]!.value & 0x7f });
+    }
+  }
+
+  /**
    * Write a full preset blob to a slot (0x7F = edit buffer); awaits the pedal's ack, then COMMITS.
    *
    * The pedal only STAGES a `05 20` write — it acks it but discards it unless a commit follows:

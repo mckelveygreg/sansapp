@@ -27,7 +27,7 @@ import { AMP_MODELS } from "../src/protocol/constants";
 import { rawToPct, sendParam } from "../src/midi/liveParam";
 import { getSession, pedalStore } from "../src/midi/pedal";
 import { type AmpPreset, loadAmpPresets, saveAmpPresets } from "../src/midi/ampPresets";
-import { PARAMS, type ParamId } from "../src/protocol/params";
+import { PARAMS, liveSetId, type ParamId } from "../src/protocol/params";
 
 // The store-backed knobs an amp bundle drives (Preset Level 0x40 is level-match, not a knob here).
 const AMP_KNOBS: { id: ParamId; label: string }[] = [
@@ -115,8 +115,9 @@ export default function Amp() {
   // Apply an amp model/custom by LIVE-SETTING its bundle params (05 50 each, index→set-id via
   // liveSetId) — the write path that actually sticks. An edit-buffer write is discarded by the pedal
   // (same bug the ambience type had). Then reflect the values into the knobs/store.
-  function applyBundle(name: string, vals: readonly number[]) {
-    if (!getSession()) {
+  async function applyBundle(name: string, vals: readonly number[]) {
+    const session = getSession();
+    if (!session) {
       setStatus("Connect to apply an amp.");
       return;
     }
@@ -124,7 +125,7 @@ export default function Amp() {
       setStatus(`No captured bundle for "${name}".`);
       return;
     }
-    AMP_BUNDLE_OFFSETS.forEach((off, i) => sendParam(off - 0x22, vals[i] ?? 0));
+    // Reflect the bundle into the knobs/store immediately (local, no wire), so the UI updates at once.
     const byOffset = new Map<number, number>(
       AMP_BUNDLE_OFFSETS.map((off, i) => [off, vals[i] ?? 0]),
     );
@@ -132,6 +133,15 @@ export default function Amp() {
       const v = byOffset.get(PARAMS[id].blobOffset);
       if (v !== undefined) pedalStore.getState().setValueLocal(id, v);
     }
+    // Live-set the bundle PACED (index→set-id via liveSetId, same wire ids sendParam produces) so BLE
+    // doesn't silently drop the ~8-param burst — the pedal drops fire-and-forget sends that land in
+    // one connection interval (same reason setAmbienceType paces its profile sends).
+    await session.setParamsPaced(
+      AMP_BUNDLE_OFFSETS.map((off, i) => ({
+        param: liveSetId(off - 0x22),
+        value: (vals[i] ?? 0) & 0x7f,
+      })),
+    );
     setStatus(`Applied "${name}".`);
   }
 
@@ -225,7 +235,7 @@ export default function Amp() {
               label={name}
               active={active === name}
               dim={!hasAmpBundle(name)}
-              onPress={() => applyBundle(name, AMP_BUNDLES[name] ?? [])}
+              onPress={() => void applyBundle(name, AMP_BUNDLES[name] ?? [])}
             />
           ))}
         </View>
@@ -238,7 +248,7 @@ export default function Amp() {
                 label={c.name}
                 active={active === c.name}
                 accent
-                onPress={() => applyBundle(c.name, c.bytes)}
+                onPress={() => void applyBundle(c.name, c.bytes)}
                 onLongPress={() => deleteCustom(c.name)}
               />
             ))}
