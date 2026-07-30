@@ -1,5 +1,5 @@
 /**
- * in-line MIDI monitor for protocol capture (M1). Sits between EliteControl and the pedal
+ * in-line MIDI monitor for protocol capture. Sits between EliteControl and the pedal
  * (via the MD1), forwarding both directions and logging every message as JSONL with a
  * live decode. See docs/CAPTURE-PLAYBOOK.md.
  *
@@ -59,7 +59,7 @@ if (bridged) {
 } else {
   console.warn(
     `\n⚠  No real port matching "${REAL_PORT}" — running PASSIVE (virtual ports only).` +
-      ` Connect the MD1 and rerun for a a full capture.\n`,
+      ` Connect the MD1 and rerun for a full capture.\n`,
   );
 }
 

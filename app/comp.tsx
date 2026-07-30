@@ -1,8 +1,9 @@
 /**
  * Compressor — the deep compressor page, LIVE: each control sends its captured param over MIDI
  * (Threshold = the COMP knob 0x0A; Ratio/Output/Attack/Release = 0x19–0x1c; Auto Gain/Lookahead =
- * 0x32/0x33 — wire ids corrected 2026-07-14). The dynamics graph is shared with the Gate page
- * (via dynamicsStore): the compressor is
+ * 0x32/0x33). Every control reads from pedalStore.values (the single
+ * source of truth), so physical-knob notifies and preset recalls update the page live. The dynamics
+ * graph, shared with the Gate section on this page, is drawn from those same values: the compressor is
  * the upper-right (right dot = threshold, angle = ratio); the gate is the lower-left. RN app surface.
  *
  * Displayed units are hardware-calibrated (src/protocol/units.ts, measured against EliteControl):
@@ -18,8 +19,7 @@ import { FootNote, GraphCard, IntroNote } from "../src/components/panels";
 import { radius, theme } from "../src/components/theme";
 import { rawToPct, sendParam } from "../src/midi/liveParam";
 import { pedalStore } from "../src/midi/pedal";
-import { COMP_PARAMS, GATE_PARAMS, PARAMS, type ParamId } from "../src/protocol/params";
-import { dynamicsStore } from "../src/state/dynamics";
+import { PARAMS, type ParamId } from "../src/protocol/params";
 import {
   compAttackMs,
   compOutputDb,
@@ -68,47 +68,30 @@ function ToggleRow({
 export default function Compressor() {
   const { width } = useWindowDimensions();
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
-  const d = useStore(dynamicsStore, (s) => s);
-  // Threshold (0x0a) and Ratio (0x19) are store-backed (PARAMS.comp / PARAMS.ratio). Output/Attack/
-  // Release live in dynamicsStore for the shared graph but are now read back from the preset too
-  // (synced on recall), so every knob reflects the loaded preset and shows the ghost via baseline.
+  // Every control reads from pedalStore.values (the single source of truth) via its own selector, so
+  // preset recalls and physical-knob notifies update the page live and a save captures what's shown.
+  // Gate/comp are store-backed via PARAMS (Threshold = comp 0x0a, Ratio = ratio 0x19, …).
+  const baseline = useStore(pedalStore, (s) => s.baseline);
   const threshold = useStore(pedalStore, (s) => s.values.comp) ?? 64;
   const ratio = useStore(pedalStore, (s) => s.values.ratio) ?? 64;
-  const baseline = useStore(pedalStore, (s) => s.baseline);
-  // RE-2026-07-15 additions, store-backed via PARAMS: output soft-clip + the gate's own attack.
+  const compOutput = useStore(pedalStore, (s) => s.values.compOutput) ?? 64;
+  const compAttack = useStore(pedalStore, (s) => s.values.compAttack) ?? 64;
+  const compRelease = useStore(pedalStore, (s) => s.values.compRelease) ?? 64;
   const softClip = useStore(pedalStore, (s) => s.values.softClip) ?? 127;
+  const gateThreshold = useStore(pedalStore, (s) => s.values.gateThreshold) ?? 64;
+  const gateRatioVal = useStore(pedalStore, (s) => s.values.gateRatio) ?? 64;
   const gateAttack = useStore(pedalStore, (s) => s.values.gateAttack) ?? 0;
+  const gateRelease = useStore(pedalStore, (s) => s.values.gateRelease) ?? 64;
+  const autoGain = (useStore(pedalStore, (s) => s.values.autoGain) ?? 0) > 0;
+  const lookahead = (useStore(pedalStore, (s) => s.values.lookahead) ?? 0) > 0;
 
-  // Knob onChange gives an absolute 0–127; send it live + update the shared dynamics store.
-  const set = (key: "compOutput" | "compAttack" | "compRelease", param: number) => (v: number) => {
-    sendParam(param, v);
-    dynamicsStore.getState().patch({ [key]: v });
-  };
-  // Threshold/Ratio write to the pedal store (source of truth) so every screen + save stays in sync.
-  const setThreshold = (v: number) => {
-    sendParam(COMP_PARAMS.threshold, v);
-    pedalStore.getState().setValueLocal("comp", v);
-  };
-  const setRatio = (v: number) => {
-    sendParam(COMP_PARAMS.ratio, v);
-    pedalStore.getState().setValueLocal("ratio", v);
-  };
-  const toggle = (key: "autoGain" | "lookahead", param: number) => (on: boolean) => {
-    sendParam(param, on ? 1 : 0);
-    dynamicsStore.getState().patch({ [key]: on });
-  };
-  // The gate/expander shares this page's dynamics graph (its lower-left segment), so its knobs live
-  // here too — one "Dynamics" page. Store-backed via dynamicsStore, same as the compressor knobs.
-  const setGate =
-    (key: "gateThreshold" | "gateRatio" | "gateRelease", param: number) => (v: number) => {
-      sendParam(param, v);
-      dynamicsStore.getState().patch({ [key]: v });
-    };
-  // Store-backed extras (Soft Clip, Gate Attack) — send live + record for read-back/ghost.
+  // Knob onChange gives an absolute 0–127; send it live (index → liveSetId inside sendParam) and
+  // record it in the store for read-back/ghost. One helper for every store-backed control.
   const setP = (id: ParamId) => (v: number) => {
     sendParam(PARAMS[id].paramId ?? 0, v);
     pedalStore.getState().setValueLocal(id, v);
   };
+  const toggleP = (id: ParamId) => (on: boolean) => setP(id)(on ? 1 : 0);
 
   // Transfer-curve params — the graph shows the pure compression SHAPE. Make-up/output is a vertical
   // level shift, not part of the shape, so it's excluded (makeupDb 0); ratio then only bends the
@@ -120,8 +103,8 @@ export default function Compressor() {
     kneeDb: 6,
     makeupDb: 0,
   };
-  const gt = gateThresholdDb(d.gateThreshold);
-  const gateParams = gt === null ? undefined : { thresholdDb: gt, ratio: gateRatio(d.gateRatio) };
+  const gt = gateThresholdDb(gateThreshold);
+  const gateParams = gt === null ? undefined : { thresholdDb: gt, ratio: gateRatio(gateRatioVal) };
 
   return (
     <KnobScroll style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 16 }}>
@@ -150,35 +133,35 @@ export default function Compressor() {
             value={threshold}
             ghost={baseline.comp}
             display={compThresholdLabel(threshold)}
-            onChange={setThreshold}
+            onChange={setP("comp")}
           />
           <Knob
             label="Ratio"
             value={ratio}
             ghost={baseline.ratio}
             display={`${compRatio(ratio).toFixed(1)}:1`}
-            onChange={setRatio}
+            onChange={setP("ratio")}
           />
           <Knob
             label="Output"
-            value={d.compOutput}
+            value={compOutput}
             ghost={baseline.compOutput}
-            display={`${compOutputDb(d.compOutput).toFixed(0)}dB`}
-            onChange={set("compOutput", COMP_PARAMS.outputGain)}
+            display={`${compOutputDb(compOutput).toFixed(0)}dB`}
+            onChange={setP("compOutput")}
           />
           <Knob
             label="Attack"
-            value={d.compAttack}
+            value={compAttack}
             ghost={baseline.compAttack}
-            display={`${compAttackMs(d.compAttack).toFixed(0)}ms`}
-            onChange={set("compAttack", COMP_PARAMS.attack)}
+            display={`${compAttackMs(compAttack).toFixed(0)}ms`}
+            onChange={setP("compAttack")}
           />
           <Knob
             label="Release"
-            value={d.compRelease}
+            value={compRelease}
             ghost={baseline.compRelease}
-            display={`${compReleaseMs(d.compRelease).toFixed(0)}ms`}
-            onChange={set("compRelease", COMP_PARAMS.release)}
+            display={`${compReleaseMs(compRelease).toFixed(0)}ms`}
+            onChange={setP("compRelease")}
           />
           <Knob
             label="Soft Clip"
@@ -189,16 +172,8 @@ export default function Compressor() {
           />
         </View>
         <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
-          <ToggleRow
-            label="AUTO GAIN"
-            value={d.autoGain}
-            onChange={toggle("autoGain", COMP_PARAMS.autoGain)}
-          />
-          <ToggleRow
-            label="LOOKAHEAD"
-            value={d.lookahead}
-            onChange={toggle("lookahead", COMP_PARAMS.lookahead)}
-          />
+          <ToggleRow label="AUTO GAIN" value={autoGain} onChange={toggleP("autoGain")} />
+          <ToggleRow label="LOOKAHEAD" value={lookahead} onChange={toggleP("lookahead")} />
         </View>
       </View>
 
@@ -207,17 +182,17 @@ export default function Compressor() {
         <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
           <Knob
             label="Threshold"
-            value={d.gateThreshold}
+            value={gateThreshold}
             ghost={baseline.gateThreshold}
-            display={gateThresholdLabel(d.gateThreshold)}
-            onChange={setGate("gateThreshold", GATE_PARAMS.threshold)}
+            display={gateThresholdLabel(gateThreshold)}
+            onChange={setP("gateThreshold")}
           />
           <Knob
             label="Ratio"
-            value={d.gateRatio}
+            value={gateRatioVal}
             ghost={baseline.gateRatio}
-            display={`${gateRatio(d.gateRatio).toFixed(1)}:1`}
-            onChange={setGate("gateRatio", GATE_PARAMS.ratio)}
+            display={`${gateRatio(gateRatioVal).toFixed(1)}:1`}
+            onChange={setP("gateRatio")}
           />
           <Knob
             label="Attack"
@@ -228,10 +203,10 @@ export default function Compressor() {
           />
           <Knob
             label="Release"
-            value={d.gateRelease}
+            value={gateRelease}
             ghost={baseline.gateRelease}
-            display={`${gateReleaseMs(d.gateRelease).toFixed(0)} ms`}
-            onChange={setGate("gateRelease", GATE_PARAMS.release)}
+            display={`${gateReleaseMs(gateRelease).toFixed(0)} ms`}
+            onChange={setP("gateRelease")}
           />
         </View>
       </View>

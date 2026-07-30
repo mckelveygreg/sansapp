@@ -108,7 +108,8 @@ export default function Backup() {
       );
       setMsg(
         `Restored ${r.presets} presets${r.irs ? ` + ${r.irs} IRs` : ""}` +
-          (r.failed ? ` · ${r.failed} failed — reconnect and restore again to retry` : ""),
+          (r.failed ? ` · ${r.failed} failed — reconnect and restore again to retry` : "") +
+          (r.skipped ? ` · ${r.skipped} skipped (not a writable slot)` : ""),
       );
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));

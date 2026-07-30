@@ -1,7 +1,7 @@
 /**
  * Parametric EQ — the Elite's 3-band Low/Mid/High EQ, each with Gain/Freq/Q, LIVE over MIDI.
- * Gain = the main LOW/MID/HIGH knob (0x06/0x0C/0x07); Freq/Q are the deep params (wire ids corrected
- * 2026-07-14): low 0x48/0x30, mid 0x0D/0x2f, high 0x49/0x31. The graph is the combined tone response; ranges/tapers are the
+ * Gain = the main LOW/MID/HIGH knob (0x06/0x0C/0x07); Freq/Q are the deep params: low 0x48/0x30, mid
+ * 0x0D/0x2f, high 0x49/0x31. The graph is the combined tone response; ranges/tapers are the
  * hardware-calibrated values in src/protocol/units.ts. All bands read live from the store (so they
  * reflect the loaded preset and match the editor's tone chart); adjusting a control sends it to the
  * pedal. RN app surface.

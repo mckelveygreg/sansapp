@@ -1,13 +1,13 @@
 /**
- * READ-ONLY IR probe (WIDI/BLE). Maps the pedal's IR index space to settle the open questions from the
- * EliteControl binary RE: where do the FACTORY cabs live (is there a pedal-readable factory bank?), how
+ * READ-ONLY IR probe (WIDI/BLE). Maps the pedal's IR index space to settle the open questions from
+ * observing EliteControl: where do the FACTORY cabs live (is there a pedal-readable factory bank?), how
  * many custom banks are there, and where is a preset's per-slot user-IR index stored in its blob?
  *
  *   ELITE_PORT="WIDI" npx tsx tools/probe-ir.ts
  *
- * SAFE: sends ONLY hello + block requests + 05 40 preset reads + 05 69 IR reads. NEVER writes, uploads,
- * recalls, sets params, or sends 05 6A (bank-select, which could change pedal state). Nothing it does
- * alters the pedal's IRs/presets/settings.
+ * SAFE: sends ONLY hello + config/data block reads (05 6A/05 55) + 05 40 preset reads + 05 69 IR
+ * reads — all read-only (the connect handshake itself reads config block 0 via 05 6A). NEVER writes,
+ * uploads, recalls, or sets params. Nothing it does alters the pedal's IRs/presets/settings.
  */
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { DeviceSession } from "../src/device/session";
@@ -16,8 +16,7 @@ import { openMidi } from "./lib";
 
 const PORT = process.env.ELITE_PORT ?? "WIDI";
 const OUT = "captures/ir-probe.jsonl";
-const SUMMARY =
-  "/private/tmp/claude-501/-Users-greg-code-personal-pbdr-el-app/b3375f42-fcf9-4da2-a6e8-3305580325fa/scratchpad/ir-probe-summary.json";
+const SUMMARY = "captures/ir-probe-summary.json";
 const READ_TIMEOUT = 6000; // the 11-frame 05 60/65/66 stream takes ~3s+ over WIDI; 2500 cut it off
 const PACE_MS = 160;
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -70,13 +69,14 @@ async function main(): Promise<void> {
   const log = (rec: unknown) => appendFileSync(OUT, `${JSON.stringify(rec)}\n`);
 
   const io = openMidi(PORT);
-  const session = new DeviceSession(io, 4000);
+  // WIDI/BLE default: 150 ms send pacing (0 disables it) + a generous read timeout.
+  const session = new DeviceSession(io, 6000, 0, 150);
   console.log(`connecting to "${PORT}"…`);
   await connectWithRetry(session);
   console.log(`✓ handshake — state=${session.state}`);
 
   // --- Active preset: capture IR-mode (0x4a/0x4b) + the user-IR region (0x6C..0xBF) to locate the
-  // per-preset user-IR index the binary RE said lives there. Read-only.
+  // per-preset user-IR index EliteControl appears to store there. Read-only.
   let activeSlot: number | null = null;
   try {
     const settings = await session.readBlock(0x55, 0);

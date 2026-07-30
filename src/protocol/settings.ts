@@ -44,8 +44,8 @@ export const SPECIAL_FUNCTIONS: readonly SpecialFunction[] = [
     confidence: "good",
   },
   {
-    // CONFIRMED 2026-07-07 by two clean single-toggle captures (Greg toggled Safe Level Mode first
-    // each time; offset 17 flipped). Corrects the old "MIDI Mapping" label at this offset.
+    // Confirmed 2026-07-07 by two clean single-toggle captures (Safe Level Mode toggled first each
+    // time; offset 17 flipped).
     offset: 17,
     id: "safeLevelMode",
     label: "Safe Level Mode",
@@ -54,9 +54,7 @@ export const SPECIAL_FUNCTIONS: readonly SpecialFunction[] = [
     confidence: "strong",
   },
   {
-    // CONFIRMED 2026-07-07 (clean single-toggle capture): MIDI Thru = offset 2. This resolves the
-    // old offset-7 conflict (7 is Disengage Pots) AND corrects offset 2 (was mislabeled "Safe Level
-    // Mode").
+    // Confirmed 2026-07-07 (clean single-toggle capture): MIDI Thru = offset 2.
     offset: 2,
     id: "midiThru",
     label: "MIDI Thru",
@@ -66,8 +64,8 @@ export const SPECIAL_FUNCTIONS: readonly SpecialFunction[] = [
   },
   {
     // MIDI Mapping = offset 3, by elimination: the two clean 2026-07-07 captures pinned Safe Level
-    // Mode = offset 17 and MIDI CC Mode = offset 4, leaving offset 3 (a confirmed real toggle from
-    // desk-session/m1b, default 1) as the only home for the remaining toggle name "MIDI Mapping".
+    // Mode = offset 17 and MIDI CC Mode = offset 4, leaving offset 3 (a real toggle, default 1) as
+    // the only home for the remaining name "MIDI Mapping".
     offset: 3,
     id: "midiMapping",
     label: "MIDI Mapping",
@@ -76,9 +74,9 @@ export const SPECIAL_FUNCTIONS: readonly SpecialFunction[] = [
     confidence: "good",
   },
   {
-    // CONFIRMED 2026-07-07 by a clean capture: Greg toggled MIDI CC Mode ON, adjusted the CC map
-    // (data block 1), then OFF — offset 4 flipped each time. (Corrects the old "Safe Level"/off2
-    // and the tentative off3 guesses.) When on, the per-parameter CC numbers live in data block 1.
+    // Confirmed 2026-07-07 by a clean capture: MIDI CC Mode toggled ON, the CC map (data block 1)
+    // adjusted, then OFF — offset 4 flipped each time. When on, the per-parameter CC numbers live in
+    // data block 1.
     offset: 4,
     id: "midiCcMode",
     label: "MIDI CC Mode",
@@ -97,7 +95,7 @@ export const SPECIAL_FUNCTIONS: readonly SpecialFunction[] = [
     confidence: "strong",
   },
   {
-    // CONFIRMED 2026-07-07: offset 9 = Preset Protection (was mislabeled "MIDI CC Mode").
+    // Confirmed 2026-07-07: offset 9 = Preset Protection.
     offset: 9,
     id: "presetProtection",
     label: "Preset Protection",
@@ -106,7 +104,7 @@ export const SPECIAL_FUNCTIONS: readonly SpecialFunction[] = [
     confidence: "strong",
   },
   {
-    // CONFIRMED 2026-07-07 (was tentative).
+    // Confirmed 2026-07-07.
     offset: 16,
     id: "cabinetBypass",
     label: "Cabinet Bypass",

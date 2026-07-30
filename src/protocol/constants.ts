@@ -38,10 +38,9 @@ export const PRESET_SLOT_COUNT = 128; // Studio mode slots (1..128)
 export const PERFORMANCE_SLOTS = 3; // Performance mode presets 1..3
 
 /**
- * Amp models, in the desktop editor's on-screen grid order (row-major), confirmed against hardware.
+ * The 10 amp models in the desktop editor's on-screen grid order (row-major), confirmed against
+ * hardware (2026-07-05).
  */
-// The 10 amp models in EliteControl's on-screen grid order (row-major), confirmed 2026-07-05.
-// (amp-blond.png / amp-leeds.png ship in the app resources but aren't exposed by the pedal.)
 export const AMP_MODELS: readonly string[] = Object.freeze([
   "Bass Driver",
   "VT Bass",
@@ -65,6 +64,3 @@ export const AMBIENCE_ENGINES: readonly string[] = Object.freeze([
   "Echo",
   "Echo Verb",
 ]);
-
-// (FACTORY_IRS removed — cab names now come from reading the pedal, not a shipped list. The pedal's
-// factory cab labels live in the desktop app's Resources/irs/ if ever needed for reference.)

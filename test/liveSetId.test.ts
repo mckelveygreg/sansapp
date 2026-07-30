@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { liveSetId, PARAMS } from "../src/protocol/params";
 
-// Binary-RE'd rule (EliteControl const map @0x10013517c): live-set wire id == iPlug index for the
-// shallow range 0x00-0x0F, but index+4 for the deep range 0x10-0x4D. The notify/read path keeps the
-// raw index; only the SET path maps through liveSetId.
+// Rule derived from observing EliteControl: live-set wire id == iPlug index for the shallow range
+// 0x00-0x0F, but index+4 for the deep range 0x10-0x4D. The notify/read path keeps the raw index;
+// only the SET path maps through liveSetId.
 describe("liveSetId — index → live-set wire id", () => {
   it("is identity for the shallow main-panel knobs (0x00-0x0F)", () => {
     for (const idx of [0x00, 0x01, 0x05, 0x08, 0x0a, 0x0c, 0x0d, 0x0f]) {

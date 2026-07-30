@@ -4,7 +4,7 @@
  * Byte→function map (src/protocol/settings.ts) was documented from a capture on
  * 2026-07-04. When connected, this reads the pedal's settings block on mount and writes changes
  * back (05 52 block write → 05 53 ack) — modifying only the changed byte so unknown bytes are
- * preserved. A couple of entries are still tentative (marked "?"). RN app surface.
+ * preserved. RN app surface.
  */
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -249,6 +249,7 @@ const INITIAL: Record<string, number> = {
 export default function Device() {
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
   const [vals, setVals] = useState<Record<string, number>>(INITIAL);
+  const [status, setStatus] = useState<string | null>(null);
   // The pedal's current settings block (256 B). A write sends the WHOLE block, so we start from
   // the real one and change a single byte — never clobbering the bytes we don't understand.
   const block = useRef<Uint8Array | null>(null);
@@ -272,15 +273,22 @@ export default function Device() {
   }, [ready]);
 
   const set = (fn: SpecialFunction, v: number) => {
+    const prevVal = vals[fn.id] ?? 0;
+    const prevBlock = block.current;
     setVals((s) => ({ ...s, [fn.id]: v }));
-    const b = block.current;
-    if (ready && b) {
-      const next = withSetting(b, fn.offset, v);
-      block.current = next;
-      void getSession()
-        ?.writeBlock(0x52, SETTINGS_BLOCK, next)
-        .catch(() => {});
-    }
+    if (!ready || !prevBlock) return;
+    const session = getSession();
+    if (!session) return;
+    const next = withSetting(prevBlock, fn.offset, v);
+    block.current = next; // optimistic — each further toggle builds on this
+    setStatus(null);
+    void session.writeBlock(0x52, SETTINGS_BLOCK, next).catch((e: unknown) => {
+      // The write failed — REVERT the optimistic block byte + UI. Otherwise the local block silently
+      // diverges from the pedal and every later toggle compounds the change onto bytes it never took.
+      block.current = prevBlock;
+      setVals((s) => ({ ...s, [fn.id]: prevVal }));
+      setStatus(`Couldn't save "${fn.label}" — ${e instanceof Error ? e.message : String(e)}`);
+    });
   };
 
   const control = (fn: SpecialFunction): ReactNode => {
@@ -332,10 +340,13 @@ export default function Device() {
           The pedal's Special Page Functions.{" "}
           {ready
             ? "Live — changes write to the pedal (only the changed byte; the rest of the block is preserved)."
-            : "Connect to read and write these."}{" "}
-          Entries marked <Text style={{ color: theme.amber }}>?</Text> are tentative.
+            : "Connect to read and write these."}
         </Text>
       </View>
+
+      {status ? (
+        <Text style={{ color: theme.amber, fontSize: 12, lineHeight: 18 }}>{status}</Text>
+      ) : null}
 
       {SPECIAL_FUNCTIONS.map((fn) => (
         <Row
@@ -347,14 +358,6 @@ export default function Device() {
           {control(fn)}
         </Row>
       ))}
-
-      <Row
-        label="Preset Protection"
-        desc="Lock programs from being overwritten (byte unconfirmed)"
-        tentative
-      >
-        <Toggle value={false} onChange={() => {}} />
-      </Row>
     </ScrollView>
   );
 }

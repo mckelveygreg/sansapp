@@ -67,7 +67,7 @@ export interface HighpassIrOptions {
   q?: number;
   /** Cascaded 2nd-order sections; 2 ⇒ 24 dB/oct. */
   stages?: number;
-  /** IR length the pedal expects. */
+  /** IR design length in taps (zero-padded to the pedal's full IR size on upload). */
   taps?: number;
 }
 

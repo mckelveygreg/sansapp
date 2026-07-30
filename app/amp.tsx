@@ -18,6 +18,7 @@ import { radius, theme } from "../src/components/theme";
 import {
   AMP_BUNDLE_OFFSETS,
   AMP_BUNDLES,
+  ampApplyExtras,
   bundleMatches,
   detectAmpModel,
   hasAmpBundle,
@@ -27,7 +28,14 @@ import { AMP_MODELS } from "../src/protocol/constants";
 import { rawToPct, sendParam } from "../src/midi/liveParam";
 import { getSession, pedalStore } from "../src/midi/pedal";
 import { type AmpPreset, loadAmpPresets, saveAmpPresets } from "../src/midi/ampPresets";
-import { PARAMS, liveSetId, type ParamId } from "../src/protocol/params";
+import { PARAM_IDS, PARAMS, liveSetId, type ParamId } from "../src/protocol/params";
+
+// Wire INDEX (paramId) → registry id, so an apply can record every param it live-sets in the store.
+const PARAM_BY_INDEX = new Map<number, ParamId>();
+for (const id of PARAM_IDS) {
+  const raw = PARAMS[id].paramId;
+  if (raw !== undefined) PARAM_BY_INDEX.set(raw, id);
+}
 
 // The store-backed knobs an amp bundle drives (Preset Level 0x40 is level-match, not a knob here).
 const AMP_KNOBS: { id: ParamId; label: string }[] = [
@@ -125,68 +133,75 @@ export default function Amp() {
       setStatus(`No captured bundle for "${name}".`);
       return;
     }
-    // Reflect the bundle into the knobs/store immediately (local, no wire), so the UI updates at once.
-    const byOffset = new Map<number, number>(
-      AMP_BUNDLE_OFFSETS.map((off, i) => [off, vals[i] ?? 0]),
-    );
-    for (const { id } of AMP_KNOBS) {
-      const v = byOffset.get(PARAMS[id].blobOffset);
-      if (v !== undefined) pedalStore.getState().setValueLocal(id, v);
+    // Every param this apply sets, keyed by wire INDEX (== paramId): the 8 AMP_BUNDLE_OFFSETS bytes
+    // plus the fixed voicing extras (Buzz Q = 64, Crunch Q = 0, Mid → 0 for VT Bass / Para Driver) —
+    // PROTOCOL-MAP §5. Preset Level (offset 0x62) is in the bundle, so it's recorded/set here too.
+    const sets: { index: number; value: number }[] = [
+      ...AMP_BUNDLE_OFFSETS.map((off, i) => ({ index: off - 0x22, value: (vals[i] ?? 0) & 0x7f })),
+      ...ampApplyExtras(name),
+    ];
+    // Reflect into the store immediately (local, no wire) so the UI updates at once AND a later SAVE
+    // records what the pedal is now playing (Preset Level / Buzz Q / Crunch Q / Mid included) instead
+    // of the loaded preset's old bytes.
+    for (const { index, value } of sets) {
+      const id = PARAM_BY_INDEX.get(index);
+      if (id) pedalStore.getState().setValueLocal(id, value);
     }
-    // Live-set the bundle PACED (index→set-id via liveSetId, same wire ids sendParam produces) so BLE
-    // doesn't silently drop the ~8-param burst — the pedal drops fire-and-forget sends that land in
-    // one connection interval (same reason setAmbienceType paces its profile sends).
-    await session.setParamsPaced(
-      AMP_BUNDLE_OFFSETS.map((off, i) => ({
-        param: liveSetId(off - 0x22),
-        value: (vals[i] ?? 0) & 0x7f,
-      })),
-    );
-    setStatus(`Applied "${name}".`);
+    // Live-set PACED (index→set-id via liveSetId, same wire ids sendParam produces) so BLE doesn't
+    // silently drop the burst — the pedal drops fire-and-forget sends that land in one connection
+    // interval (same reason setAmbienceType paces its profile sends). Surface a send failure honestly.
+    try {
+      await session.setParamsPaced(
+        sets.map(({ index, value }) => ({ param: liveSetId(index), value })),
+      );
+      setStatus(`Applied "${name}".`);
+    } catch (e) {
+      setStatus(`Apply failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
-  async function saveCurrent() {
-    const session = getSession();
-    if (!session) {
-      setStatus("Connect to save the current amp.");
+  function saveCurrent() {
+    // Snapshot the CURRENT voicing from the store — the pedal has no live edit buffer (0x7F is just
+    // program 127), so a read there would grab the wrong preset's Preset-Level byte. Overlay the
+    // store's live values onto the loaded preset's base blob (same base a save uses), then read the
+    // amp bundle bytes off that.
+    const st = pedalStore.getState();
+    if (!st.raw) {
+      setStatus("Load a preset first, then save its amp.");
       return;
     }
-    try {
-      const buf = await session.readEditBuffer();
-      // The edit-buffer read doesn't reflect live knob tweaks, so overlay the store's live values
-      // before snapshotting the bundle — otherwise we'd save the preset's original amp, not yours.
-      const raw = buf.raw.slice();
-      for (const { id } of AMP_KNOBS) raw[PARAMS[id].blobOffset] = (values[id] ?? 0) & 0x7f;
-      const bytes = readAmpBundle(raw);
-      const doSave = (name: string) => {
-        const next = [...customs.filter((c) => c.name !== name), { name, bytes }];
-        setCustoms(next); // `active` re-derives from the store and lights up the new custom
-        void saveAmpPresets(next);
-        setStatus(`Saved "${name}".`);
-      };
-      const fallback = `My Amp ${customs.length + 1}`;
-      if (Platform.OS === "ios") {
-        Alert.prompt(
-          "Save custom amp",
-          "Name this amp voicing:",
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Save",
-              onPress: (name?: string) => {
-                const n = name?.trim();
-                if (n) doSave(n);
-              },
+    const raw = st.raw.slice();
+    for (const { id } of AMP_KNOBS) raw[PARAMS[id].blobOffset] = (st.values[id] ?? 0) & 0x7f;
+    if (st.values.presetLevel !== undefined) {
+      raw[PARAMS.presetLevel.blobOffset] = st.values.presetLevel & 0x7f;
+    }
+    const bytes = readAmpBundle(raw);
+    const doSave = (name: string) => {
+      const next = [...customs.filter((c) => c.name !== name), { name, bytes }];
+      setCustoms(next); // `active` re-derives from the store and lights up the new custom
+      void saveAmpPresets(next);
+      setStatus(`Saved "${name}".`);
+    };
+    const fallback = `My Amp ${customs.length + 1}`;
+    if (Platform.OS === "ios") {
+      Alert.prompt(
+        "Save custom amp",
+        "Name this amp voicing:",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Save",
+            onPress: (name?: string) => {
+              const n = name?.trim();
+              if (n) doSave(n);
             },
-          ],
-          "plain-text",
-          fallback,
-        );
-      } else {
-        doSave(fallback);
-      }
-    } catch {
-      setStatus("Couldn't read the current amp.");
+          },
+        ],
+        "plain-text",
+        fallback,
+      );
+    } else {
+      doSave(fallback);
     }
   }
 
@@ -256,7 +271,7 @@ export default function Amp() {
         ) : null}
 
         <Pressable
-          onPress={() => void saveCurrent()}
+          onPress={saveCurrent}
           style={{
             alignSelf: "flex-start",
             paddingHorizontal: 13,

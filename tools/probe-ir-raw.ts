@@ -19,7 +19,8 @@ async function main(): Promise<void> {
     rx++;
     console.log(`  RX [${b.length}b]: ${bytesToHex(b).slice(0, 80)}${b.length > 27 ? "…" : ""}`);
   });
-  const session = new DeviceSession(io, 4000);
+  // WIDI/BLE default: 150 ms send pacing (0 disables it) + a generous read timeout.
+  const session = new DeviceSession(io, 6000, 0, 150);
   console.log(`connecting to "${PORT}"…`);
   await session.connect();
   console.log(`✓ ready — handshake works, single-message reads work.\n`);

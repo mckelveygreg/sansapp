@@ -41,9 +41,18 @@ export const DEMO_VALUES = {
   punch: 64,
   punchFreq: 65,
   punchQ: 64,
+  buzzQ: 64, // constant across amp models (§5)
+  crunchQ: 0, // constant across amp models (§5)
   // Blend (dry/wet) + IR cab
   blend: 104,
   irBlend: 32,
+  // User-IR slots (7/8): factory cabs (mode off), 0 dB makeup gain (64 = ~0 dB).
+  irMode7: 0,
+  irMode8: 0,
+  irGain7: 64,
+  irGain8: 64,
+  // Per-preset output level.
+  presetLevel: 32,
   // Compressor / gate
   ratio: 60,
   compOutput: 66,
@@ -72,23 +81,9 @@ export const DEMO_VALUES = {
   chorusFeedback: 30,
 } satisfies Record<ParamId, number>;
 
-/** Deep-store values that mirror the demo preset (the Dynamics/Ambience pages read these). */
-export const DEMO_DYNAMICS = {
-  gateThreshold: DEMO_VALUES.gateThreshold,
-  gateRatio: DEMO_VALUES.gateRatio,
-  gateRelease: DEMO_VALUES.gateRelease,
-  compOutput: DEMO_VALUES.compOutput,
-  compAttack: DEMO_VALUES.compAttack,
-  compRelease: DEMO_VALUES.compRelease,
-  autoGain: true,
-  lookahead: false,
-};
-
-export const DEMO_AMBIENCE = {
-  type: 1, // Hall
-  decay: DEMO_VALUES.ambienceDecay,
-  time: DEMO_VALUES.ambienceTime,
-};
+/** Which ambience engine the demo poses as (index into AMBIENCE_ENGINES) — Hall. The gate/comp and
+ * ambience decay/time values live in DEMO_VALUES like every other parameter. */
+export const DEMO_AMBIENCE_TYPE = 1;
 
 /** Slot→name map for a populated Presets list. All names are synthetic/original. */
 export const DEMO_NAMES: Record<number, string> = {

@@ -29,6 +29,14 @@ describe("sysex messages (all confirmed from live capture)", () => {
     roundTrip("F0 00 51 21 05 21 F7", { kind: "writeAck", code: 0x21 });
   });
 
+  it("decodes the marker-less hello (05 5F F7) the real pedal sends", () => {
+    // The pedal's dominant hello is marker-less (05 5F F7); the app's own hello is the 3-byte
+    // 05 5F 0A. BOTH must decode as hello. A genuine 2-byte ack (05 21) stays a writeAck.
+    expect(decode(hexToBytes("F0 00 51 21 05 5F F7"))).toEqual({ kind: "hello" });
+    expect(decode(hexToBytes("F0 00 51 21 05 5F 0A F7"))).toEqual({ kind: "hello" });
+    expect(decode(hexToBytes("F0 00 51 21 05 21 F7"))).toEqual({ kind: "writeAck", code: 0x21 });
+  });
+
   it("round-trips a presetDump and validates its checksum", () => {
     const blob = new Uint8Array(256);
     blob[0] = 0x01;

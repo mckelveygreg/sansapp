@@ -34,14 +34,15 @@ codec, unchanged, ran end-to-end over BLE:
   editor's `.dat` mirror — including the 267-byte long-SysEx preset dumps that truncate on
   cheaper BLE adapters. (`ELITE_PORT="WIDI Jack Bluetooth" npm run probe`.)
 - **Latency** (`npm run ble-check`): 267-byte preset read round-trip **~250 ms** (min 237 / max
-  269); write + `05 21` ack round-trip **~210 ms**; a same-bytes edit-buffer write read back
-  byte-identical (write path OK). Live one-way `setParam` knob edits carry no reply, so they
+  269); the tool also fires one paced no-op `05 50` live-set to prove the send direction without
+  changing pedal state. (An earlier write test measured the `05 20` write + `05 21` ack round-trip
+  at **~210 ms**.) Live one-way `setParam` knob edits carry no reply, so they
   feel far snappier than the full-preset numbers — the ~250 ms only bears on bulk library sync
   (**measured ≈35 s** to read all 128, shown with a progress bar). The BLE link was stable across
   repeated full runs.
 
 Tools for this: `npm run ports` (list CoreMIDI endpoints — find the WIDI name), `npm run probe`
-(read-only full validation), `npm run ble-check` (latency + non-destructive write-path test).
+(read-only full validation), `npm run ble-check` (latency + non-destructive send-path check).
 
 ## Wired fallback (optional)
 

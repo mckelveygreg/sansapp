@@ -41,6 +41,21 @@ const HEARTBEAT_QUIET_MS = 2500;
 // Sustained silence + a failing send = the port is genuinely gone.
 const LINK_SILENCE_MS = 2500;
 
+// The highest writable stored-preset slot. 0x7E/0x7F are NOT numbered slots: staging to 0x7F is
+// discarded by the pedal, and the save command `05 50 0A 12 7F` saves-to/jumps-to program 128
+// (PROTOCOL-MAP §1). writePreset rejects anything above this.
+const MAX_WRITABLE_SLOT = 0x7d;
+
+// A live-set knob/mic drag can emit ~60 moves/s. The pedal drops fire-and-forget sends that land in
+// one BLE connection interval, so we COALESCE per param: at most one wire message per param per this
+// window, always carrying the LATEST value (leading + trailing edge) so the final value can't be lost.
+const LIVE_THROTTLE_MS = 40;
+
+// How long a timed-out request's identity is remembered. A BLE reply can arrive AFTER its request
+// timed out (round-trips exceed the 4 s timeout); within this window an unmatched presetDump matching
+// a dead request is a LATE REPLY (dropped), not an unsolicited footswitch push — see handleIncoming.
+const TOMBSTONE_MS = 10_000;
+
 const PARAM_BY_RAW = new Map<number, ParamId>();
 for (const id of PARAM_IDS) {
   const raw = PARAMS[id].paramId;
@@ -52,6 +67,22 @@ interface Pending {
   resolve: (m: PedalMessage) => void;
   reject: (e: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+}
+
+/** Identity of a request that timed out; a late reply matching it is dropped (see handleIncoming). */
+interface Tombstone {
+  match: (m: PedalMessage) => boolean;
+  expiresAt: number;
+}
+
+/** Per-param coalescing state for the live-set throttle (setLiveParam). */
+interface LiveParam {
+  /** Latest requested value. */
+  value: number;
+  /** Last value actually put on the wire (−1 = none yet). */
+  sent: number;
+  lastSentAt: number;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 export class DeviceSession {
@@ -74,6 +105,12 @@ export class DeviceSession {
   private lastReceiveAt = 0;
   /** Serializes reply-expecting requests so only one round-trip is on the wire at a time. */
   private queue: Promise<unknown> = Promise.resolve();
+  /** Timed-out requests, kept ~TOMBSTONE_MS so a late reply isn't mistaken for a footswitch push. */
+  private readonly tombstones: Tombstone[] = [];
+  /** Per-param live-set coalescing state (keyed by the wire set-id). */
+  private readonly liveParams = new Map<number, LiveParam>();
+  /** True while a withExclusive block owns the link — the heartbeat probe suspends for its duration. */
+  private exclusive = false;
 
   constructor(
     private readonly io: MidiIO,
@@ -137,8 +174,9 @@ export class DeviceSession {
       await this.delay(this.sendGapMs);
       this.send({ kind: "control", code: 0x5b });
       // Deliberately send NOTHING else. An earlier build sent `setParam 0x13 = 1` on a hypothesis it
-      // was "Live Edit Mode" — but 0x13 is the Reverb Extension Factor (docs/PROTOCOL.md), so that
-      // write silently changed a reverb setting (and possibly toggled a mode) on every connect.
+      // was "Live Edit Mode" — but in the set/command space 0x13 is a reserved command id, not a
+      // parameter write (the Reverb Extension Factor sets on 0x17), so that emitted a stray command
+      // on every connect.
       this.setState("ready");
     } catch (e) {
       this.setState("disconnected");
@@ -146,11 +184,14 @@ export class DeviceSession {
     }
   }
 
-  /** Read a stored preset (or the edit buffer, slot 0x7F) without changing the active one. */
+  /** Read a stored preset (or slot 0x7F = program 127, which doesn't track live edits) without
+   * changing the active one. */
   async readPreset(slot: number): Promise<Preset> {
+    // Require checksumOk: a corrupted dump must NOT resolve the read. Worst case a corrupt 256-byte
+    // block is decoded, one byte flipped, and the WHOLE block written back — the config-block brick.
     const reply = await this.request(
       { kind: "requestPreset", slot },
-      (m) => m.kind === "presetDump" && m.slot === slot,
+      (m) => m.kind === "presetDump" && m.slot === slot && m.checksumOk,
     );
     if (reply.kind !== "presetDump") throw new Error("unexpected reply");
     return decodePreset(reply.blob);
@@ -160,18 +201,63 @@ export class DeviceSession {
   async recallPreset(slot: number): Promise<Preset> {
     const reply = await this.request(
       { kind: "recallPreset", slot },
-      (m) => m.kind === "presetDump" && m.slot === slot,
+      (m) => m.kind === "presetDump" && m.slot === slot && m.checksumOk,
     );
     if (reply.kind !== "presetDump") throw new Error("unexpected reply");
     return decodePreset(reply.blob);
   }
 
-  /** Live parameter edit (audible immediately; not persisted until a write). */
+  /** Live parameter edit (audible immediately; not persisted until a write). Coalesced per param. */
   setParam(paramId: ParamId, value: number): void {
     const raw = PARAMS[paramId].paramId;
     if (raw === undefined) return;
     // Map index → live-set wire id (deep params set on index+4). Notify path keeps the raw index.
-    this.send({ kind: "setParam", param: liveSetId(raw), value: value & 0x7f });
+    this.setLiveParam(liveSetId(raw), value);
+  }
+
+  /**
+   * Coalesced live-set: send at most one `05 50` per param per LIVE_THROTTLE_MS, always emitting the
+   * LATEST value (leading + trailing edge). A knob/mic drag emits per-move sends up to ~60/s; the pedal
+   * drops same-interval bursts, and a dropped FINAL move would leave pedal ≠ store (and a later save
+   * would persist a value the user isn't hearing). UI/store updates stay instant — this only shapes the
+   * wire, and distinct params never block each other (separate windows). `param` is the already
+   * live-set-mapped wire id (liveParam.ts / setParam both map before calling here).
+   */
+  setLiveParam(param: number, value: number): void {
+    const v = value & 0x7f;
+    let e = this.liveParams.get(param);
+    if (!e) {
+      e = { value: v, sent: -1, lastSentAt: 0 };
+      this.liveParams.set(param, e);
+    }
+    e.value = v;
+    if (e.timer) return; // a window is open — the latest value is recorded; it flushes on close
+    const sinceLast = Date.now() - e.lastSentAt;
+    if (sinceLast >= LIVE_THROTTLE_MS) {
+      this.emitLive(param, e); // leading edge: send now
+      e.timer = setTimeout(() => this.flushLive(param), LIVE_THROTTLE_MS);
+    } else {
+      // Inside the previous window: hold and flush the latest value when it closes (trailing edge).
+      e.timer = setTimeout(() => this.flushLive(param), LIVE_THROTTLE_MS - sinceLast);
+    }
+  }
+
+  private emitLive(param: number, e: LiveParam): void {
+    e.sent = e.value;
+    e.lastSentAt = Date.now();
+    this.send({ kind: "setParam", param, value: e.value });
+  }
+
+  private flushLive(param: number): void {
+    const e = this.liveParams.get(param);
+    if (!e) return;
+    e.timer = undefined;
+    // Trailing edge: send only if a newer value arrived during the window; otherwise close (the next
+    // call starts a fresh leading edge). This guarantees the FINAL value is always on the wire.
+    if (e.value !== e.sent) {
+      this.emitLive(param, e);
+      e.timer = setTimeout(() => this.flushLive(param), LIVE_THROTTLE_MS);
+    }
   }
 
   /**
@@ -182,25 +268,41 @@ export class DeviceSession {
    */
   async setParamsPaced(sets: readonly { param: number; value: number }[]): Promise<void> {
     for (let i = 0; i < sets.length; i++) {
-      if (i > 0) await this.delay(this.sendGapMs);
+      if (i === 0) {
+        // Pace the FIRST send off the last outbound byte too (exactly like request()) — otherwise the
+        // batch boundary lands in the same BLE connection interval as whatever preceded it (e.g.
+        // setAmbienceType's 10th send right before recipes fires this) and the pedal drops it.
+        if (this.sendGapMs > 0) {
+          const sinceSend = Date.now() - this.lastSendAt;
+          if (sinceSend < this.sendGapMs) await this.delay(this.sendGapMs - sinceSend);
+        }
+      } else {
+        await this.delay(this.sendGapMs);
+      }
       this.send({ kind: "setParam", param: sets[i]!.param, value: sets[i]!.value & 0x7f });
     }
   }
 
   /**
-   * Write a full preset blob to a slot (0x7F = edit buffer); awaits the pedal's ack, then COMMITS.
-   *
-   * The pedal only STAGES a `05 20` write — it acks it but discards it unless a commit follows:
-   * `setParam 0x12 = <slot>` (0x7F commits the edit buffer, making an engine/type change live; a
-   * numbered slot persists the save). Without the commit, writes silently vanish. Discovered
-   * 2026-07-08 by capturing an EliteControl Save.
+   * Write a full preset blob to a numbered slot, then persist with the save command
+   * `05 50 0A 12 <slot>` and await the pedal's `05 41` echo. Never 0x7F — the pedal treats
+   * `0x12=0x7F` as save-to-program-128.
    */
   async writePreset(slot: number, blob: Uint8Array): Promise<void> {
+    // Reject the special/edit-buffer slots (0x7E/0x7F): a `05 20` stage to 0x7F is discarded, and the
+    // save `05 50 0A 12 7F` jumps to program 128. Guards a captured edit-buffer dump (`05 41 7F …`) in
+    // a .p3b from walking through restorePlan into a save-to-128.
+    if (slot > MAX_WRITABLE_SLOT) {
+      throw new Error(
+        `invalid preset slot 0x${slot.toString(16)} — 0x7E/0x7F are not writable slots`,
+      );
+    }
     const s = slot & 0x7f;
-    // Stage the blob; the pedal acks with 05 21.
+    // Stage the blob; the pedal acks with 05 21 (match that specific code — a concurrent raw op's
+    // begin-ack 0x63 is also a writeAck and must NOT satisfy this).
     await this.request(
       { kind: "writePreset", slot: s, blob, checksumOk: true },
-      (m) => m.kind === "writeAck",
+      (m) => m.kind === "writeAck" && m.code === 0x21,
     );
     // Commit it: `05 50 0A 12 <slot>` (value == destination slot — byte-for-byte EliteControl's Save,
     // confirmed against captures/elite-save.jsonl; NOT a param write). On success the pedal echoes a
@@ -228,9 +330,11 @@ export class DeviceSession {
    */
   async readBlock(reqCode: number, index: number): Promise<Uint8Array> {
     const replyCode = reqCode === 0x6a ? 0x6b : 0x52;
+    // Require checksumOk: a corrupt block must not resolve the read (see readPreset — this is the
+    // config-block brick vector: edit a byte of a corrupt block, write the whole thing back).
     const reply = await this.request(
       { kind: "requestBlock", reqCode, index },
-      (m) => m.kind === "block" && m.blockCode === replyCode && m.index === index,
+      (m) => m.kind === "block" && m.blockCode === replyCode && m.index === index && m.checksumOk,
     );
     if (reply.kind !== "block") throw new Error("unexpected reply");
     return reply.data;
@@ -238,9 +342,11 @@ export class DeviceSession {
 
   /** Write a config/data block back to the pedal; awaits the block ack (05 53). */
   async writeBlock(blockCode: number, index: number, data: Uint8Array): Promise<void> {
+    // Match the specific block-ack code 0x53 — any other writeAck (e.g. an IR begin-ack 0x63 from a
+    // concurrent raw op) must not satisfy this.
     await this.request(
       { kind: "block", blockCode, index, data, checksumOk: true },
-      (m) => m.kind === "writeAck",
+      (m) => m.kind === "writeAck" && m.code === 0x53,
     );
   }
 
@@ -249,7 +355,43 @@ export class DeviceSession {
     this.rawSend(bytes);
   }
 
-  /** Read the live edit buffer. */
+  /**
+   * Run `fn` with EXCLUSIVE access to the link: it chains on the request queue (so no queued request —
+   * e.g. a heartbeat block-read — interleaves) AND suspends the heartbeat probe for its duration. The
+   * raw IR read/upload streams bypass the queue with direct sendRaw + onMessage taps: a probe firing
+   * INTO a passive multi-second receive stream garbles slots / false-disconnects mid-pull, and crowding
+   * the pedal's IR flash write is the historical brick vector. The quiet timer is reset on exit so the
+   * next heartbeat doesn't immediately probe the tail of the stream.
+   */
+  withExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = async (): Promise<T> => {
+      this.exclusive = true;
+      try {
+        return await fn();
+      } finally {
+        this.exclusive = false;
+        this.lastSendAt = Date.now(); // recent activity — keep the heartbeat backed off one more window
+      }
+    };
+    const result = this.queue.then(run, run); // chain after the previous queued op settles
+    this.queue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  /**
+   * The RN MIDI polyfill sends fire-and-forget and swallows its native Promise rejection; the sansApp
+   * patch re-surfaces it (globalThis.__midiSendError) and the app routes it here, so an async
+   * "destination not found" reaches the same fast-disconnect logic as a synchronous send throw instead
+   * of only being noticed ~one heartbeat later. On-device verification pending.
+   */
+  noteSendError(): void {
+    this.onSendFailure();
+  }
+
+  /** Read slot 0x7F (program 127; does not track live edits). */
   readEditBuffer(): Promise<Preset> {
     return this.readPreset(EDIT_BUFFER_SLOT);
   }
@@ -260,6 +402,10 @@ export class DeviceSession {
       p.reject(new Error("disconnected"));
     }
     this.pending.clear();
+    // Cancel any pending trailing live-set sends and drop stale tombstones — the port is going away.
+    for (const e of this.liveParams.values()) if (e.timer) clearTimeout(e.timer);
+    this.liveParams.clear();
+    this.tombstones.length = 0;
     // unsub()/io.close() can throw on an already-dead port (BLE drop). Guard them so disconnect() is
     // safe to call from send()'s error path — it must never throw back into a UI event handler.
     try {
@@ -291,6 +437,10 @@ export class DeviceSession {
     // full `05 41` dump — the same thing EliteControl reacts to — so apply it instantly. (A dump we
     // requested matches a pending read above, so it never reaches here.)
     if (!matched && m.kind === "presetDump" && m.checksumOk) {
+      // …UNLESS it's a LATE reply to a read that already timed out (BLE round-trips can exceed the
+      // timeout). Applying it would "switch" the app to a preset the pedal never moved to — wiping the
+      // dirty flag + editor state. A live tombstone identifies it; drop it (and don't fan it out).
+      if (this.consumeTombstone(m)) return;
       try {
         const preset = decodePreset(m.blob);
         for (const cb of this.pushedPresetCbs) cb(m.slot, preset);
@@ -307,6 +457,25 @@ export class DeviceSession {
       for (const cb of this.paramCbs) cb(ev);
     }
     for (const cb of this.msgCbs) cb(m);
+  }
+
+  /**
+   * Prune expired tombstones and, if `m` satisfies a live one, consume it and return true (this is a
+   * late reply to a timed-out request, not new pedal state). See TOMBSTONE_MS / handleIncoming.
+   */
+  private consumeTombstone(m: PedalMessage): boolean {
+    const now = Date.now();
+    let hit = false;
+    for (let i = this.tombstones.length - 1; i >= 0; i--) {
+      const t = this.tombstones[i]!;
+      if (t.expiresAt <= now) {
+        this.tombstones.splice(i, 1); // expired
+      } else if (!hit && t.match(m)) {
+        this.tombstones.splice(i, 1); // consume once
+        hit = true;
+      }
+    }
+    return hit;
   }
 
   /**
@@ -337,6 +506,9 @@ export class DeviceSession {
       return new Promise<PedalMessage>((resolve, reject) => {
         const timer = setTimeout(() => {
           this.pending.delete(entry);
+          // Remember this dead request briefly: over BLE a reply can still arrive after the timeout.
+          // Without the tombstone, handleIncoming would mistake a late presetDump for a footswitch push.
+          this.tombstones.push({ match, expiresAt: Date.now() + TOMBSTONE_MS });
           reject(new Error(`timeout awaiting reply to ${out.kind}`));
         }, this.timeoutMs);
         const entry: Pending = { match, resolve, reject, timer };
@@ -396,11 +568,12 @@ export class DeviceSession {
    * "connected" dot. Only runs when constructed with heartbeatMs > 0 (the app; not tests/tools).
    */
   private async heartbeat(): Promise<void> {
-    if (this.state !== "ready" || this.pending.size > 0) return;
-    // Recent outbound traffic = link alive. setParam knob-moves are fire-and-forget (no pending
-    // entry), so a burst wouldn't be caught by the check above; probing into that saturated TX can
-    // time out and falsely disconnect. Skip this tick — the traffic itself is the liveness proof.
-    if (Date.now() - this.lastSendAt < HEARTBEAT_QUIET_MS) return;
+    if (this.state !== "ready" || this.pending.size > 0 || this.exclusive) return;
+    // Recent traffic in EITHER direction = link alive, so skip this probe. Outbound: setParam
+    // knob-moves and IR sends are fire-and-forget (no pending entry) — probing into that saturated TX
+    // can time out and falsely disconnect. Inbound: a passive IR receive stream (also no pending
+    // entry) proves the link without a probe. The traffic itself is the liveness proof.
+    if (Date.now() - Math.max(this.lastSendAt, this.lastReceiveAt) < HEARTBEAT_QUIET_MS) return;
     try {
       const settings = await this.readBlock(0x55, 0);
       this.hbFails = 0;

@@ -4,18 +4,18 @@
  * slot 7/8 to a non-default user-IR index. SAFE: hello + block reads + 05 40 preset reads only.
  *   ELITE_PORT="WIDI" npx tsx tools/probe-preset-modes.ts
  */
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { DeviceSession } from "../src/device/session";
 import { openMidi } from "./lib";
 
 const PORT = process.env.ELITE_PORT ?? "WIDI";
-const SUMMARY =
-  "/private/tmp/claude-501/-Users-greg-code-personal-pbdr-el-app/b3375f42-fcf9-4da2-a6e8-3305580325fa/scratchpad/preset-modes.json";
+const SUMMARY = "captures/preset-modes.json";
 const hex = (n: number) => n.toString(16).padStart(2, "0");
 
 async function main(): Promise<void> {
   const io = openMidi(PORT);
-  const session = new DeviceSession(io, 4000);
+  // WIDI/BLE default: 150 ms send pacing (0 disables it) + a generous read timeout for the scan.
+  const session = new DeviceSession(io, 6000, 0, 150);
   console.log(`connecting to "${PORT}"…`);
   await session.connect();
   console.log("✓ ready — scanning 128 presets…\n");
@@ -50,6 +50,7 @@ async function main(): Promise<void> {
       readFails++;
     }
   }
+  mkdirSync("captures", { recursive: true });
   const summary = {
     scanned: rows.length,
     readFails,

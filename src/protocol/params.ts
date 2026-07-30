@@ -27,7 +27,7 @@ export interface ParamDef {
   readonly blobOffset: number;
   /**
    * Parameter id used in live `05 51 0A <paramId> <value>` messages (live capture).
-   * Distinct from `blobOffset` (the two addressing schemes differ). All 15 confirmed.
+   * Distinct from `blobOffset` (the two addressing schemes differ). All confirmed.
    */
   readonly paramId?: number;
   /** Whether the blob offset/semantics have been verified against the real device. */
@@ -96,11 +96,10 @@ export const PARAMS = {
   // the toggle reflects the loaded preset — if a preset has chorus OFF, none of the chorus knobs are
   // audible, which reads as "the chorus controls don't do anything" (issue #40).
   chorusOn: knob("chorusOn", "Chorus On", "ambience", 0x63, 0x41, true),
-  // Deep params now read back from presets. blobOffset = wireId + 0x22 — binary-confirmed 2026-07-15
-  // two ways: EliteControl's 05 41 decode loop applies body[0x22+k] to param k for k=0x00..0x49, and
-  // a 128-preset oracle places every known toggle at its predicted +0x22 offset. Previously these
-  // were send-only (didn't reset on preset change, no ghost). gateRatio's wire id (0x1d, Expander
-  // Ratio) is inferred; its offset follows the same rule regardless.
+  // Deep params read back from presets. blobOffset = wireId + 0x22 — confirmed 2026-07-15 two ways:
+  // EliteControl's 05 41 decode loop applies body[0x22+k] to param k for k=0x00..0x49, and a
+  // 128-preset oracle places every known toggle at its predicted +0x22 offset. gateRatio's wire id
+  // (0x1d, Expander Ratio) is inferred; its offset follows the same rule regardless.
   gateThreshold: knob("gateThreshold", "Gate Threshold", "dynamics", 0x2b, 0x09, true),
   gateRatio: knob("gateRatio", "Gate Ratio", "dynamics", 0x3f, 0x1d, true),
   gateRelease: knob("gateRelease", "Gate Release", "dynamics", 0x49, 0x27, true),
@@ -109,12 +108,11 @@ export const PARAMS = {
   compRelease: knob("compRelease", "Comp Release", "dynamics", 0x3e, 0x1c, true),
   autoGain: knob("autoGain", "Auto Gain", "dynamics", 0x54, 0x32, true),
   lookahead: knob("lookahead", "Look-ahead", "dynamics", 0x55, 0x33, true),
-  // Ambience Decay/Time — wire ids CORRECTED from EliteControl's binary (issue #38). Its ShowAmbience
-  // UI (func.1000dbae8) builds the DECAY knob on param index 0x11 (Reverb Decay Time) and the TIME knob
-  // on index 0x10 (Reverb Room Size) — the same knob constructor (func.1000a6d64) whose LEVEL knob uses
-  // index 0x08, which pins the reading. The old ids (0x15 Fbk Filter / 0x14 Fbk Delay Size) were wrong:
-  // Fbk Delay only moves the LATER echoes, so the Echo's first echo stayed fixed. Room Size drives the
-  // whole echo time. blobOffset = index + 0x22.
+  // Ambience Decay/Time wire ids, derived from observing EliteControl (issue #38): its ShowAmbience
+  // page builds the DECAY knob on param index 0x11 (Reverb Decay Time) and the TIME knob on index
+  // 0x10 (Reverb Room Size) — the same knob constructor whose LEVEL knob uses index 0x08, which pins
+  // the reading. Room Size (0x10) drives the whole echo time; the nearby Fbk Delay Size (0x14) only
+  // moves the later echoes, so it isn't the Time control. blobOffset = index + 0x22.
   ambienceDecay: knob("ambienceDecay", "Ambience Decay", "ambience", 0x33, 0x11, true),
   ambienceTime: knob("ambienceTime", "Ambience Time", "ambience", 0x32, 0x10, true),
   // Amp-voicing params — the "hidden" bytes an amp-model bundle sets besides Pre-Amp/Drive/Presence.
@@ -123,17 +121,36 @@ export const PARAMS = {
   punch: knob("punch", "Punch", "preamp", 0x25, 0x03, true),
   punchFreq: knob("punchFreq", "Punch Freq", "preamp", 0x2d, 0x0b, true),
   punchQ: knob("punchQ", "Punch Q", "preamp", 0x4f, 0x2d, true),
+  // Buzz Q / Crunch Q — the remaining drive-character Qs (PROTOCOL-MAP §3, idx 0x2c/0x2e). An amp
+  // model apply live-sets them to constants (Buzz Q = 64, Crunch Q = 0, §5); modeled so a SAVE after
+  // an apply records those bytes instead of silently keeping the base preset's old Qs.
+  buzzQ: knob("buzzQ", "Buzz Q", "preamp", 0x4e, 0x2c, true),
+  crunchQ: knob("crunchQ", "Crunch Q", "preamp", 0x50, 0x2e, true),
   // IR select/morph — the continuous 0x0E value the IR page's mic rides (0 = Off/flat, ~16·n = cab
   // n, values between blend neighbours). Store-backed so the IR stack reflects the LOADED preset's
   // cab instead of a guess. blobOffset 0x30 = wire 0x0e + 0x22; confirmed against the 128-preset bank.
   irBlend: knob("irBlend", "IR", "ir", 0x30, 0x0e, true),
-  // Auto Filter extras (RE 2026-07-15): a master enable toggle (0x3c, defaults OFF) plus Attack/
+  // Per-USER-IR "IR Mode" ENABLE toggle + makeup gain (PROTOCOL-MAP §3, idx 0x28–0x2b). PER-PRESET:
+  // stored in the blob at paramId + 0x22 (mode 0x4a/0x4b, gain 0x4c/0x4d), CONFIRMED by the .p3b
+  // (slot-7 mode ON in 91 of 128 factory presets). Mode 0 = the factory cab, 1 = the uploaded user IR;
+  // gain 0..127 ↔ ±12 dB linear (see gainDbToValue). Store-backed so the IR page reflects the LOADED
+  // preset and a SAVE persists a toggle/gain edit instead of silently reverting it. Toggles follow the
+  // chorusOn/autoFilterOn convention (modeled as continuous knobs, value 0/1).
+  irMode7: knob("irMode7", "IR Mode 7", "ir", 0x4a, 0x28, true),
+  irMode8: knob("irMode8", "IR Mode 8", "ir", 0x4b, 0x29, true),
+  irGain7: knob("irGain7", "User IR Gain 7", "ir", 0x4c, 0x2a, true),
+  irGain8: knob("irGain8", "User IR Gain 8", "ir", 0x4d, 0x2b, true),
+  // Preset Level (PROTOCOL-MAP §3, idx 0x40) — a per-preset OUTPUT level an amp-model apply live-sets
+  // (e.g. British = 14 vs Bass Driver = 127). Modeled so applying a model then SAVING records the new
+  // level instead of the old byte — otherwise recall jumps in volume. Default 32; not yet a UI knob.
+  presetLevel: knob("presetLevel", "Preset Level", "level", 0x62, 0x40, true),
+  // Auto Filter extras (2026-07-15): a master enable toggle (0x3c, defaults OFF) plus Attack/
   // Release (0x3e/0x3f) — store-backed so they read back from the preset (Level is `filter` 0x3d).
   // The auto-filter has NO cutoff/resonance param; these are all it exposes over the wire.
   autoFilterOn: knob("autoFilterOn", "Auto Filter", "redzone", 0x5e, 0x3c, true),
   filterAttack: knob("filterAttack", "Filter Attack", "redzone", 0x60, 0x3e, true),
   filterRelease: knob("filterRelease", "Filter Release", "redzone", 0x61, 0x3f, true),
-  // Dynamics extras (RE 2026-07-15): output soft-clip (0x21) + the gate's own attack (0x26, completes
+  // Dynamics extras (2026-07-15): output soft-clip (0x21) + the gate's own attack (0x26, completes
   // gate timing alongside gateRelease 0x27). Ranges uncalibrated on the pedal — shown as raw %.
   softClip: knob("softClip", "Soft Clip", "dynamics", 0x43, 0x21, true),
   gateAttack: knob("gateAttack", "Gate Attack", "dynamics", 0x48, 0x26, true),
@@ -145,12 +162,11 @@ export const PARAM_IDS = Object.keys(PARAMS) as ParamId[];
 
 /**
  * Map a parameter's iPlug INDEX (== its `05 51` notify id, what we store as `paramId`) to the wire
- * id the pedal expects in a live `05 50` SET message. Binary RE of EliteControl (const map at
- * 0x10013517c, 2026-07-15): indices 0x00–0x0F set on the same id (identity — the shallow main-panel
- * knobs), but the deep range 0x10–0x4D sets on **index + 4**. So Blend (index 0x47) is set via 0x4B,
- * not 0x47 (0x47 is only its notify id; setting 0x47 actually hits chorus-mod — the old "blend moved
- * the chorus" bug). The notify/read path stays on the index; only the write path uses this.
- * NOTE: needs on-device confirmation (send 0x4B for Blend) — the RE proves what EliteControl SENDS.
+ * id the pedal expects in a live `05 50` SET message. Derived from observing EliteControl
+ * (2026-07-15): indices 0x00–0x0F set on the same id (identity — the shallow main-panel knobs), but
+ * the deep range 0x10–0x4D sets on **index + 4**. So Blend (index 0x47) is set via 0x4B, not 0x47
+ * (0x47 is only its notify id; setting 0x47 actually hits chorus-mod — the "blend moved the chorus"
+ * bug). The notify/read path stays on the index; only the write path uses this.
  */
 export const liveSetId = (index: number): number =>
   index >= 0x10 && index <= 0x4d ? index + 4 : index;
@@ -198,10 +214,9 @@ export const CHORUS_PARAMS = {
 /**
  * Deep Ambience-page paramIds (iPlug indices; sendParam maps them to the live-set wire via liveSetId).
  * The **AMBIANCE knob (0x08) is Level**; Decay = **0x11 (Reverb Decay Time)**; Time = **0x10 (Reverb
- * Room Size)**, Echo / Echo Verb only. Decay/Time wire ids were corrected from EliteControl's binary
- * (ShowAmbience @func.1000dbae8; DECAY→0x11, TIME→0x10) — issue #38. The old 0x15/0x14 pointed the
- * Time knob at Fbk Delay Size (later echoes only), leaving the first echo fixed. Selecting an ambience
- * *type* also rewrites a small block of blob offsets; those aren't all individually labelled yet.
+ * Room Size)**, Echo / Echo Verb only — derived from observing EliteControl's ShowAmbience page
+ * (issue #38). Selecting an ambience *type* also rewrites a small block of blob offsets; those aren't
+ * all individually labelled yet.
  */
 export const AMBIENCE_PARAMS = {
   level: 0x08,
@@ -210,12 +225,12 @@ export const AMBIENCE_PARAMS = {
 } as const;
 
 /**
- * Gate / expander (on the Dynamics page, with the compressor). Threshold 0x09 (confirmed), Release 0x27
- * (Gate Release), and the gate's ratio stage maps to the Expander Ratio (0x1d — inferred). Master
- * Level is the main output level (0x00). Ranges: Threshold Bypass then ≈−90…−30 dB, Ratio 1–10:1,
- * Release 10–1000 ms. Read back from the preset via the PARAMS entries above (gateThreshold /
- * gateRatio / gateRelease, blobOffset = wireId + 0x22); the ratio wire id (0x1d) is inferred — if
- * the gate misbehaves, please open a protocol-observation issue.
+ * Gate / expander (on the Dynamics page, with the compressor). Threshold 0x09 (confirmed), Release
+ * 0x27 (Gate Release), and the gate's ratio stage maps to the Expander Ratio (0x1d — inferred).
+ * Ranges: Threshold Bypass then ≈−90…−30 dB, Ratio 1–10:1, Release 10–1000 ms. Read back from the
+ * preset via the PARAMS entries above (gateThreshold / gateRatio / gateRelease, blobOffset = wireId +
+ * 0x22); the ratio wire id (0x1d) is inferred — if the gate misbehaves, please open a
+ * protocol-observation issue.
  */
 export const GATE_PARAMS = {
   threshold: 0x09,
@@ -230,7 +245,6 @@ export const GATE_PARAMS = {
  * src/protocol/units.ts (EQ_BANDS): Low freq 40–200 Hz linear, Mid 200–2000 Hz log, High 1–8 kHz
  * linear; Q 0.5–2.0 on Low/Mid but 0.1–1.4 on High; gain ±12 dB on all three.
  */
-// Gains are the main-panel LOW/MID/HIGH knobs (0x06/0x0c/0x07); mid freq is "Mid Shift" (0x0d).
 export const PARAMETRIC_EQ = {
   low: { gain: 0x06, freq: 0x48, q: 0x30 },
   mid: { gain: 0x0c, freq: 0x0d, q: 0x2f },
@@ -241,11 +255,11 @@ export const PARAMETRIC_EQ = {
  * A few notes on the fuller parameter map (docs/PARAM-MAP.md):
  *
  * - 0x2f is "Mid Q" (mapped as `q` / eq.mid.q) — a real control.
- * - 0x13 is "Reverb Extension Factor" (2–5 semitones).
+ * - 0x13 is "Reverb Extension Factor" (2–5).
  * - 0x35–0x38 are the "User IR 7/8 Preset" addressing params for the writable IR slots.
- * - Deep reverb engine (0x10–0x18, 0x39–0x3b), Expander block (0x1e–0x20), Buzz/Punch/Crunch (+Qs),
- *   AnalogSim / Soft Clipping / Anti-aliasing / Clean Input, Tuner (0x34), Preset Level (0x40) are
- *   real params SansApp doesn't expose yet (roadmap). Full table + names in docs/PARAM-MAP.md.
+ * - The deep reverb-engine params beyond Level/Decay/Time (0x12–0x18, 0x39–0x3b), the Expander block
+ *   (0x1e–0x20), AnalogSim / Anti-aliasing / Clean Input, and the Tuner (0x34) are real params
+ *   SansApp doesn't expose yet (roadmap). Full table + names in docs/PARAM-MAP.md.
  */
 
 /**
@@ -258,23 +272,18 @@ export const PARAMETRIC_EQ = {
 export const KNOB_LAYER_NOTIFY_PARAM = 0x4d;
 
 /**
- * Per-USER-IR makeup gain, sent live (`05 50`): `0x2a` = slot 7, `0x2b` = slot 8 (the two "User IR
- * Gain" params). Range 0–127 maps **linearly to ±{@link USER_IR_GAIN_DB_RANGE} dB**:
- * `dB = value/127·24 − 12` (so 0 → −12, 127 → +12, ~63.5 → 0). ±12 dB confirmed against the desktop
- * editor's readout (knob rails read 12.00 / −12.00 dB); the scale is linear (not logarithmic).
+ * Per-USER-IR makeup gain scaling. The gain params themselves are the store-backed `irGain7`/`irGain8`
+ * registry entries above (slot 7 = idx 0x2a, slot 8 = idx 0x2b); this is the wire↔dB conversion the IR
+ * page uses. Range 0–127 maps **linearly to ±{@link USER_IR_GAIN_DB_RANGE} dB**: `dB = value/127·24 −
+ * 12` (so 0 → −12, 127 → +12, ~63.5 → 0). ±12 dB confirmed against the desktop editor's readout (knob
+ * rails read 12.00 / −12.00 dB); the scale is linear (not logarithmic).
  */
-export const USER_IR_GAIN: Record<number, number> = { 7: 0x2a, 8: 0x2b };
-/**
- * Per-USER-IR "IR Mode" ENABLE toggle (the on/off switch next to each user slot in EliteControl):
- * `0x28` = slot 7, `0x29` = slot 8. **PER-PRESET** — stored in the preset blob at `paramId + 0x22`
- * (0x4a / 0x4b), CONFIRMED by the .p3b (slot-7 mode is ON in 91 of 128 presets, OFF in 37). OFF = the
- * preset uses its normal IR; ON = it uses the custom IR in that user slot. So the IR data is a global
- * library, but each preset opts in/out via this toggle — that's the per-preset behaviour.
- */
-export const USER_IR_MODE: Record<number, number> = { 7: 0x28, 8: 0x29 };
 export const USER_IR_GAIN_DB_RANGE = 12; // ± dB at the rails (0..127 linear) — CONFIRMED
-/** dB (−12..+12) → the 0..127 wire value for {@link USER_IR_GAIN} (clamped). */
+/** dB (−12..+12) → the 0..127 wire value (clamped). */
 export const gainDbToValue = (db: number): number => {
   const clamped = Math.max(-USER_IR_GAIN_DB_RANGE, Math.min(USER_IR_GAIN_DB_RANGE, db));
   return Math.round(((clamped + USER_IR_GAIN_DB_RANGE) / (2 * USER_IR_GAIN_DB_RANGE)) * 127);
 };
+/** The 0..127 wire value → dB (−12..+12) — inverse of {@link gainDbToValue}. */
+export const valueToGainDb = (value: number): number =>
+  (value / 127) * (2 * USER_IR_GAIN_DB_RANGE) - USER_IR_GAIN_DB_RANGE;

@@ -5,22 +5,19 @@
  *  1. LISTEN (default): connect and print every incoming message, naming each paramNotify. Turn a
  *     physical knob (or a deep control on the pedal): if `05 51 <id> <val>` prints, the pedal DOES
  *     reach this app (answers "the app doesn't update when I turn a knob"), and the `<id>` it reports
- *     is the pedal's own ground-truth wire id for that control.
- *  2. SEND / SWEEP: push a setParam for a NAMED control using the (corrected) wire id in params.ts,
- *     so you can confirm by ear that the id actually moves that parameter. This is how to verify the
- *     +4 wire-id correction and the flagged comp/gate ids.
+ *     is the pedal's own ground-truth notify id for that control.
+ *  2. SEND / SWEEP: live-set a NAMED control, translating its iPlug index to the `05 50` set-id via
+ *     liveSetId() exactly as the app does, so you can confirm by ear that the id actually moves that
+ *     parameter.
  *
  * Usage (free the port first — quit EliteControl and any capture tool):
  *   ELITE_PORT="WIDI Jack Bluetooth" npm run verify                 # listen
  *   ELITE_PORT="WIDI Jack Bluetooth" npm run verify -- send lowFreq 100
  *   ELITE_PORT="WIDI Jack Bluetooth" npm run verify -- sweep chorus
  *   ELITE_PORT="WIDI Jack Bluetooth" npm run verify -- ir scan       # read every slot in IR_READ_AB
- *   ELITE_PORT="WIDI Jack Bluetooth" npm run verify -- ir slot 3     # read one slot (1..6)
+ *   ELITE_PORT="WIDI Jack Bluetooth" npm run verify -- ir slot 3     # read one slot (1..8)
  *   ELITE_PORT="WIDI Jack Bluetooth" npm run verify -- ir ab 2 4     # read a raw (a,b) selector
  *   npm run verify -- names                                          # print the id→name table
- *
- * `ir scan` is the tool for the pending job: confirm the slot→(a,b) map in irRead.ts by checking that
- * each printed name matches the cab in that pedal position (use `ir ab` to probe unknown selectors).
  */
 import { DeviceSession } from "../src/device/session";
 import {
@@ -33,16 +30,23 @@ import {
   PARAMETRIC_EQ,
   PARAMS,
   PARAM_IDS,
+  liveSetId,
   type ParamId,
 } from "../src/protocol/params";
 import { IR_READ_AB, readIr, readIrSlot } from "../src/midi/irRead";
 import type { DecodedIr } from "../src/protocol/irEncode";
+import { encode } from "../src/protocol/messages";
 import { bytesToHex } from "../src/protocol/hex";
 import { openMidi } from "./lib";
 
 const PORT = process.env.ELITE_PORT ?? "WIDI";
 
-/** raw wire id → human label, assembled from every mapping table so listen-mode can name any id. */
+/**
+ * NOTIFY/index space: iPlug index → human label, so listen-mode can name any `05 51` notify id.
+ * The `05 50` SET space is a DIFFERENT id space (deep params set on index+4 via liveSetId, and ids
+ * 0x12/0x13 are reserved COMMANDS there — 0x12 = save), so set-space meanings are kept out of this
+ * notify table.
+ */
 const LABEL = new Map<number, string>();
 const add = (id: number | undefined, label: string) => {
   if (id === undefined) return;
@@ -56,15 +60,17 @@ for (const [k, v] of Object.entries(GATE_PARAMS)) add(v, `gate.${k}`);
 for (const [k, v] of Object.entries(AMBIENCE_PARAMS)) add(v, `ambience.${k}`);
 for (const band of ["low", "mid", "high"] as const)
   for (const [k, v] of Object.entries(PARAMETRIC_EQ[band])) add(v, `eq.${band}.${k}`);
-add(0x12, "SAVE/commit");
-add(0x13, "reverb extension factor (per PROTOCOL.md; unconfirmed)");
+add(
+  0x13,
+  "reverb extension factor (notify id 0x13; as a live-set id, 0x13 is RESERVED — never send)",
+);
 add(0x4d, "RED SHIFT footswitch (layer)");
 
 const name = (id: number) => LABEL.get(id) ?? "(unmapped)";
 
 /** Resolve a control name to its wire id: a ParamId, or "table.key" (e.g. comp.attack, eq.low.q). */
 function resolveId(arg: string): number | undefined {
-  if (arg === "layer") return KNOB_LAYER_NOTIFY_PARAM; // red-zone toggle (send 1=red, 0=primary)
+  if (arg === "layer") return KNOB_LAYER_NOTIFY_PARAM; // notify-only footswitch — labels only, never sent
   if (arg in PARAMS) return PARAMS[arg as ParamId].paramId;
   const tables: Record<string, Record<string, number>> = {
     comp: COMP_PARAMS,
@@ -127,14 +133,21 @@ async function main() {
 
   if (mode === "send" || mode === "sweep") {
     if (!arg) throw new Error(`usage: ${mode} <control> [value]  (e.g. ${mode} lowFreq 100)`);
+    if (arg === "layer")
+      throw new Error(
+        "'layer' is the RED SHIFT footswitch — notify-only (physical footswitch), not settable over MIDI; use listen mode to observe it",
+      );
     const id = resolveId(arg);
     if (id === undefined)
       throw new Error(`unknown control "${arg}" — try: npm run verify -- names`);
-    console.log(`control "${arg}" → wire id 0x${id.toString(16)}  (${name(id)})`);
+    const setId = liveSetId(id); // deep params (index 0x10-0x4D) set on index+4 — same as the app
+    console.log(
+      `control "${arg}" → notify id 0x${id.toString(16)} → set-id 0x${setId.toString(16)}  (${name(id)})`,
+    );
     const sendParam = (v: number) => {
-      const bytes = Uint8Array.from([0xf0, 0x00, 0x51, 0x21, 0x05, 0x50, 0x0a, id, v & 0x7f, 0xf7]);
+      const bytes = encode({ kind: "setParam", param: setId, value: v });
       io.send(bytes);
-      console.log(`→ setParam 0x${id.toString(16)} = ${v}   ${bytesToHex(bytes)}`);
+      console.log(`→ setParam set-id 0x${setId.toString(16)} = ${v}   ${bytesToHex(bytes)}`);
     };
     if (mode === "send") {
       sendParam(Number(valStr ?? 100));
@@ -165,14 +178,26 @@ async function main() {
       console.log(
         "Reading every slot in IR_READ_AB — the name should match that pedal position:\n",
       );
-      for (const slot of Object.keys(IR_READ_AB)
+      // One retry on a null read: a flaky WIDI miss reads as an empty slot otherwise (mirrors
+      // probe-ir.ts). Slots are paced ~150 ms apart so the back-to-back stream reads don't collide
+      // (mirrors app/ir.tsx's 120 ms).
+      const readSlot = async (slot: number): Promise<DecodedIr | null> => {
+        const first = await readIrSlot(session, slot);
+        if (first) return first;
+        await new Promise((r) => setTimeout(r, 150));
+        return readIrSlot(session, slot);
+      };
+      const slots = Object.keys(IR_READ_AB)
         .map(Number)
-        .sort((a, b) => a - b)) {
+        .sort((a, b) => a - b);
+      for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i]!;
         const [a, b] = IR_READ_AB[slot]!;
         describe(
           `slot ${slot}  (a=0x${a.toString(16)} b=0x${b.toString(16)})`,
-          await readIrSlot(session, slot),
+          await readSlot(slot),
         );
+        if (i < slots.length - 1) await new Promise((r) => setTimeout(r, 150));
       }
     } else if (arg === "slot") {
       const slot = Number(valStr);

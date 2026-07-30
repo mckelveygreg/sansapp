@@ -37,10 +37,11 @@ import { USER_IR_SLOTS, readIrSlot } from "../src/midi/irRead";
 import { sendParam } from "../src/midi/liveParam";
 import { getSession, pedalStore } from "../src/midi/pedal";
 import {
-  USER_IR_GAIN,
+  PARAMS,
   USER_IR_GAIN_DB_RANGE,
-  USER_IR_MODE,
   gainDbToValue,
+  valueToGainDb,
+  type ParamId,
 } from "../src/protocol/params";
 import { uiStore } from "../src/state/ui";
 import { decodeWav, encodeWav, floatToPcm } from "../src/protocol/wav";
@@ -71,6 +72,22 @@ const TAPS = 1000;
 const IR_SLOTS = 8;
 const slotFallback = (pos: number) => `IR ${pos}`;
 const slotToValue = (pos: number) => Math.min(127, pos * 16);
+
+// The two writable USER slots (7/8) each hold BOTH a factory cab and an uploaded custom IR; the
+// preset's per-slot IR Mode toggle (irMode7/irMode8) picks which one plays. When mode is OFF the pedal
+// plays the factory cab — whose curve we can't read — so the stack must show the factory name and NOT
+// present the pulled (user) cab as active. Slots 1–6 are plain factory cabs (always their pulled name).
+const FACTORY_IR_NAME: Record<number, string> = { 7: "Voice 12L", 8: "Brit V30" };
+const isUserSlot = (pos: number): boolean => pos >= 7;
+const IR_MODE_ID = { 7: "irMode7", 8: "irMode8" } as const satisfies Record<number, ParamId>;
+const IR_GAIN_ID = { 7: "irGain7", 8: "irGain8" } as const satisfies Record<number, ParamId>;
+
+/** The label to show for a slot given its per-preset IR Mode: a user slot with the mode OFF reads as
+ * its factory cab; otherwise the pulled cab name (falling back to a generic slot label). */
+const slotDisplayName = (pos: number, userIrOn: boolean, pulledName?: string): string =>
+  isUserSlot(pos) && !userIrOn
+    ? `Factory · ${FACTORY_IR_NAME[pos] ?? slotFallback(pos)}`
+    : (pulledName ?? slotFallback(pos));
 
 const haptic = (fn: () => Promise<unknown>) => {
   if (Platform.OS !== "web") void fn().catch(() => {});
@@ -321,6 +338,17 @@ export default function IrStudio() {
   const [pullProg, setPullProg] = useState<{ done: number; total: number } | null>(null);
   // IR position (0x0E) is store-backed — the mic reflects the LOADED preset's cab, not a guess.
   const morph = useStore(pedalStore, (s) => s.values.irBlend) ?? 0;
+  // Per-USER-slot IR Mode + makeup gain are store-backed too, so they reflect the LOADED preset (the
+  // display gating below reads them) and an edit routes through the local-edit path (dirty + save).
+  const irMode7 = (useStore(pedalStore, (s) => s.values.irMode7) ?? 0) > 0;
+  const irMode8 = (useStore(pedalStore, (s) => s.values.irMode8) ?? 0) > 0;
+  const irGain7 = useStore(pedalStore, (s) => s.values.irGain7);
+  const irGain8 = useStore(pedalStore, (s) => s.values.irGain8);
+  const userModeOn = (pos: number): boolean => (pos === 7 ? irMode7 : pos === 8 ? irMode8 : true);
+  const gainDbOf = (slot: 7 | 8): number => {
+    const wire = slot === 7 ? irGain7 : irGain8;
+    return wire === undefined ? 0 : valueToGainDb(wire);
+  };
 
   // Load cached curves on mount so we don't re-read the pedal every visit — Refresh re-pulls.
   useEffect(() => {
@@ -391,19 +419,28 @@ export default function IrStudio() {
   }
   function selectSlot(pos: number) {
     setBlendValue(slotToValue(pos));
-    const hit = pulled[pos];
-    setStatus(pos === 0 ? "Off (flat)." : hit ? `Cab ${pos}: ${hit.name}` : `Slot ${pos}.`);
+    setStatus(
+      pos === 0
+        ? "Off (flat)."
+        : `Cab ${pos}: ${slotDisplayName(pos, userModeOn(pos), pulled[pos]?.name)}`,
+    );
   }
 
-  // The blended curve at the current mic position (interpolated between the two neighbouring cabs).
+  // The blended curve at the current mic position (interpolated between the two neighbouring cabs). A
+  // user slot with its IR Mode OFF plays the factory cab, whose curve we can't read — treat it as
+  // unknown (null) so we never draw the pulled user IR as if it were the active sound.
   const stackDb = useMemo(() => {
     if (morph <= 0) return FLAT_DB.slice();
     const rf = morph / 16;
     const lo = Math.floor(rf);
     const hi = Math.min(8, Math.ceil(rf));
-    const dbAt = (pos: number) => (pos <= 0 ? FLAT_DB : (pulled[pos]?.db ?? null));
+    const dbAt = (pos: number) => {
+      if (pos <= 0) return FLAT_DB;
+      if ((pos === 7 && !irMode7) || (pos === 8 && !irMode8)) return null;
+      return pulled[pos]?.db ?? null;
+    };
     return blendDb(dbAt(lo), dbAt(hi), rf - lo);
-  }, [morph, pulled]);
+  }, [morph, pulled, irMode7, irMode8]);
 
   const stackCurves: IrCurve[] = [
     ...Object.values(pulled).map((p) => ({
@@ -427,29 +464,20 @@ export default function IrStudio() {
   const [cabB, setCabB] = useState<Cab | null>(null);
   const [blend, setBlend] = useState(50);
   const [uploadSlot, setUploadSlot] = useState<7 | 8>(7);
-  const [gainDbs, setGainDbs] = useState<Record<number, number>>({ 7: 0, 8: 0 });
-  const [modes, setModes] = useState<Record<number, boolean>>({ 7: false, 8: false });
-  const presetRaw = useStore(pedalStore, (s) => s.raw);
-  // Reflect the LOADED preset's REAL per-slot IR mode (stored in the preset blob at USER_IR_MODE
-  // paramId + 0x22 = 0x4a/0x4b) instead of always starting OFF. 0 = the factory cab, 1 = your uploaded
-  // user IR. Re-syncs whenever a different preset loads (its blob changes).
-  useEffect(() => {
-    if (presetRaw) {
-      setModes({
-        7: (presetRaw[USER_IR_MODE[7]! + 0x22] ?? 0) > 0,
-        8: (presetRaw[USER_IR_MODE[8]! + 0x22] ?? 0) > 0,
-      });
-    }
-  }, [presetRaw]);
-
+  // IR Mode + gain are store-backed (irMode7/8, irGain7/8) — read above. Edits go through the standard
+  // local-edit path (send live + setValueLocal), so the toggle/gain reflect the LOADED preset, set the
+  // dirty flag, and a SAVE persists them (sendParam maps the index to the live-set id).
   const setGain = (slot: 7 | 8, db: number) => {
     const clamped = Math.max(-USER_IR_GAIN_DB_RANGE, Math.min(USER_IR_GAIN_DB_RANGE, db));
-    setGainDbs((g) => ({ ...g, [slot]: clamped }));
-    sendParam(USER_IR_GAIN[slot]!, gainDbToValue(clamped));
+    const wire = gainDbToValue(clamped);
+    const id = IR_GAIN_ID[slot];
+    sendParam(PARAMS[id].paramId ?? 0, wire);
+    pedalStore.getState().setValueLocal(id, wire);
   };
   const setMode = (slot: 7 | 8, on: boolean) => {
-    setModes((m) => ({ ...m, [slot]: on }));
-    sendParam(USER_IR_MODE[slot]!, on ? 1 : 0);
+    const id = IR_MODE_ID[slot];
+    sendParam(PARAMS[id].paramId ?? 0, on ? 1 : 0);
+    pedalStore.getState().setValueLocal(id, on ? 1 : 0);
   };
 
   const def = TYPES.find((t) => t.kind === kind)!;
@@ -624,7 +652,12 @@ export default function IrStudio() {
         )}
 
         <MicStack
-          names={Object.fromEntries(Object.entries(pulled).map(([k, v]) => [k, v.name]))}
+          names={Object.fromEntries(
+            Array.from({ length: IR_SLOTS }, (_, i) => i + 1).map((pos) => [
+              pos,
+              slotDisplayName(pos, userModeOn(pos), pulled[pos]?.name),
+            ]),
+          )}
           value={morph}
           onChange={setBlendValue}
           onSelect={selectSlot}
@@ -829,7 +862,7 @@ export default function IrStudio() {
               {USER_IR_SLOTS.map((s) => (
                 <Chip
                   key={s}
-                  label={pulled[s]?.name ? `${s}: ${pulled[s]!.name}` : `Slot ${s}`}
+                  label={`${s}: ${slotDisplayName(s, userModeOn(s), pulled[s]?.name)}`}
                   active={uploadSlot === s}
                   onPress={() => setUploadSlot(s as 7 | 8)}
                 />
@@ -847,13 +880,13 @@ export default function IrStudio() {
                   SLOT {uploadSlot} CAB · THIS PRESET
                 </Text>
                 <Text style={{ color: theme.text, fontSize: 13, fontWeight: "700" }}>
-                  {modes[uploadSlot]
+                  {userModeOn(uploadSlot)
                     ? "Your custom IR"
-                    : `Factory · ${uploadSlot === 7 ? "Voice 12L" : "Brit V30"}`}
+                    : `Factory · ${FACTORY_IR_NAME[uploadSlot]}`}
                 </Text>
               </View>
               <Switch
-                value={modes[uploadSlot] ?? false}
+                value={userModeOn(uploadSlot)}
                 onValueChange={(v) => setMode(uploadSlot, v)}
                 trackColor={{ false: theme.panelEdge, true: theme.accent }}
                 thumbColor="#fff"
@@ -861,8 +894,8 @@ export default function IrStudio() {
             </View>
             <Stepper
               label={`SLOT ${uploadSlot} GAIN`}
-              value={`${(gainDbs[uploadSlot] ?? 0) > 0 ? "+" : ""}${(gainDbs[uploadSlot] ?? 0).toFixed(1)} dB`}
-              onStep={(d) => setGain(uploadSlot, (gainDbs[uploadSlot] ?? 0) + d)}
+              value={`${gainDbOf(uploadSlot) > 0 ? "+" : ""}${gainDbOf(uploadSlot).toFixed(1)} dB`}
+              onStep={(d) => setGain(uploadSlot, gainDbOf(uploadSlot) + d)}
             />
             <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
               Slots 7 & 8 each hold BOTH a factory cab and your uploaded cab. This switch picks

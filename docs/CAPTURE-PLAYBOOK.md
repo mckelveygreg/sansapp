@@ -105,8 +105,9 @@ EliteControl periodically writes the edit buffer (`05 20`). `--blobdiff` then re
 offset per marker → fill into `src/protocol/params.ts` (`confirmed: true`).
 
 Outcome: a single-param selector → add it to `params.ts` + the AMP/AMBIENCE/IR maps, wire a picker
-into that page, and give recipes an `apply` spec for the type. A blob-bundle engine → set it by
-writing the edit-buffer blob.
+into that page, and give recipes an `apply` spec for the type. A bundle-based selector (amp model /
+ambience type) → set it by **live-setting each param in the bundle** (`05 50`), since the pedal
+discards edit-buffer writes; a save then bakes the resulting bytes into the preset.
 
 ## Turning captures into tests
 

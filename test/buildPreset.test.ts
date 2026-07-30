@@ -12,72 +12,74 @@ function makeBase(): Uint8Array {
   return b;
 }
 
-const DYN = {
-  gateThreshold: 10,
-  gateRatio: 20,
-  gateRelease: 30,
-  compOutput: 40,
-  compAttack: 50,
-  compRelease: 60,
-  autoGain: true,
-  lookahead: false,
-};
-
 describe("buildPresetBlob", () => {
   it("overlays modeled param edits at their blob offsets", () => {
-    const blob = buildPresetBlob(makeBase(), { drive: 100, level: 50 }, "TEST", DYN, {
-      type: -1,
-      decay: 0,
-      time: 0,
-    });
+    const blob = buildPresetBlob(makeBase(), { drive: 100, level: 50 }, "TEST", null);
     expect(blob).toHaveLength(PRESET_SIZE);
     expect(blob[PARAMS.drive.blobOffset]).toBe(100);
     expect(blob[PARAMS.level.blobOffset]).toBe(50);
   });
 
   it("writes the name and preserves unmodeled bytes from the base", () => {
-    const blob = buildPresetBlob(makeBase(), {}, "MY TONE", DYN, { type: -1, decay: 0, time: 0 });
+    const blob = buildPresetBlob(makeBase(), {}, "MY TONE", null);
     expect(String.fromCharCode(...blob.slice(NAME_OFFSET, NAME_OFFSET + 7))).toBe("MY TONE");
     expect(blob[0xe5]).toBe(0xab); // opaque IR-tail byte untouched
     expect(blob[0]).toBe(0x01); // header untouched
   });
 
-  it("takes deep params from the dynamics snapshot, not pedalStore.values", () => {
-    // pedalStore.values is stale for these after an edit — the snapshot must win.
-    const blob = buildPresetBlob(makeBase(), { gateThreshold: 99, autoGain: 0 }, "X", DYN, {
-      type: -1,
-      decay: 0,
-      time: 0,
-    });
-    expect(blob[PARAMS.gateThreshold.blobOffset]).toBe(10); // from DYN, not the stale 99
-    expect(blob[PARAMS.autoGain.blobOffset]).toBe(1); // DYN.autoGain true → 1
-    expect(blob[PARAMS.lookahead.blobOffset]).toBe(0); // DYN.lookahead false → 0
+  it("takes gate/comp params straight from the values map (no separate snapshot)", () => {
+    // The gate/comp block is store-backed now — the values map is the single source of truth, so the
+    // exact bytes it carries land in the blob (no dynamics-store override to overwrite live edits).
+    const blob = buildPresetBlob(
+      makeBase(),
+      { gateThreshold: 10, gateRelease: 30, compOutput: 40, autoGain: 1, lookahead: 0 },
+      "X",
+      null,
+    );
+    expect(blob[PARAMS.gateThreshold.blobOffset]).toBe(10);
+    expect(blob[PARAMS.gateRelease.blobOffset]).toBe(30);
+    expect(blob[PARAMS.compOutput.blobOffset]).toBe(40);
+    expect(blob[PARAMS.autoGain.blobOffset]).toBe(1);
+    expect(blob[PARAMS.lookahead.blobOffset]).toBe(0);
   });
 
-  it("bakes the ambience type profile, then overlays decay/time on top", () => {
+  it("bakes the ambience type profile when a type is applied; decay/time from values win on top", () => {
     const hall = AMBIENCE_BUNDLES[1]!; // [64, 8, 2, 64, 127, 64, 64, 20, 4, 127]
-    const blob = buildPresetBlob(makeBase(), {}, "X", DYN, { type: 1, decay: 42, time: 77 });
+    const blob = buildPresetBlob(makeBase(), { ambienceDecay: 42, ambienceTime: 77 }, "X", 1);
     // A profile byte that ISN'T decay/time comes straight from the Hall bundle (0x34 = bundle[1]).
     expect(blob[0x34]).toBe(hall[1]);
     expect(blob[0x5d]).toBe(hall[9]);
-    // ambienceTime (0x32 = Room Size) and ambienceDecay (0x33 = Decay Time) override with store values.
+    // ambienceTime (0x32 = Room Size, a profile offset) + ambienceDecay (0x33) override with the
+    // values-map bytes (the Time knob value must win over the type default).
     expect(blob[PARAMS.ambienceTime.blobOffset]).toBe(77);
     expect(blob[PARAMS.ambienceDecay.blobOffset]).toBe(42);
   });
 
-  it("leaves the base ambience profile alone for a custom type (-1)", () => {
+  it("preserves the base ambience profile when no type was applied (null)", () => {
     const base = makeBase();
-    base[0x34] = 111; // a custom profile byte (0x34 isn't overlaid by decay/time)
-    const blob = buildPresetBlob(base, {}, "X", DYN, { type: -1, decay: 5, time: 6 });
-    expect(blob[0x34]).toBe(111); // not baked over
+    base[0x34] = 111; // a hand-tuned profile byte (0x34 isn't overlaid by decay/time)
+    const blob = buildPresetBlob(base, { ambienceDecay: 5, ambienceTime: 6 }, "X", null);
+    expect(blob[0x34]).toBe(111); // NOT normalized back to a canonical default
+    // decay/time still come from the values map even with the profile preserved.
+    expect(blob[PARAMS.ambienceTime.blobOffset]).toBe(6);
+    expect(blob[PARAMS.ambienceDecay.blobOffset]).toBe(5);
+  });
+
+  it("captures the newly-modeled IR mode + Preset Level; absent leaves the base byte intact", () => {
+    const base = makeBase();
+    base[PARAMS.irMode7.blobOffset] = 0; // 0x4a — IR mode 7 off in the base
+    base[PARAMS.presetLevel.blobOffset] = 100; // 0x62 — base preset level
+    const blob = buildPresetBlob(base, { irMode7: 1, presetLevel: 14 }, "X", null);
+    expect(blob[PARAMS.irMode7.blobOffset]).toBe(1);
+    expect(blob[PARAMS.presetLevel.blobOffset]).toBe(14);
+    // With no values for them, the base bytes survive (silent-revert bug fixed by modeling them).
+    const untouched = buildPresetBlob(base, {}, "X", null);
+    expect(untouched[PARAMS.presetLevel.blobOffset]).toBe(100);
+    expect(untouched[PARAMS.irMode7.blobOffset]).toBe(0);
   });
 
   it("round-trips: decoding the built blob yields the edited values", () => {
-    const blob = buildPresetBlob(makeBase(), { drive: 77 }, "RT", DYN, {
-      type: -1,
-      decay: 0,
-      time: 0,
-    });
+    const blob = buildPresetBlob(makeBase(), { drive: 77, gateThreshold: 10 }, "RT", null);
     const p = decodePreset(blob);
     expect(p.name).toBe("RT");
     expect(p.values.drive).toBe(77);

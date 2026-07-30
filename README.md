@@ -23,7 +23,7 @@ over MIDI (Bluetooth or wired).
 2. **Edit live.** The **Editor** has every control on one screen — Drive/EQ, Mix/Output, and the
    red **Red Zone** functions — plus a live EQ tone graph and the current preset name/number. Turn a
    knob and the pedal responds immediately. Tap a knob's ▸ chevron to jump to its deep page
-   (Compressor, Auto Filter, Ambience, Chorus, parametric EQ, Gate & Master Level, Amp).
+   (Amp, Parametric EQ, Dynamics, Auto Filter, Ambience, Chorus, IR Studio).
 3. **Cabs & IRs.** The **IR page** pulls your pedal's own cabs and shows each one's real frequency
    curve. Design a custom cab — high-pass a cab (drop the HPF pedal!), blend two, or build a filter
    from scratch — and upload it straight to a user slot over MIDI, with its own gain and a per-preset
@@ -36,8 +36,8 @@ over MIDI (Bluetooth or wired).
 
 - **Full editor** — all knobs on one page (main + Red Zone), a live EQ tone graph, and preset
   name/number with a dirty indicator.
-- **Deep pages** — Compressor, Auto Filter, Ambience, Chorus, 3-band parametric EQ, Gate & Master
-  Level, and Amp models — with hardware-calibrated units and live graphs.
+- **Deep pages** — Amp, 3-band parametric EQ, Dynamics (compressor + gate), Auto Filter, Ambience,
+  Chorus, and IR Studio — with hardware-calibrated units and live graphs.
 - **All 10 amp models + 7 ambience types**, applied live.
 - **IR page** — pull the pedal's cabs with real curves, select/blend live, and **design and upload
   custom cabs** (high-pass, shelves, tilt, notch, or a 2-cab blend) to a user slot, each with a
@@ -48,16 +48,22 @@ over MIDI (Bluetooth or wired).
 
 Under the hood: a framework-free protocol + DSP core (used by the app, the Node tools, and the
 tests), a live connection/session engine validated against a software pedal emulator, and quality
-gates in CI (oxc lint/format, `tsc`, ~110 vitest tests, and [Fallow](https://fallow.tools) for dead
+gates in CI (oxc lint/format, `tsc`, 170+ vitest tests, and [Fallow](https://fallow.tools) for dead
 code / cycles / duplication).
 
 ## How cabs work
 
-The pedal has **8 cab (IR) slots**: 1–6 are the fixed factory cabs, and **7–8 are writable**. The
-cab _data_ in a slot is shared across presets; each preset chooses which slot it uses (and, for the
-two writable slots, a per-preset on/off). So uploading a custom cab to slot 7 or 8 replaces that
-shared cab — and every preset with that slot enabled will use it. SansApp shows you what's in each
-slot (pull first) so you know before you overwrite.
+The pedal has **8 cab (IR) slots**. **Slots 1–6 are fixed factory cabs.** **Slots 7 and 8 are
+special:** each one holds a **factory cab** (Voice 12L in slot 7, Brit V30 in slot 8) _and_ a user
+IR, and every preset carries a per-preset **IR Mode** toggle that picks which of the two that preset
+plays. (About 91 of the 128 factory presets use slot 7's factory cab, so it matters that the factory
+cab stays put.)
+
+When you design a custom cab, SansApp uploads it through the **same import path the desktop editor
+uses** — it fills the _user_ half of slot 7 or 8 and does **not** overwrite the factory cab. Flip IR
+Mode back and the factory cab returns, per preset, untouched. Each user IR has its own ±12 dB gain
+and a per-preset on/off. SansApp pulls and shows you each slot's real frequency curve first, so you
+always know what you're working with.
 
 ## Hardware
 
@@ -89,7 +95,7 @@ runs on the phone, in the Node tools, and in a web build.
 npm install
 npm run web             # renders in the browser via react-native-web (fastest to iterate)
 npm run ports           # list CoreMIDI endpoints (find the WIDI Jack / MD1 name)
-npm run ble-check       # Bluetooth latency + non-destructive write-path test
+npm run ble-check       # Bluetooth latency + non-destructive send-path check
 npm run ios:device      # LOCAL development build → installs to a tethered iPhone (no cloud)
 npm run android         # LOCAL development build → installs to a connected Android device/emulator
 npm run start           # Metro for the dev build (hot-reload JS + native MIDI)

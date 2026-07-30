@@ -1,15 +1,38 @@
 /**
- * Amp model = a bundle of preset-blob bytes (no single index — selecting an amp in EliteControl
- * rewrites these offsets via a `05 20` edit-buffer write). To apply: read the edit buffer, patch
- * these bytes, write it back. Framework-free.
+ * Amp model = a bundle of preset-blob bytes (no single index). Applying a model LIVE-SETS those
+ * params (index → set-id via liveSetId), and a save bakes the bytes into the preset blob; the pedal
+ * discards an edit-buffer write, so the live-set path is the one that sticks. Framework-free.
  *
  * Captured 2026-07-05 in one clean, unbroken single-capture pass, verified against 3 anchors
- * (Blackface/1980s/Shred). All 10 amps mapped. (An earlier pass was corrupted by duplicate capture instance
- * instances returning stale reads — discarded.)
+ * (Blackface/1980s/Shred). All 10 amps mapped.
  */
 
 /** Blob offsets that define the amp voicing (preamp/presence/drive + 5 more). */
 export const AMP_BUNDLE_OFFSETS = [0x23, 0x24, 0x25, 0x26, 0x27, 0x2d, 0x4f, 0x62] as const;
+
+/**
+ * Constant voicing params EliteControl live-sets on EVERY amp apply, ON TOP of the AMP_BUNDLES bytes
+ * (PROTOCOL-MAP §5): Buzz Q is always 64, Crunch Q always 0. Keyed by wire INDEX (== the notify id /
+ * `paramId`; the caller maps to the live-set id via `liveSetId`). VT Bass & Para Driver additionally
+ * force Mid (idx 0x0c) to 0 — see {@link ampApplyExtras}.
+ */
+export const AMP_APPLY_FIXED: readonly { readonly index: number; readonly value: number }[] = [
+  { index: 0x2c, value: 64 }, // Buzz Q
+  { index: 0x2e, value: 0 }, // Crunch Q
+];
+
+/** Models whose apply forces Mid (idx 0x0c) to 0 (PROTOCOL-MAP §5). */
+const MID_ZERO_MODELS: ReadonlySet<string> = new Set(["VT Bass", "Para Driver"]);
+
+/**
+ * The extra params (beyond the {@link AMP_BUNDLES} bytes) an apply of `name` live-sets: the fixed
+ * Buzz Q / Crunch Q, plus Mid → 0 for VT Bass & Para Driver only. Index-keyed like AMP_APPLY_FIXED.
+ */
+export function ampApplyExtras(name: string): { index: number; value: number }[] {
+  const extras = AMP_APPLY_FIXED.map((e) => ({ ...e }));
+  if (MID_ZERO_MODELS.has(name)) extras.push({ index: 0x0c, value: 0 }); // Mid forced to 0
+  return extras;
+}
 
 /** Per-model values at AMP_BUNDLE_OFFSETS, keyed by AMP_MODELS name. */
 export const AMP_BUNDLES: Readonly<Record<string, readonly number[]>> = {
@@ -50,10 +73,10 @@ const CHARACTER_IDX = [1, 2, 5, 6] as const;
 
 /**
  * EliteControl's fallback when no template matches exactly: the Buzz byte alone tags the Para/VT
- * "clean DI" family. Binary RE of SelectAmpMode's fallback (EliteControl.arm64 @0x1000c380c) — Buzz
- * 62 → Para Driver, 63 → VT Bass, anything else → no highlight. This is why the factory "Para
- * Driver"/"VT Bass DI" presets, whose full voicing is tweaked away from the model template, still
- * light up the right amp. Collision-free: Buzz 62 only occurs in Para Driver, 63 only in VT Bass.
+ * "clean DI" family. Derived from observing EliteControl's SelectAmpMode fallback — Buzz 62 → Para
+ * Driver, 63 → VT Bass, anything else → no highlight. This is why the factory "Para Driver"/"VT Bass
+ * DI" presets, whose full voicing is tweaked away from the model template, still light up the right
+ * amp. Collision-free: Buzz 62 only occurs in Para Driver, 63 only in VT Bass.
  */
 const BUZZ_OFFSET = AMP_BUNDLE_OFFSETS[1]!; // 0x24
 const BUZZ_TAG: Readonly<Record<number, string>> = { 62: "Para Driver", 63: "VT Bass" };

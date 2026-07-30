@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decode } from "../src/protocol/messages";
 import type { PedalMessage } from "../src/protocol/messages";
-import { uploadIr } from "../src/midi/irUpload";
+import { irAddrSetIds, uploadIr } from "../src/midi/irUpload";
 
 // Minimal fake session: records sends and auto-acks begin (05 60→05 63) and end (05 66→05 61), and
 // echoes a preset dump on the SAVE (setParam 0x12→05 41), like the real pedal. Only the surface
@@ -12,9 +12,14 @@ class FakeSession {
   private cbs = new Set<(m: PedalMessage) => void>();
   ackEnd = true;
   ackBegin = true;
+  ackSave = true; // when false, the pedal never echoes the 05 41 on the SAVE (dropped over BLE)
   onMessage(cb: (m: PedalMessage) => void) {
     this.cbs.add(cb);
     return () => this.cbs.delete(cb);
+  }
+  // uploadIr runs inside session.withExclusive; a passthrough is all the fake needs.
+  withExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    return fn();
   }
   private emit(m: PedalMessage) {
     for (const cb of this.cbs) cb(m);
@@ -28,7 +33,7 @@ class FakeSession {
     if (sub === 0x66 && this.ackEnd)
       queueMicrotask(() => this.emit({ kind: "writeAck", code: 0x61 }));
     // SAVE (05 50 0A 12 7F) → the pedal echoes a preset dump.
-    if (sub === 0x50 && b[7] === 0x12)
+    if (sub === 0x50 && b[7] === 0x12 && this.ackSave)
       queueMicrotask(() =>
         this.emit({ kind: "presetDump", slot: 0x7f, blob: new Uint8Array(256), checksumOk: true }),
       );
@@ -74,6 +79,20 @@ describe("uploadIr", () => {
       param: 0x12,
       value: 0x7f,
     });
+    // a single confirmed SAVE: the frame goes out exactly once
+    expect(s.sent.filter((f) => f[5] === 0x50 && f[7] === 0x12)).toHaveLength(1);
+  });
+
+  it("re-sends the SAVE up to 3× and throws if the pedal never confirms it (item 5)", async () => {
+    // A silently-dropped SAVE means the IR is gone on power-cycle while the UI says "saved". The
+    // confirm loop mirrors writePreset: re-send the SAME frame, await the 05 41 echo, throw if none.
+    const s = new FakeSession();
+    s.ackSave = false; // pedal never echoes the save
+    await expect(
+      uploadIr(s as never, upload, { chunkDelayMs: 0, ackTimeoutMs: 15, save: true }),
+    ).rejects.toThrow(/save not confirmed/i);
+    // the save frame (05 50 0A 12 7F) was re-sent SAVE_ATTEMPTS = 3 times before giving up
+    expect(s.sent.filter((f) => f[5] === 0x50 && f[7] === 0x12)).toHaveLength(3);
   });
 
   it("rejects if the end is never acked", async () => {
@@ -115,6 +134,27 @@ describe("uploadIr", () => {
     // send is gapped by ~GAP: chunk2..chunk9 and the end frame.
     for (let i = 2; i < s.times.length; i++) {
       expect(s.times[i]! - s.times[i - 1]!).toBeGreaterThanOrEqual(GAP - 10);
+    }
+  });
+
+  it("addresses the right User-IR slot before the upload (slot 7 = 0x39/0x3A, slot 8 = 0x3B/0x3C)", async () => {
+    // The IR data always lands in the edit-buffer IR [0x00,0x7F]; only the preset-ADDRESS set-ids
+    // differ per slot. Slot 7 is byte-faithful to an EliteControl capture; slot 8 (0x3B/0x3C) is a
+    // +4-rule inference from the User-IR7/8 Preset indices 0x35–0x38 (§3), NOT yet hardware-verified.
+    expect(irAddrSetIds(7)).toEqual([0x39, 0x3a]);
+    expect(irAddrSetIds(8)).toEqual([0x3b, 0x3c]);
+    for (const slot of [7, 8] as const) {
+      const s = new FakeSession();
+      const [msb, lsb] = irAddrSetIds(slot);
+      await uploadIr(s as never, upload, {
+        chunkDelayMs: 0,
+        presetAddress: [0x00, 0x7f],
+        addrSetIds: irAddrSetIds(slot),
+      });
+      expect(s.sent.slice(0, 2).map((f) => decode(Uint8Array.from(f)))).toEqual([
+        { kind: "setParam", param: msb, value: 0x00 },
+        { kind: "setParam", param: lsb, value: 0x7f },
+      ]);
     }
   });
 });

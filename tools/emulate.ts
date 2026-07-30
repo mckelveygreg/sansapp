@@ -1,18 +1,19 @@
 /**
- * Software pedal emulator — implements the captured connect handshake so the app (or
- * EliteControl, as the M2 fidelity gate) can talk to it with no hardware.
- * Presents virtual MIDI in/out named "sansApp Emulated Elite".
+ * Software pedal emulator — implements the captured connect handshake so the app can talk to it with
+ * no hardware. Presents virtual MIDI in/out named "sansApp Emulated Elite".
  *
  *   npm run emulate
  *
- * Serves presets from the local EliteControl `.dat` files when present (else synthetic),
- * and replays the pedal's data/config blocks captured in captures/m1-live.jsonl so the
- * connect sequence (hello → blocks → preset read) completes.
+ * The request/reply behavior is the shared PedalModel (src/device/pedalModel) so the emulator and the
+ * integration tests can't drift. Presets come from the local EliteControl `.dat` files when present
+ * (else synthetic), and the pedal's data/config blocks captured in captures/m1-live.jsonl seed the
+ * model so the connect sequence (hello → blocks → preset read) completes with realistic data.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Input, Output } from "@julusian/midi";
+import { PedalModel } from "../src/device/pedalModel";
 import { PRESET_SIZE } from "../src/protocol/constants";
 import { decode, encode } from "../src/protocol/messages";
 
@@ -36,25 +37,28 @@ function loadPresets(): Uint8Array[] {
   });
 }
 
-/** Canned pedal→app blocks from a prior capture, keyed `blockCode:index`. */
-function loadBlocks(): Map<string, Uint8Array> {
-  const map = new Map<string, Uint8Array>();
+/** Feed the pedal→app config/data blocks captured in m1-live.jsonl into the model, so the connect
+ * handshake's block reads reply with realistic data (an unseeded block reads back as zeros). */
+function seedBlocksFromCapture(model: PedalModel): number {
   const cap = "captures/m1-live.jsonl";
-  if (!existsSync(cap)) return map;
+  if (!existsSync(cap)) return 0;
+  let n = 0;
   for (const line of readFileSync(cap, "utf8").split("\n")) {
     if (!line.startsWith('{"')) continue;
     const rec = JSON.parse(line) as { bytes?: string };
     if (!rec.bytes?.startsWith("F0 00 51 21")) continue;
-    const bytes = Uint8Array.from(rec.bytes.split(" ").map((h) => Number.parseInt(h, 16)));
-    const m = decode(bytes);
-    if (m.kind === "block") map.set(`${m.blockCode}:${m.index}`, bytes);
+    const m = decode(Uint8Array.from(rec.bytes.split(" ").map((h) => Number.parseInt(h, 16))));
+    if (m.kind === "block") {
+      model.handle(m); // stores the block so a later requestBlock replies with it
+      n++;
+    }
   }
-  return map;
+  return n;
 }
 
 const presets = loadPresets();
-const cannedBlocks = loadBlocks();
-let editBuffer = presets[0]?.slice() ?? new Uint8Array(PRESET_SIZE);
+const model = new PedalModel(presets);
+const seeded = seedBlocksFromCapture(model);
 
 const midiIn = new Input();
 const midiOut = new Output();
@@ -66,8 +70,8 @@ midiOut.openVirtualPort("sansApp Emulated Elite");
 const send = (bytes: Uint8Array) => midiOut.sendMessage([...bytes]);
 
 // Dev capture: when IRWIRE_DIR is set, save each received IR upload (reassembled + 7-bit-unpacked to
-// the clean payload) so we get exact input->wire pairs. Begin frame has a 5-byte header before the
-// packed data (matches tools/re/ir_fulldecode.py); chunks/end are packed data after `05 6x 0A`.
+// the clean payload) so we get exact input->wire pairs. The begin frame has a 5-byte header before
+// the packed data; chunks/end are packed data after `05 6x 0A`.
 const IRWIRE_DIR = process.env.IRWIRE_DIR;
 let irPacked: number[] = [];
 let irSeq = 0;
@@ -91,13 +95,13 @@ function saveWire() {
 }
 
 console.log(
-  `Emulated Elite up: ${presets.length} presets, ${cannedBlocks.size} replay blocks.` +
+  `Emulated Elite up: ${presets.length} presets, ${seeded} seeded blocks.` +
     ` Virtual MIDI "sansApp Emulated Elite". Ctrl+C to stop.\n`,
 );
 
 midiIn.on("message", (_dt, raw) => {
   const b = Uint8Array.from(raw);
-  // User-IR upload framing decodes as "unknown"; ack it so EliteControl's import completes:
+  // User-IR upload framing decodes as "unknown"; ack it so an IR import completes:
   // 05 60 begin -> 05 63 00 F7, 05 66 end -> 05 61 F7, 05 65 chunks -> no ack.
   if (b[4] === 0x05 && b[5] === 0x60) {
     console.log("recv IR-upload begin (05 60) -> ack 05 63");
@@ -116,39 +120,9 @@ midiIn.on("message", (_dt, raw) => {
   }
   const m = decode(b);
   console.log(`recv ${m.kind}`);
-  switch (m.kind) {
-    case "requestBlock": {
-      const blockCode = m.reqCode === 0x55 ? 0x52 : 0x6b;
-      const canned = cannedBlocks.get(`${blockCode}:${m.index}`);
-      send(
-        canned ??
-          encode({
-            kind: "block",
-            blockCode,
-            index: m.index,
-            data: new Uint8Array(PRESET_SIZE),
-            checksumOk: true,
-          }),
-      );
-      break;
-    }
-    case "requestPreset":
-    case "recallPreset": {
-      const blob = m.slot >= 0x7e ? editBuffer : (presets[m.slot] ?? editBuffer);
-      if (m.kind === "recallPreset") editBuffer = blob.slice();
-      send(encode({ kind: "presetDump", slot: m.slot, blob, checksumOk: true }));
-      break;
-    }
-    case "writePreset": {
-      if (m.slot >= 0x7e) editBuffer = m.blob.slice();
-      else if (m.slot < presets.length) presets[m.slot] = m.blob.slice();
-      send(encode({ kind: "writeAck", code: 0x21 })); // pedal acks every write
-      break;
-    }
-    // setParam: live-only on real hardware (not reflected in reads); no-op here.
-    default:
-      break;
-  }
+  // Everything else: delegate to the shared PedalModel so the emulator matches the pedal's behavior
+  // (0x12 save-echo, block-write 05 53 ack, discarded 0x7F edit-buffer stage) exactly as the tests do.
+  for (const reply of model.handle(m)) send(encode(reply));
 });
 
 process.on("SIGINT", () => {

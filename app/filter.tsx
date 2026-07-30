@@ -1,10 +1,10 @@
 /**
  * Auto Filter — the pedal's envelope filter (auto-wah, Mu-Tron III style): a resonant peak that
- * SWEEPS up as you dig in and falls on release. BINARY-CONFIRMED (EliteControl param constructor
- * func.1000b8f88, issue #41) the auto-filter's ENTIRE surface is four params: a master enable
- * (0x3c, a real 0..1 toggle), Level (0x3d, default 64, range 0..127 — **BIPOLAR, Bypass at centre**),
- * and Attack/Release timing (0x3e/0x3f). There is NO cutoff/resonance param (the "Filter Cutoff/
- * Resonance" strings in the binary are a generic MIDI/mod table, not pedal params). All store-backed.
+ * SWEEPS up as you dig in and falls on release. Derived from observing EliteControl (issue #41):
+ * the auto-filter's ENTIRE surface is four params — a master enable (0x3c, a real 0..1 toggle),
+ * Level (0x3d, default 64, range 0..127 — **BIPOLAR, Bypass at centre**), and Attack/Release timing
+ * (0x3e/0x3f). There is NO cutoff/resonance param (the "Filter Cutoff/Resonance" strings in
+ * EliteControl are a generic MIDI/mod table, not pedal params). All store-backed.
  *
  * Level's SIGN is the sweep DIRECTION (above centre = up-wah, below = reverse/down-wah) and its
  * magnitude the depth — read off the factory presets (Reverse Funk sits below centre; WakaWaka/Funk
@@ -47,7 +47,7 @@ export default function AutoFilter() {
 
   // Level (0x3d) is BIPOLAR — raw 64 = Bypass (no sweep). Its SIGN is the sweep DIRECTION and its
   // magnitude the intensity: ABOVE centre = normal up-wah, BELOW centre = reverse/down-wah. Derived
-  // from EliteControl's binary (default 64, 0..127) + the factory presets — "Reverse Funk" sits at
+  // from observing EliteControl (default 64, 0..127) + the factory presets — "Reverse Funk" sits at
   // 53 (below centre) while "WakaWaka"/"Funk" sit at 92/81 (above). There is NO sweep-frequency param
   // (all 4 factory wah presets leave the Mid/EQ neutral at 64) — the range is fixed in the pedal DSP.
   const depth = Math.abs(level - 64) / 63; // 0 at Bypass … 1 at ±100%

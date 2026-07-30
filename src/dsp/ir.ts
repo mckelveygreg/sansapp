@@ -1,7 +1,6 @@
 /**
- * Impulse-response → frequency-response for the IR graph. An IR is just a short
- * (~1000-tap) impulse the pedal convolves with your signal; its "graph" is the FFT
- * magnitude of that impulse. Framework-free.
+ * Impulse-response → frequency-response for the IR graph. An IR is just a short impulse the pedal
+ * convolves with your signal; its "graph" is the FFT magnitude of that impulse. Framework-free.
  */
 import { magnitudeSpectrum } from "./fft";
 

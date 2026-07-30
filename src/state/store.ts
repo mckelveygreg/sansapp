@@ -6,11 +6,10 @@
 
 import { createStore } from "zustand/vanilla";
 import type { ConnectionState, DeviceSession } from "../device/session";
-import { detectAmbienceType } from "../protocol/ambience";
-import { KNOB_LAYER_NOTIFY_PARAM, type ParamId } from "../protocol/params";
+import { AMBIENCE_BUNDLES, AMBIENCE_PROFILE_WIRES, detectAmbienceType } from "../protocol/ambience";
+import { KNOB_LAYER_NOTIFY_PARAM, PARAM_IDS, PARAMS, type ParamId } from "../protocol/params";
 import type { Preset } from "../protocol/preset";
 import { ambienceStore } from "./ambience";
-import { dynamicsStore } from "./dynamics";
 
 /** Which physical-knob layer the pedal is on: primary, or the red "SHIFT" (Red Zone) layer. */
 export type KnobLayer = "primary" | "red";
@@ -54,7 +53,10 @@ export interface PedalState {
   noteExternal: (id: ParamId, value: number) => void;
   pushLog: (line: string) => void;
   clearLog: () => void;
-  markSaved: () => void;
+  /** Mark the current sound saved: clears dirty + the ambience typeDirty flag, and (when the written
+   * blob is passed) adopts it as the new base for the next save so a re-save preserves what was
+   * persisted (e.g. a just-baked ambience profile). */
+  markSaved: (raw?: Uint8Array | null) => void;
 }
 
 const LOG_CAP = 200;
@@ -90,7 +92,10 @@ export function createPedalStore() {
     noteExternal: (id, value) => set((s) => ({ values: { ...s.values, [id]: value } })),
     pushLog: (line) => set((s) => ({ log: [...s.log.slice(-(LOG_CAP - 1)), line] })),
     clearLog: () => set({ log: [] }),
-    markSaved: () => set((s) => ({ dirty: false, baseline: { ...s.values } })),
+    markSaved: (raw) => {
+      ambienceStore.getState().patch({ typeDirty: false });
+      set((s) => ({ dirty: false, baseline: { ...s.values }, raw: raw ?? s.raw }));
+    },
   }));
 }
 
@@ -105,26 +110,29 @@ export interface PedalController {
 }
 
 /**
- * Mirror the deep params that the shared dynamics/ambience stores hold, from a decoded preset — so
- * recall/connect show the preset's real gate/comp/ambience values instead of stale carry-over. These
- * are now decoded ParamIds, so their ghost/baseline comes from the pedal store automatically.
+ * Detect and set the ambience TYPE from a decoded preset, and clear typeDirty — the gate/comp/ambience
+ * PARAMETERS all read back from pedalStore.values automatically (their ghost/baseline comes from
+ * the pedal store), so the only non-parameter state to sync is the highlighted engine.
  */
-function syncDeepStores(preset: Preset): void {
-  const v = preset.values;
-  dynamicsStore.getState().patch({
-    gateThreshold: v.gateThreshold,
-    gateRatio: v.gateRatio,
-    gateRelease: v.gateRelease,
-    compOutput: v.compOutput,
-    compAttack: v.compAttack,
-    compRelease: v.compRelease,
-    autoGain: v.autoGain > 0,
-    lookahead: v.lookahead > 0,
-  });
-  ambienceStore.getState().patch({
-    decay: v.ambienceDecay,
-    time: v.ambienceTime,
-    type: detectAmbienceType(preset.raw),
+function syncAmbienceType(preset: Preset): void {
+  ambienceStore.getState().patch({ type: detectAmbienceType(preset.raw), typeDirty: false });
+}
+
+/**
+ * Apply an ambience TYPE to the app stores — the store half of setAmbienceType (the wire half paces
+ * the 10-param profile on the pedal). Marks `typeDirty` so a save re-bakes the type's canonical
+ * profile, and pushes every profile param that IS a modeled value (currently only ambienceTime, wire
+ * 0x10) through the local-edit path so it lands in pedalStore.values and marks the sound dirty. The
+ * other profile bytes aren't modeled params — the save-time bundle bake (gated on typeDirty) carries
+ * them. Framework-free so it's unit-testable in Node (mirrors the store-mutation flows in store.ts).
+ */
+export function applyAmbienceType(store: PedalStoreApi, index: number): void {
+  const vals = AMBIENCE_BUNDLES[index];
+  if (!vals) return;
+  ambienceStore.getState().patch({ type: index, typeDirty: true });
+  AMBIENCE_PROFILE_WIRES.forEach((wire, i) => {
+    const id = PARAM_IDS.find((p) => PARAMS[p].paramId === wire);
+    if (id) store.getState().setValueLocal(id, vals[i]! & 0x7f);
   });
 }
 
@@ -135,7 +143,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
   // Re-read the pedal's current preset into the store WITHOUT changing the pedal — used on connect
   // and whenever the pedal changes preset on its own (below).
   const loadCurrent = async (): Promise<Preset> => {
-    // There is NO live "edit buffer" — 0x7F is just program 127 (binary-confirmed via EliteControl RE).
+    // There is NO live "edit buffer" — 0x7F is just program 127 (confirmed by observing EliteControl).
     // The current sound = the pedal's ACTIVE program, whose slot is byte 0 of settings block 0. Read
     // THAT program for its values, name, AND base blob (stashed for save-from-state). Only if the slot
     // is unknown (settings read failed) do we fall back to a raw 0x7F read.
@@ -157,7 +165,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     }
     const name = preset.name?.trim() || null;
     store.getState().loadPreset(slot, preset.values, name, preset.raw);
-    syncDeepStores(preset);
+    syncAmbienceType(preset);
     store.getState().pushLog(`● loaded current preset${slot != null ? ` (${slot + 1})` : ""}`);
     return preset;
   };
@@ -170,7 +178,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     // primary path; the heartbeat slot-check below is only a backstop for a dropped BLE push.
     session.onPushedPreset((slot, preset) => {
       store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null, preset.raw);
-      syncDeepStores(preset);
+      syncAmbienceType(preset);
       store.getState().pushLog(`⤺ pedal → preset ${slot + 1}: ${preset.name.trim()}`);
     }),
     session.onSlotChange((slot) => {
@@ -181,9 +189,9 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
       });
     }),
     session.onParamNotify((e) => {
-      // The red "shift" footswitch reports as a 0x4d notify — same raw id as High-EQ Freq. Never
-      // treat that notify as a knob change (High Freq is set-only; it never legitimately notifies),
-      // or a red-button press would jog the High-Freq value.
+      // The red "shift" footswitch reports as a 0x4d notify. 0x4d is High Freq's live-set id, never
+      // its notify id (High Freq notifies on 0x49), so a 0x4d notify is always the footswitch — never
+      // a knob change; route it to the layer, not noteExternal.
       if (e.paramId && e.param !== KNOB_LAYER_NOTIFY_PARAM) {
         store.getState().noteExternal(e.paramId, e.value);
       }
@@ -204,7 +212,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     async recall(slot) {
       const preset = await session.recallPreset(slot);
       store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null, preset.raw);
-      syncDeepStores(preset); // gate/comp/ambience deep params, from this preset's real values
+      syncAmbienceType(preset); // highlighted engine, from this preset's blob
       store.getState().pushLog(`▶ recalled ${slot}: ${preset.name}`);
       return preset;
     },
