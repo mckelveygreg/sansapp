@@ -41,7 +41,7 @@ function describe(data: Uint8Array): string {
 async function main(): Promise<void> {
   mkdirSync(OUT_DIR, { recursive: true });
   const io = openMidi(PORT);
-  const session = new DeviceSession(io, 2500);
+  const session = new DeviceSession(io, 6000);
   const blocks = new Map<string, { code: number; index: number; data: Uint8Array; ok: boolean }>();
   session.onMessage((m: PedalMessage) => {
     if (m.kind === "block")

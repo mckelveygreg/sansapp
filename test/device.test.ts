@@ -475,3 +475,67 @@ describe("DeviceSession hardening (batch 3)", () => {
     await expect(readAllPresets(session)).rejects.toThrow(/timeout/);
   });
 });
+
+// ── FIX BATCH 5: PedalModel fidelity to observed hardware behavior ────────────────────────────────
+
+describe("PedalModel behavior (batch 5)", () => {
+  it("echoes a 05 41 dump when the app SAVES a numbered slot (setParam 0x12 = <slot>)", () => {
+    const model = new PedalModel(makePresets());
+    const staged = new Uint8Array(256);
+    staged[0] = 0x01;
+    staged[0x27] = 0x55;
+    model.handle({ kind: "writePreset", slot: 3, blob: staged, checksumOk: true });
+    const replies = model.handle({ kind: "setParam", param: 0x12, value: 3 });
+    expect(replies).toHaveLength(1);
+    const echo = replies[0]!;
+    expect(echo.kind).toBe("presetDump");
+    if (echo.kind === "presetDump") {
+      expect(echo.slot).toBe(3);
+      expect(echo.blob[0x27]).toBe(0x55); // the just-staged blob
+    }
+  });
+
+  it("models save-to-program-128 for setParam 0x12 = 0x7F (echoes a slot 0x7F dump)", () => {
+    const model = new PedalModel(makePresets());
+    const replies = model.handle({ kind: "setParam", param: 0x12, value: 0x7f });
+    expect(replies).toHaveLength(1);
+    expect(replies[0]!.kind).toBe("presetDump");
+    if (replies[0]!.kind === "presetDump") expect(replies[0]!.slot).toBe(0x7f);
+  });
+
+  it("every other setParam is live-only (no reply)", () => {
+    const model = new PedalModel(makePresets());
+    expect(model.handle({ kind: "setParam", param: 0x05, value: 0x40 })).toEqual([]);
+  });
+
+  it("acks a config/data block WRITE with 05 53", () => {
+    const model = new PedalModel(makePresets());
+    const replies = model.handle({
+      kind: "block",
+      blockCode: 0x52,
+      index: 0,
+      data: new Uint8Array(256),
+      checksumOk: true,
+    });
+    expect(replies).toEqual([{ kind: "writeAck", code: 0x53 }]);
+  });
+
+  it("DISCARDS a 0x7F edit-buffer write but still acks 05 21 (matches hardware)", () => {
+    const model = new PedalModel(makePresets());
+    const before = model.editBuffer.slice();
+    const blob = new Uint8Array(256);
+    blob[0] = 0x01;
+    blob[0x27] = 0x7a;
+    const replies = model.handle({ kind: "writePreset", slot: 0x7f, blob, checksumOk: true });
+    expect(replies).toEqual([{ kind: "writeAck", code: 0x21 }]);
+    expect([...model.editBuffer]).toEqual([...before]); // the stage was discarded — nothing changed
+  });
+
+  it("still writes a numbered slot (0x7D) on a writePreset", () => {
+    const model = new PedalModel(makePresets());
+    const blob = new Uint8Array(256);
+    blob[0x27] = 0x66;
+    model.handle({ kind: "writePreset", slot: 0x7d, blob, checksumOk: true });
+    expect(model.presets[0x7d]![0x27]).toBe(0x66);
+  });
+});

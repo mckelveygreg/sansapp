@@ -71,14 +71,19 @@ export class PedalModel {
         return [{ kind: "presetDump", slot: msg.slot, blob: blob.slice(), checksumOk: true }];
       }
       case "writePreset": {
-        if (msg.slot >= 0x7e) this.editBuffer = msg.blob.slice();
-        else if (msg.slot < this.presets.length) this.presets[msg.slot] = msg.blob.slice();
+        // 0x7E/0x7F are NOT numbered slots: the pedal DISCARDS an edit-buffer stage (05 20 0A 7F) yet
+        // still acks it 05 21 (confirmed — every such write in captures/m1-live.jsonl is acked). So
+        // accept the frame, change nothing for the special slots, and ack like hardware.
+        if (msg.slot < 0x7e && msg.slot < this.presets.length)
+          this.presets[msg.slot] = msg.blob.slice();
         return [{ kind: "writeAck", code: 0x21 }];
       }
       case "setParam": {
-        // 0x12 = <slot> is the SAVE commit — the real pedal persists the staged slot and echoes a
-        // 05 41 <slot> dump (confirmed via captures/elite-save.jsonl). Every other setParam is
-        // live-only: no reply, not reflected in reads.
+        // 0x12 = <slot> is the SAVE-to-slot command (a reserved command id, NOT a param): the pedal
+        // persists the staged slot and echoes a 05 41 <slot> dump (confirmed via captures/elite-save.
+        // jsonl). 0x12 = 0x7F models the map's "save to program 128" — echo the program-128 (slot 0x7F)
+        // dump. (EliteControl's IR import also sends 0x12 = 0x7F; the real-hardware semantics of that
+        // overload are pending an on-device check.) Every other setParam is live-only: no reply.
         if (msg.param === 0x12) {
           const blob = this.blobFor(msg.value);
           return [{ kind: "presetDump", slot: msg.value, blob: blob.slice(), checksumOk: true }];

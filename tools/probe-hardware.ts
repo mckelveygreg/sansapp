@@ -88,10 +88,7 @@ async function main(): Promise<void> {
   console.log(
     `✓ vs .dat mirror: ${datMatch} byte-identical, ${datMiss} differ, ${datAbsent} no file`,
   );
-  if (mismatches.length)
-    console.log(
-      `    differing slots (0-based): ${mismatches.join(", ")} (slot 127 = our test slot 128.dat, expected)`,
-    );
+  if (mismatches.length) console.log(`    differing slots (0-based): ${mismatches.join(", ")}`);
 
   const edit = await session.readEditBuffer();
   console.log(`✓ edit buffer (0x7F) reads: "${edit.name.trim()}"`);
