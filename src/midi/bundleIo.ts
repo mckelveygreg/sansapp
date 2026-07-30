@@ -56,6 +56,8 @@ export interface RestoreResult {
   /** Steps that failed to confirm (e.g. a dropped commit echo) and were skipped, so a whole restore
    * isn't aborted by one bad write. */
   failed: number;
+  /** Preset dumps refused for a non-writable slot (0x7E/0x7F — e.g. a captured edit-buffer dump). */
+  skipped: number;
 }
 
 /** Restore a `.p3b`: preset dumps become writes; each user-IR is re-uploaded (acked) via uploadIr. */
@@ -64,7 +66,11 @@ export async function restoreBundle(
   bytes: Uint8Array,
   onProgress?: (done: number, total: number) => void,
 ): Promise<RestoreResult> {
-  const plan = restorePlan(parseBundle(bytes));
+  const bundle = parseBundle(bytes);
+  const plan = restorePlan(bundle);
+  // restorePlan drops dumps for the non-writable slots 0x7E/0x7F (a captured edit-buffer dump would
+  // otherwise save-to-program-128); count them so the UI can report what wasn't restored.
+  const skipped = bundle.messages.filter((m) => m.kind === "presetDump" && m.slot > 0x7d).length;
   let presets = 0;
   let irs = 0;
   let failed = 0;
@@ -85,7 +91,7 @@ export async function restoreBundle(
     }
     onProgress?.(i + 1, plan.length);
   }
-  return { presets, irs, failed };
+  return { presets, irs, failed, skipped };
 }
 
 /**

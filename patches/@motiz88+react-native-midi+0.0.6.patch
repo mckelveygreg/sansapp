@@ -42,3 +42,22 @@ index 1977df7..a2293eb 100644
      }
      
      private func requestMIDIAccess() throws -> Bool  {
+diff --git a/node_modules/@motiz88/react-native-midi/src/MIDIOutputImpl.ts b/node_modules/@motiz88/react-native-midi/src/MIDIOutputImpl.ts
+index e80ef0c..81c1cbe 100644
+--- a/node_modules/@motiz88/react-native-midi/src/MIDIOutputImpl.ts
++++ b/node_modules/@motiz88/react-native-midi/src/MIDIOutputImpl.ts
+@@ -24,8 +24,12 @@ export class MIDIOutputImpl extends MIDIPortImpl implements MIDIOutput {
+       this.portInfo.portNumber,
+       data,
+       timestamp != null ? convertTimestampToNative(timestamp) : undefined
+-    ).catch(() => {
+-      /* ignore rejection */
++    ).catch((err) => {
++      // PATCH (sansApp): surface the async send rejection instead of swallowing it. send() is
++      // fire-and-forget, so a native "destination not found" (BLE dropped) never reached the JS
++      // caller's try/catch — the session's fast-disconnect layer was dead code. Route it out via a
++      // global hook the app registers (see src/midi/pedal.ts). On-device verification pending.
++      (globalThis as { __midiSendError?: (e: unknown) => void }).__midiSendError?.(err);
+     });
+   }
+ 

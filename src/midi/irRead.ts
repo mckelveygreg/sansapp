@@ -40,32 +40,38 @@ export function readIr(
   b: number,
   timeoutMs = 6000,
 ): Promise<DecodedIr | null> {
-  return new Promise((resolve) => {
-    const packed: number[] = [];
-    let started = false;
-    const finish = (v: DecodedIr | null) => {
-      clearTimeout(timer);
-      off();
-      resolve(v);
-    };
-    const timer = setTimeout(() => finish(null), timeoutMs);
-    const off = session.onMessage((m) => {
-      if (m.kind !== "unknown") return;
-      const d = m.data;
-      if (d[4] !== 0x05) return;
-      const sub = d[5];
-      if (sub === 0x60) {
-        started = true;
-        packed.push(...d.subarray(7, -1)); // includes the 5-byte header <a><b>00 15 61
-      } else if (started && sub === 0x65) {
-        packed.push(...d.subarray(7, -1));
-      } else if (started && sub === 0x66) {
-        packed.push(...d.subarray(7, -1));
-        finish(decodeIrStream(Uint8Array.from(packed)));
-      }
-    });
-    session.sendRaw(Uint8Array.of(...SYSEX_PREFIX, 0x05, 0x69, 0x0a, a & 0x7f, b & 0x7f, 0xf7));
-  });
+  // Run inside an exclusive window: the read is a raw send + onMessage tap that bypasses the request
+  // queue, so a heartbeat block-read (or any queued request) firing INTO this passive multi-second
+  // receive stream would garble it — false-empty slots / a false disconnect mid-pull.
+  return session.withExclusive(
+    () =>
+      new Promise((resolve) => {
+        const packed: number[] = [];
+        let started = false;
+        const finish = (v: DecodedIr | null) => {
+          clearTimeout(timer);
+          off();
+          resolve(v);
+        };
+        const timer = setTimeout(() => finish(null), timeoutMs);
+        const off = session.onMessage((m) => {
+          if (m.kind !== "unknown") return;
+          const d = m.data;
+          if (d[4] !== 0x05) return;
+          const sub = d[5];
+          if (sub === 0x60) {
+            started = true;
+            packed.push(...d.subarray(7, -1)); // includes the 5-byte header <a><b>00 15 61
+          } else if (started && sub === 0x65) {
+            packed.push(...d.subarray(7, -1));
+          } else if (started && sub === 0x66) {
+            packed.push(...d.subarray(7, -1));
+            finish(decodeIrStream(Uint8Array.from(packed)));
+          }
+        });
+        session.sendRaw(Uint8Array.of(...SYSEX_PREFIX, 0x05, 0x69, 0x0a, a & 0x7f, b & 0x7f, 0xf7));
+      }),
+  );
 }
 
 /** Read the IR in slot 1..8 using {@link IR_READ_AB} (null for an out-of-range slot). */

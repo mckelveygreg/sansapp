@@ -26,6 +26,13 @@ import {
   type PedalController,
 } from "../state/store";
 
+declare global {
+  /** Set by connectPedal; the patched RN MIDI polyfill calls it when a fire-and-forget send rejects
+   * (its native rejection is otherwise swallowed). Routes into the session's fast-disconnect path. */
+  // eslint-disable-next-line no-var
+  var __midiSendError: ((err: unknown) => void) | undefined;
+}
+
 export const pedalStore = createPedalStore();
 
 // Persist the slot→name map so the Presets list is populated on launch (and offline), surviving
@@ -56,6 +63,11 @@ export const getSession = (): DeviceSession | null => session;
  * autodetects (WIDI Jack over Bluetooth, then the wired MD1, then the first available port).
  */
 export async function connectPedal(portMatch?: string): Promise<void> {
+  // Tear down any existing session FIRST. A second connect while a session is live (Reconnect while
+  // ready, an `auto=1` deep link, a double-tap in the pre-connecting window) would otherwise leave TWO
+  // sessions on one MIDIInput — double listeners, two request queues colliding, and the OLD session's
+  // eventual disconnect handler tearing down the NEW one (the module refs point at the successor).
+  teardownSession();
   // Android: bring the WIDI Jack (BLE) online so it enumerates as a MIDI port. No-op on iOS/web and
   // for wired USB — best-effort, so a failure here still lets the wired MD1 be found below.
   await ensureBluetoothMidi(portMatch);
@@ -73,16 +85,24 @@ export async function connectPedal(portMatch?: string): Promise<void> {
   }
   // 4 s timeout (BLE round-trips are slower), 5 s heartbeat (a dropped link shows as disconnected),
   // 150 ms handshake pacing (BLE drops back-to-back sends — verified on hardware 2026-07-14).
-  session = new DeviceSession(found.io, 4000, 5000, 150);
-  controller = bindSession(session, pedalStore);
+  const newSession = new DeviceSession(found.io, 4000, 5000, 150);
+  session = newSession;
+  controller = bindSession(newSession, pedalStore);
+  // The RN MIDI polyfill sends fire-and-forget and swallows its native send rejection; the sansApp
+  // patch re-surfaces it via this global hook so an async "destination not found" reaches THIS session's
+  // fast-disconnect path instead of only being caught ~one heartbeat later. Reset on every connect and
+  // cleared on teardown, so it always points at the live session. On-device verification pending.
+  globalThis.__midiSendError = () => newSession.noteSendError();
   // Symmetric teardown: a DROPPED link (heartbeat detects it → state "disconnected") must release the
   // session/controller just like the manual Disconnect button does — otherwise a stale controller keeps
   // sending into a now-closed CoreMIDI port and HARD-CRASHES the app (native force-unwrap). bindSession's
   // own onState (which sets the store's connection flag) is registered first, so it runs before this.
-  session.onState((s) => {
-    if (s === "disconnected") teardownSession();
+  // Guard on identity: only the CURRENTLY-active session may trigger teardown — a superseding
+  // connectPedal has already replaced the module refs, and this now-stale handler must not kill it.
+  newSession.onState((s) => {
+    if (s === "disconnected" && session === newSession) teardownSession();
   });
-  await session.connect();
+  await newSession.connect();
   pedalStore.getState().pushLog(`🔌 connected via ${found.name}`);
   // Show the pedal's CURRENT tone (read-only) — do NOT recall a slot, which would change the pedal.
   // Best-effort: the session is already "ready", so a hiccup reading the current tone must NOT fail
@@ -109,6 +129,7 @@ function teardownSession(): void {
   // handler — with the refs already cleared, that re-entry is a harmless no-op.
   session = null;
   controller = null;
+  globalThis.__midiSendError = undefined; // stop routing polyfill send-errors into a dead session
   deadSession?.disconnect(); // rejects pending + closes io; sets store "disconnected" if not already
   deadController?.dispose();
 }

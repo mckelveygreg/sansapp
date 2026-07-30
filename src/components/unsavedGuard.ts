@@ -13,7 +13,15 @@ import { getController, pedalStore, saveCurrentTo } from "../midi/pedal";
 export function recallWithUnsavedGuard(target: number): void {
   const controller = getController();
   if (!controller) return;
-  const doRecall = (): void => void controller.recall(target).catch(() => {});
+  // A failed recall must NOT leave the UI silently on the old preset. Retry once (a BLE recall echo
+  // can drop transiently), then surface the failure — same affordance the Save path uses below.
+  const doRecall = (): void =>
+    void controller
+      .recall(target)
+      .catch(() => controller.recall(target))
+      .catch((e: unknown) =>
+        Alert.alert("Couldn't switch presets", e instanceof Error ? e.message : String(e)),
+      );
 
   const st = pedalStore.getState();
   if (!st.dirty) {

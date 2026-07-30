@@ -142,11 +142,20 @@ export default function Presets() {
     const session = getSession();
     if (!session) return;
     setProgress(0);
-    const all = await readAllPresets(session, (done) => setProgress(done));
-    const map: Record<number, string> = {};
-    for (const { slot: s, preset } of all) map[s] = preset.name?.trim() || `Preset ${s + 1}`;
-    pedalStore.getState().setNames(map); // cache in the store (shared with the Editor, kept across tabs)
-    setProgress(null);
+    // try/finally so a mid-sync failure (a dropped BLE reply that even the per-slot retry can't
+    // recover) can't wedge the button at "Reading… N/128" or leave `void syncNames()` rejecting
+    // unhandled. The error surfaces on the status line; progress always clears.
+    try {
+      const all = await readAllPresets(session, (done) => setProgress(done));
+      const map: Record<number, string> = {};
+      for (const { slot: s, preset } of all) map[s] = preset.name?.trim() || `Preset ${s + 1}`;
+      pedalStore.getState().setNames(map); // cache in the store (shared with the Editor, across tabs)
+      setMsg("Synced names from the pedal.");
+    } catch (e) {
+      setMsg(`Couldn't sync names — ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setProgress(null);
+    }
   }, []);
 
   // Auto-sync names from the pedal once per connection — but only if they aren't already cached

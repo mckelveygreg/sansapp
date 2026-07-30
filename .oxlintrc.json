@@ -10,7 +10,8 @@
   "rules": {
     "unicorn/no-array-sort": "off",
     "unicorn/no-array-reverse": "off",
-    "unicorn/consistent-function-scoping": "off"
+    "unicorn/consistent-function-scoping": "off",
+    "no-underscore-dangle": ["warn", { "allow": ["__midiSendError"] }]
   },
   "ignorePatterns": ["node_modules/**", "dist/**", ".expo/**", "coverage/**"],
   "overrides": [

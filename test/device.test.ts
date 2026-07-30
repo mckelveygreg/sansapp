@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { decode, encode } from "../src/protocol/messages";
 import { readAllPresets } from "../src/device/library";
 import { PedalModel } from "../src/device/pedalModel";
@@ -185,5 +185,293 @@ describe("DeviceSession ↔ PedalModel", () => {
     for (let i = 1; i < seen.length; i++) {
       expect(seen[i]!.t - seen[i - 1]!.t).toBeGreaterThanOrEqual(GAP - 10);
     }
+  });
+});
+
+// ── FIX BATCH 3: session/BLE lifecycle hardening ────────────────────────────────────────────────
+
+/** A 256-byte preset blob with a distinctive Drive byte. */
+function buildBlob(mark: number): Uint8Array {
+  const b = new Uint8Array(256);
+  b[0] = 0x01;
+  b[0x27] = mark & 0x7f;
+  return b;
+}
+
+/** A `05 41` preset dump for `slot` with a deliberately CORRUPTED checksum. */
+function corruptDump(slot: number): Uint8Array {
+  const good = encode({ kind: "presetDump", slot, blob: buildBlob(slot), checksumOk: true });
+  const bad = good.slice();
+  bad[bad.length - 2] = (bad[bad.length - 2]! ^ 0x7f) & 0x7f; // flip the low checksum byte
+  return bad;
+}
+
+/** An IO that records the setParams put on the wire (for the live-throttle tests). */
+function recordSetParams(): { io: MidiIO; sent: { param: number; value: number }[] } {
+  const sent: { param: number; value: number }[] = [];
+  const io: MidiIO = {
+    send: (b) => {
+      const m = decode(b);
+      if (m.kind === "setParam") sent.push({ param: m.param, value: m.value });
+    },
+    onMessage: () => () => {},
+    close: () => {},
+  };
+  return { io, sent };
+}
+
+describe("DeviceSession hardening (batch 3)", () => {
+  // ── item 2: slot validation ──
+  it("writePreset rejects the special/edit-buffer slots 0x7E/0x7F", async () => {
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel(makePresets()));
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    await expect(session.writePreset(0x7f, buildBlob(1))).rejects.toThrow(/not writable/i);
+    await expect(session.writePreset(0x7e, buildBlob(1))).rejects.toThrow(/not writable/i);
+    // a normal slot still writes and commits
+    await session.writePreset(0x7d, buildBlob(0x42));
+  });
+
+  // ── item 3a: reply integrity (checksum required) ──
+  it("a corrupt preset dump does NOT resolve the read (checksum required)", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    devIO.onMessage((bytes) => {
+      const m = decode(bytes);
+      if (m.kind === "requestPreset") {
+        devIO.send(corruptDump(m.slot)); // bad-checksum dump — must be ignored
+        return;
+      }
+      for (const reply of model.handle(m)) devIO.send(encode(reply));
+    });
+    const session = new DeviceSession(appIO, 60);
+    await session.connect();
+    await expect(session.readPreset(3)).rejects.toThrow(/timeout/);
+  });
+
+  // ── item 3b: writeAck code correlation ──
+  it("writePreset stage ignores a non-0x21 writeAck (a stray IR begin-ack 0x63)", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    devIO.onMessage((bytes) => {
+      const m = decode(bytes);
+      if (m.kind === "writePreset") {
+        devIO.send(encode({ kind: "writeAck", code: 0x63 })); // wrong ack code
+        return;
+      }
+      for (const reply of model.handle(m)) devIO.send(encode(reply));
+    });
+    const session = new DeviceSession(appIO, 60);
+    await session.connect();
+    await expect(session.writePreset(3, buildBlob(0x42))).rejects.toThrow(/timeout/);
+  });
+
+  it("writeBlock ignores a non-0x53 writeAck", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    devIO.onMessage((bytes) => {
+      const m = decode(bytes);
+      if (m.kind === "block") {
+        devIO.send(encode({ kind: "writeAck", code: 0x21 })); // a preset-write ack, not a block ack
+        return;
+      }
+      for (const reply of model.handle(m)) devIO.send(encode(reply));
+    });
+    const session = new DeviceSession(appIO, 60);
+    await session.connect();
+    await expect(session.writeBlock(0x52, SETTINGS_BLOCK, new Uint8Array(256))).rejects.toThrow(
+      /timeout/,
+    );
+  });
+
+  // ── item 3c: late-reply tombstone ──
+  it("drops a LATE reply to a timed-out read instead of firing a footswitch push", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    devIO.onMessage((bytes) => {
+      const m = decode(bytes);
+      if (m.kind === "requestPreset") {
+        // reply AFTER the read has already timed out (BLE round-trip > timeout)
+        setTimeout(
+          () =>
+            devIO.send(
+              encode({
+                kind: "presetDump",
+                slot: m.slot,
+                blob: buildBlob(m.slot),
+                checksumOk: true,
+              }),
+            ),
+          60,
+        );
+        return;
+      }
+      for (const reply of model.handle(m)) devIO.send(encode(reply));
+    });
+    const session = new DeviceSession(appIO, 30); // 30 ms timeout < 60 ms late reply
+    await session.connect();
+    const pushes: number[] = [];
+    session.onPushedPreset((slot) => pushes.push(slot));
+    await expect(session.readPreset(7)).rejects.toThrow(/timeout/);
+    await new Promise((r) => setTimeout(r, 90)); // let the late reply arrive
+    expect(pushes).toEqual([]); // recognized as a dead request, NOT a preset switch
+  });
+
+  it("still applies a genuine unsolicited footswitch push (no tombstone)", async () => {
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel(makePresets()));
+    const session = new DeviceSession(appIO, 200);
+    await session.connect();
+    const pushes: number[] = [];
+    session.onPushedPreset((slot) => pushes.push(slot));
+    devIO.send(encode({ kind: "presetDump", slot: 9, blob: buildBlob(9), checksumOk: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(pushes).toEqual([9]);
+  });
+
+  // ── item 4: withExclusive ──
+  it("withExclusive serializes exclusive ops and keeps queued requests from interleaving", async () => {
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel(makePresets()));
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+
+    const order: string[] = [];
+    const p1 = session.withExclusive(async () => {
+      order.push("A-start");
+      await new Promise((r) => setTimeout(r, 30));
+      order.push("A-end");
+    });
+    const p2 = session.withExclusive(async () => {
+      order.push("B-start");
+      order.push("B-end");
+    });
+    const p3 = session.readPreset(1).then(() => order.push("read"));
+    await Promise.all([p1, p2, p3]);
+    expect(order).toEqual(["A-start", "A-end", "B-start", "B-end", "read"]);
+  });
+
+  it("suspends the heartbeat while an exclusive op holds the link, and resumes after", async () => {
+    vi.useFakeTimers();
+    try {
+      const [appIO, devIO] = createLoopback();
+      const model = new PedalModel(makePresets());
+      const blockReads: number[] = [];
+      devIO.onMessage((bytes) => {
+        const m = decode(bytes);
+        if (m.kind === "requestBlock") blockReads.push(Date.now());
+        for (const reply of model.handle(m)) devIO.send(encode(reply));
+      });
+      const session = new DeviceSession(appIO, 500, 50); // heartbeat every 50 ms
+      await session.connect();
+      const afterConnect = blockReads.length;
+
+      let release!: () => void;
+      const ex = session.withExclusive(() => new Promise<void>((r) => (release = r)));
+      await Promise.resolve(); // let withExclusive's body start (exclusive = true)
+
+      await vi.advanceTimersByTimeAsync(4000); // past the quiet window + many heartbeat ticks
+      expect(blockReads.length).toBe(afterConnect); // heartbeat suspended — no probe fired
+
+      release();
+      await ex;
+      await vi.advanceTimersByTimeAsync(4000); // link idle again → heartbeat resumes and probes
+      expect(blockReads.length).toBeGreaterThan(afterConnect);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // ── item 6: live-param coalescing ──
+  it("coalesces live-param drags to the trailing value (leading + trailing edge)", () => {
+    vi.useFakeTimers();
+    try {
+      const { io, sent } = recordSetParams();
+      const session = new DeviceSession(io, 500);
+      session.setLiveParam(0x14, 10);
+      session.setLiveParam(0x14, 11);
+      session.setLiveParam(0x14, 12); // final
+      expect(sent).toEqual([{ param: 0x14, value: 10 }]); // only the leading edge so far
+      vi.advanceTimersByTime(60); // > LIVE_THROTTLE_MS
+      expect(sent).toEqual([
+        { param: 0x14, value: 10 },
+        { param: 0x14, value: 12 }, // trailing edge always carries the FINAL value
+      ]);
+      vi.advanceTimersByTime(60);
+      expect(sent).toHaveLength(2); // nothing pending → no extra sends
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("live-param: distinct params don't block each other; a single value is always sent", () => {
+    vi.useFakeTimers();
+    try {
+      const { io, sent } = recordSetParams();
+      const session = new DeviceSession(io, 500);
+      session.setLiveParam(0x14, 1);
+      session.setLiveParam(0x16, 0x85); // masked to 0x05
+      expect(sent).toEqual([
+        { param: 0x14, value: 1 },
+        { param: 0x16, value: 0x05 },
+      ]); // both leading, independent, masked
+      vi.advanceTimersByTime(60);
+      expect(sent).toHaveLength(2); // neither had a newer value → no trailing sends
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // ── item 7: setParamsPaced leading gap ──
+  it("setParamsPaced paces its FIRST send off the last outbound byte", async () => {
+    const [appIO, devIO] = createLoopback();
+    const recv: { kind: string; t: number }[] = [];
+    devIO.onMessage((bytes) => recv.push({ kind: decode(bytes).kind, t: Date.now() }));
+    const GAP = 40;
+    const session = new DeviceSession(appIO, 1000, 0, GAP);
+    session.sendRaw(encode({ kind: "control", code: 0x5b })); // stamps lastSendAt
+    const t0 = Date.now();
+    await session.setParamsPaced([
+      { param: 0x14, value: 1 },
+      { param: 0x16, value: 2 },
+    ]);
+    await new Promise((r) => setTimeout(r, 5));
+    const first = recv.find((r) => r.kind === "setParam");
+    expect(first).toBeTruthy();
+    expect(first!.t - t0).toBeGreaterThanOrEqual(GAP - 10); // first send waited out the gap
+  });
+
+  // ── item 8: librarian retry ──
+  it("readAllPresets retries a slot whose first read times out", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    let dropped = false;
+    devIO.onMessage((bytes) => {
+      const m = decode(bytes);
+      if (m.kind === "requestPreset" && m.slot === 0 && !dropped) {
+        dropped = true; // swallow the first read of slot 0 → it times out → retry
+        return;
+      }
+      for (const reply of model.handle(m)) devIO.send(encode(reply));
+    });
+    const session = new DeviceSession(appIO, 60);
+    await session.connect();
+    const all = await readAllPresets(session);
+    expect(all).toHaveLength(128);
+    expect(all[0]!.preset.raw[0x27]).toBe(0); // slot 0 recovered on the retry
+  });
+
+  it("readAllPresets gives up after the retries if a slot never replies", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    devIO.onMessage((bytes) => {
+      const m = decode(bytes);
+      if (m.kind === "requestPreset" && m.slot === 0) return; // slot 0 never replies
+      for (const reply of model.handle(m)) devIO.send(encode(reply));
+    });
+    const session = new DeviceSession(appIO, 40);
+    await session.connect();
+    await expect(readAllPresets(session)).rejects.toThrow(/timeout/);
   });
 });

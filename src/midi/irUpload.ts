@@ -28,6 +28,10 @@ const IR_ADDR_MSB = 0x39; // User-IR preset address MSB — EliteControl sets th
 const IR_ADDR_LSB = 0x3a; // User-IR preset address LSB
 const SAVE_COMMIT = 0x12; // setParam 0x12 = 0x7f = EliteControl's SAVE (pedal echoes a preset dump)
 const SAVE_VALUE = 0x7f;
+// Re-send the SAVE this many times, each awaiting the `05 41` echo, before giving up — mirrors
+// DeviceSession.writePreset's commit loop. A silently-dropped SAVE over BLE means the IR is gone on
+// the next power-cycle while the UI says "saved"; confirm it or throw.
+const SAVE_ATTEMPTS = 3;
 // Let the pedal finish committing the IR to flash before the SAVE — EliteControl (over reliable USB)
 // leaves a gap here; over BLE, crowding the SAVE onto a still-in-progress flash write is exactly the
 // kind of thing that corrupted a config block and bricked the connect. Wait it out.
@@ -106,90 +110,104 @@ export async function uploadIr(
     save,
     onProgress,
   } = opts;
-  validateFrames(frames); // abort before sending anything if the stream is malformed
-  const begin = frames[0]!;
-  const end = frames[frames.length - 1]!;
-  const chunks = frames.slice(1, -1);
-  const total = frames.length;
-  let done = 0;
+  validateFrames(frames); // abort before sending anything (and before taking the exclusive slot)
+  // Run the whole transfer inside an exclusive link window: begin/chunk/end and the SAVE bypass the
+  // request queue (raw sends + onMessage taps), so a heartbeat block-read must not fire into the
+  // stream — crowding the pedal's IR flash write is the historical brick vector (see the header note).
+  // Exclusivity also suspends the heartbeat for the whole transfer + settle window.
+  await session.withExclusive(async () => {
+    const begin = frames[0]!;
+    const end = frames[frames.length - 1]!;
+    const chunks = frames.slice(1, -1);
+    const total = frames.length;
+    let done = 0;
 
-  const waitAck = (code: number) =>
-    new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        off();
-        reject(new Error(`IR upload: no ack 0x${code.toString(16)} within ${ackTimeoutMs}ms`));
-      }, ackTimeoutMs);
-      const off = session.onMessage((m) => {
-        if (m.kind === "writeAck" && m.code === code) {
-          clearTimeout(timer);
+    const waitAck = (code: number) =>
+      new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
           off();
-          resolve();
-        }
+          reject(new Error(`IR upload: no ack 0x${code.toString(16)} within ${ackTimeoutMs}ms`));
+        }, ackTimeoutMs);
+        const off = session.onMessage((m) => {
+          if (m.kind === "writeAck" && m.code === code) {
+            clearTimeout(timer);
+            off();
+            resolve();
+          }
+        });
       });
-    });
 
-  // Address the User-IR slot BEFORE the upload — EliteControl sends the MSB then the LSB first (slot 7
-  // = set-ids 0x39/0x3A; slot 8 = 0x3B/0x3C). Paced so BLE doesn't drop the back-to-back sends.
-  if (presetAddress) {
-    session.sendRaw(
-      encode({ kind: "setParam", param: addrSetIds[0], value: presetAddress[0] & 0x7f }),
-    );
-    await delay(chunkDelayMs);
-    session.sendRaw(
-      encode({ kind: "setParam", param: addrSetIds[1], value: presetAddress[1] & 0x7f }),
-    );
-    await delay(chunkDelayMs);
-  }
-
-  let endSent = false;
-  try {
-    // Subscribe for the begin-ack *before* sending, so we can't miss a fast reply.
-    const beginAck = waitAck(BEGIN_ACK);
-    session.sendRaw(begin);
-    onProgress?.(++done, total);
-    await beginAck;
-
-    for (const chunk of chunks) {
-      session.sendRaw(chunk);
-      onProgress?.(++done, total);
+    // Address the User-IR slot BEFORE the upload — EliteControl sends the MSB then the LSB first (slot
+    // 7 = set-ids 0x39/0x3A; slot 8 = 0x3B/0x3C). Paced so BLE doesn't drop the back-to-back sends.
+    if (presetAddress) {
+      session.sendRaw(
+        encode({ kind: "setParam", param: addrSetIds[0], value: presetAddress[0] & 0x7f }),
+      );
+      await delay(chunkDelayMs);
+      session.sendRaw(
+        encode({ kind: "setParam", param: addrSetIds[1], value: presetAddress[1] & 0x7f }),
+      );
       await delay(chunkDelayMs);
     }
 
-    const endAck = waitAck(END_ACK);
-    session.sendRaw(end);
-    endSent = true;
-    onProgress?.(++done, total);
-    await endAck;
-  } catch (e) {
-    // Failed mid-transfer (a dropped send or a missing ack). If we never sent the end frame, the pedal
-    // is still waiting for more chunks — best-effort close the transfer so it isn't left half-open.
-    if (!endSent) {
-      try {
-        session.sendRaw(end);
-      } catch {
-        /* the port is already gone — nothing more we can do to close it cleanly */
-      }
-    }
-    throw e;
-  }
+    let endSent = false;
+    try {
+      // Subscribe for the begin-ack *before* sending, so we can't miss a fast reply.
+      const beginAck = waitAck(BEGIN_ACK);
+      session.sendRaw(begin);
+      onProgress?.(++done, total);
+      await beginAck;
 
-  if (save) {
-    // Give the IR flash write time to settle before the SAVE (see SETTLE_MS).
-    await delay(SETTLE_MS);
-    const confirmed = new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        off();
-        resolve();
-      }, ackTimeoutMs);
-      const off = session.onMessage((m) => {
-        if (m.kind === "presetDump") {
-          clearTimeout(timer);
-          off();
-          resolve();
+      for (const chunk of chunks) {
+        session.sendRaw(chunk);
+        onProgress?.(++done, total);
+        await delay(chunkDelayMs);
+      }
+
+      const endAck = waitAck(END_ACK);
+      session.sendRaw(end);
+      endSent = true;
+      onProgress?.(++done, total);
+      await endAck;
+    } catch (e) {
+      // Failed mid-transfer (a dropped send or a missing ack). If we never sent the end frame, the
+      // pedal is still waiting for more chunks — best-effort close the transfer so it isn't half-open.
+      if (!endSent) {
+        try {
+          session.sendRaw(end);
+        } catch {
+          /* the port is already gone — nothing more we can do to close it cleanly */
         }
-      });
-    });
-    session.sendRaw(encode({ kind: "setParam", param: SAVE_COMMIT, value: SAVE_VALUE }));
-    await confirmed;
-  }
+      }
+      throw e;
+    }
+
+    if (save) {
+      // Give the IR flash write time to settle before the SAVE (see SETTLE_MS).
+      await delay(SETTLE_MS);
+      // Confirm the SAVE with retries, mirroring DeviceSession.writePreset's commit loop: the
+      // fire-and-forget SAVE can silently drop over BLE, leaving the IR gone on the next power-cycle
+      // while the UI says "saved" (and the local IR cache poisoned). Re-send the SAME save frame up to
+      // SAVE_ATTEMPTS times, each awaiting the pedal's `05 41` echo; throw if it never confirms.
+      const saveFrame = encode({ kind: "setParam", param: SAVE_COMMIT, value: SAVE_VALUE });
+      let confirmed = false;
+      for (let attempt = 0; attempt < SAVE_ATTEMPTS && !confirmed; attempt++) {
+        confirmed = await new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => {
+            off();
+            resolve(false);
+          }, ackTimeoutMs);
+          const off = session.onMessage((m) => {
+            if (m.kind === "presetDump") {
+              clearTimeout(timer);
+              off();
+              resolve(true);
+            }
+          });
+          session.sendRaw(saveFrame);
+        });
+      }
+      if (!confirmed) throw new Error("IR save not confirmed by the pedal");
+    }
+  });
 }

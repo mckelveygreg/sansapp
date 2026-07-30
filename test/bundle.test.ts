@@ -58,6 +58,18 @@ describe(".p3b bundle codec", () => {
     expect(ir.irFrames[2]![5]).toBe(0x66); // end
   });
 
+  it("skips a dump for a non-writable slot (a captured 05 41 7F edit-buffer dump)", () => {
+    const blob = new Uint8Array(256);
+    blob[0] = 0x01;
+    const bytes = concatSysEx([
+      encode({ kind: "presetDump", slot: 0, blob, checksumOk: true }),
+      encode({ kind: "presetDump", slot: 0x7f, blob, checksumOk: true }), // edit buffer → must be skipped
+      encode({ kind: "presetDump", slot: 5, blob, checksumOk: true }),
+    ]);
+    const plan = restorePlan(parseBundle(bytes));
+    expect(plan.map((s) => ("slot" in s ? s.slot : -1))).toEqual([0, 5]); // 0x7F dropped, not a save-to-128
+  });
+
   it("tolerates junk between messages", () => {
     const bytes = makeBundle();
     const noisy = Uint8Array.of(0x00, 0x99, ...bytes, 0x00);

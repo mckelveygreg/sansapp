@@ -249,19 +249,19 @@ function RecipesScreen() {
           text: "Apply",
           onPress: () => {
             void (async () => {
-              // Pre-flight the link with a real round-trip — the "connected" dot can go stale, and a
-              // dead BLE link would otherwise make Apply a silent no-op that still claims success.
               const session = getSession();
               if (!session) {
                 setResult({ id: recipe.id, text: "Not connected — connect to the pedal first." });
                 return;
               }
-              try {
-                await session.readEditBuffer();
-              } catch {
+              // A recipe applies onto the CURRENT sound. There is no live edit buffer to pre-flight —
+              // 0x7F is just program 127 (binary-confirmed), so the old readEditBuffer() pulled the
+              // wrong preset and added a flaky heavy BLE read. Require a loaded preset from the store
+              // instead (the same snapshot save/amp use).
+              if (!pedalStore.getState().raw) {
                 setResult({
                   id: recipe.id,
-                  text: "Couldn't reach the pedal — the connection dropped. Reconnect on the Connect screen and try again.",
+                  text: "No preset loaded yet — recall a preset on the pedal first, then apply.",
                 });
                 return;
               }

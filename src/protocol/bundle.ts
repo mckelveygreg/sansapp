@@ -91,7 +91,10 @@ export function restorePlan(bundle: Bundle): RestoreStep[] {
     } else {
       flush();
       const m = bundle.messages[i]!;
-      if (m.kind === "presetDump") plan.push({ slot: m.slot, blob: m.blob });
+      // Skip dumps for the special/edit-buffer slots 0x7E/0x7F: they're not writable numbered slots,
+      // and a captured `05 41 7F` edit-buffer dump would otherwise become a save-to-program-128. A
+      // real backup only has slots 0x00–0x7D. (restoreBundle reports how many were skipped.)
+      if (m.kind === "presetDump" && m.slot <= 0x7d) plan.push({ slot: m.slot, blob: m.blob });
     }
   }
   flush();

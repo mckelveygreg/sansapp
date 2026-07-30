@@ -12,9 +12,14 @@ class FakeSession {
   private cbs = new Set<(m: PedalMessage) => void>();
   ackEnd = true;
   ackBegin = true;
+  ackSave = true; // when false, the pedal never echoes the 05 41 on the SAVE (dropped over BLE)
   onMessage(cb: (m: PedalMessage) => void) {
     this.cbs.add(cb);
     return () => this.cbs.delete(cb);
+  }
+  // uploadIr runs inside session.withExclusive; a passthrough is all the fake needs.
+  withExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    return fn();
   }
   private emit(m: PedalMessage) {
     for (const cb of this.cbs) cb(m);
@@ -28,7 +33,7 @@ class FakeSession {
     if (sub === 0x66 && this.ackEnd)
       queueMicrotask(() => this.emit({ kind: "writeAck", code: 0x61 }));
     // SAVE (05 50 0A 12 7F) → the pedal echoes a preset dump.
-    if (sub === 0x50 && b[7] === 0x12)
+    if (sub === 0x50 && b[7] === 0x12 && this.ackSave)
       queueMicrotask(() =>
         this.emit({ kind: "presetDump", slot: 0x7f, blob: new Uint8Array(256), checksumOk: true }),
       );
@@ -74,6 +79,20 @@ describe("uploadIr", () => {
       param: 0x12,
       value: 0x7f,
     });
+    // a single confirmed SAVE: the frame goes out exactly once
+    expect(s.sent.filter((f) => f[5] === 0x50 && f[7] === 0x12)).toHaveLength(1);
+  });
+
+  it("re-sends the SAVE up to 3× and throws if the pedal never confirms it (item 5)", async () => {
+    // A silently-dropped SAVE means the IR is gone on power-cycle while the UI says "saved". The
+    // confirm loop mirrors writePreset: re-send the SAME frame, await the 05 41 echo, throw if none.
+    const s = new FakeSession();
+    s.ackSave = false; // pedal never echoes the save
+    await expect(
+      uploadIr(s as never, upload, { chunkDelayMs: 0, ackTimeoutMs: 15, save: true }),
+    ).rejects.toThrow(/save not confirmed/i);
+    // the save frame (05 50 0A 12 7F) was re-sent SAVE_ATTEMPTS = 3 times before giving up
+    expect(s.sent.filter((f) => f[5] === 0x50 && f[7] === 0x12)).toHaveLength(3);
   });
 
   it("rejects if the end is never acked", async () => {
