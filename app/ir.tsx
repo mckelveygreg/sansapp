@@ -35,7 +35,7 @@ import { pickFileBytes, saveAndShare } from "../src/midi/exportFile";
 import { loadIrCache, saveIrCache } from "../src/midi/irCache";
 import { USER_IR_SLOTS, readIrSlot } from "../src/midi/irRead";
 import { sendParam } from "../src/midi/liveParam";
-import { getSession, pedalStore } from "../src/midi/pedal";
+import { getController, getSession, pedalStore } from "../src/midi/pedal";
 import {
   PARAMS,
   USER_IR_GAIN_DB_RANGE,
@@ -180,8 +180,67 @@ function Stepper({
   );
 }
 
-const ROW_H = 40;
+const ROW_H = 46;
 const MIC_ROWS = IR_SLOTS + 1; // Off + 1..8
+
+/** Per-user-slot (7/8) inline controls: the IR Mode toggle + the ±12 dB User IR Gain, mirrored from
+ * EliteControl's inline layout. Rendered on the slot's own row so the switch/gain sit with the cab. */
+interface UserSlotControl {
+  modeOn: boolean;
+  gainDb: number;
+  onToggle: (on: boolean) => void;
+  onGainStep: (dir: number) => void;
+}
+
+/** Compact ±/value gain cell used inline on a user slot row. Greyed (non-interactive) when the slot's
+ * user IR is off — the gain only affects the user cab, exactly as EliteControl greys it for a factory
+ * slot. */
+function GainCell({
+  db,
+  enabled,
+  onStep,
+}: {
+  db: number;
+  enabled: boolean;
+  onStep: (d: number) => void;
+}) {
+  const col = enabled ? theme.text : theme.panelEdge;
+  const Btn = ({ t, d }: { t: string; d: number }) => (
+    <Pressable
+      disabled={!enabled}
+      onPress={() => onStep(d)}
+      hitSlop={6}
+      style={{
+        width: 22,
+        height: 26,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: enabled ? theme.panelEdge : "transparent",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <Text style={{ color: col, fontSize: 16 }}>{t}</Text>
+    </Pressable>
+  );
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+      <Btn t="−" d={-1} />
+      <Text
+        style={{
+          color: enabled ? theme.accent : theme.textDim,
+          width: 52,
+          textAlign: "center",
+          fontSize: 12,
+          fontVariant: ["tabular-nums"],
+        }}
+      >
+        {`${db > 0 ? "+" : ""}${db.toFixed(1)}dB`}
+      </Text>
+      <Btn t="+" d={1} />
+    </View>
+  );
+}
 
 /**
  * The IMPULSE RESPONSE stack: rows Off/1..8 with a microphone you drag to blend between cabs live.
@@ -193,11 +252,13 @@ function MicStack({
   value,
   onChange,
   onSelect,
+  userControls,
 }: {
   names: Record<number, string>;
   value: number;
   onChange: (v: number) => void;
   onSelect: (pos: number) => void;
+  userControls?: Record<number, UserSlotControl>;
 }) {
   const H = MIC_ROWS * ROW_H;
   const startVal = useRef(value);
@@ -283,30 +344,63 @@ function MicStack({
         {Array.from({ length: MIC_ROWS }, (_, pos) => {
           const label = pos === 0 ? "Off — Flat Response" : (names[pos] ?? slotFallback(pos));
           const active = nearest === pos;
+          const ctl = userControls?.[pos];
+          const rowStyle = {
+            height: ROW_H,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 8,
+            paddingHorizontal: 10,
+            borderBottomWidth: 1,
+            borderBottomColor: theme.panelEdge,
+            backgroundColor: active ? `${theme.accent}22` : "transparent",
+          } as const;
+          // User slots (7/8): tappable name area + inline toggle/gain as SIBLINGS of the Pressable, so
+          // touching the switch or the gain steppers doesn't also fire the row's select.
+          if (ctl) {
+            return (
+              <View key={pos} style={rowStyle}>
+                <Pressable
+                  onPress={() => onSelect(pos)}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1 }}
+                >
+                  <Text style={{ color: theme.textDim, width: 14, fontVariant: ["tabular-nums"] }}>
+                    {pos}
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    style={{
+                      color: active ? theme.text : theme.textDim,
+                      fontSize: 13,
+                      flexShrink: 1,
+                    }}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+                <View
+                  style={{ marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 6 }}
+                >
+                  <GainCell db={ctl.gainDb} enabled={ctl.modeOn} onStep={ctl.onGainStep} />
+                  <Switch
+                    value={ctl.modeOn}
+                    onValueChange={ctl.onToggle}
+                    trackColor={{ false: theme.panelEdge, true: theme.accent }}
+                    thumbColor="#fff"
+                    style={{ transform: [{ scale: 0.8 }] }}
+                  />
+                </View>
+              </View>
+            );
+          }
           return (
-            <Pressable
-              key={pos}
-              onPress={() => onSelect(pos)}
-              style={{
-                height: ROW_H,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 10,
-                paddingHorizontal: 10,
-                borderBottomWidth: 1,
-                borderBottomColor: theme.panelEdge,
-                backgroundColor: active ? `${theme.accent}22` : "transparent",
-              }}
-            >
+            <Pressable key={pos} onPress={() => onSelect(pos)} style={rowStyle}>
               <Text style={{ color: theme.textDim, width: 22, fontVariant: ["tabular-nums"] }}>
                 {pos === 0 ? "—" : pos}
               </Text>
               <Text style={{ color: active ? theme.text : theme.textDim, flex: 1, fontSize: 14 }}>
                 {label}
               </Text>
-              {pos >= 7 ? (
-                <Text style={{ color: theme.amber, fontSize: 10, letterSpacing: 1 }}>USER</Text>
-              ) : null}
             </Pressable>
           );
         })}
@@ -573,8 +667,23 @@ export default function IrStudio() {
         persist(merged); // keep the cache in sync with the newly-uploaded IR
         return merged;
       });
+      // The SAVE (0x12=0x7F) leaves the pedal parked on program 128 — EliteControl never recalls, but
+      // it stays on the scratch program; we're on a real preset, so bring the pedal back to it.
+      const workingSlot = pedalStore.getState().slot;
+      if (workingSlot != null) {
+        try {
+          await getController()?.recall(workingSlot);
+        } catch {
+          /* recall is best-effort — if it drops, the IR is still saved; the user can recall manually */
+        }
+      }
+      // Make the freshly-uploaded IR audible NOW: IR Mode defaults to "factory", so without this the
+      // upload is silent until the switch is flipped. Enable the slot's user IR and select it (both are
+      // local edits → the preset goes dirty; a SAVE keeps them, a recall discards them).
+      setMode(uploadSlot, true);
+      setBlendValue(slotToValue(uploadSlot));
       setStatus(
-        `Uploaded "${irName()}" → slot ${uploadSlot} (saved). Turn on the slot ${uploadSlot} switch to use it.`,
+        `Uploaded "${irName()}" → slot ${uploadSlot}, now playing at factory level. Save the preset to keep it.`,
       );
     } catch (e) {
       setStatus(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -661,7 +770,26 @@ export default function IrStudio() {
           value={morph}
           onChange={setBlendValue}
           onSelect={selectSlot}
+          userControls={{
+            7: {
+              modeOn: irMode7,
+              gainDb: gainDbOf(7),
+              onToggle: (v) => setMode(7, v),
+              onGainStep: (d) => setGain(7, gainDbOf(7) + d),
+            },
+            8: {
+              modeOn: irMode8,
+              gainDb: gainDbOf(8),
+              onToggle: (v) => setMode(8, v),
+              onGainStep: (d) => setGain(8, gainDbOf(8) + d),
+            },
+          }}
         />
+        <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
+          Slots 7 & 8 are yours: the switch picks your uploaded cab (on) or the factory cab (off —
+          Voice 12L / Brit V30), and the dB trims your cab's level. Uploading only replaces your
+          cab; the factory one always returns when the switch is off.
+        </Text>
 
         <View
           style={{
@@ -868,40 +996,10 @@ export default function IrStudio() {
                 />
               ))}
             </View>
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "space-between",
-              }}
-            >
-              <View style={{ flex: 1, paddingRight: 12 }}>
-                <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1 }}>
-                  SLOT {uploadSlot} CAB · THIS PRESET
-                </Text>
-                <Text style={{ color: theme.text, fontSize: 13, fontWeight: "700" }}>
-                  {userModeOn(uploadSlot)
-                    ? "Your custom IR"
-                    : `Factory · ${FACTORY_IR_NAME[uploadSlot]}`}
-                </Text>
-              </View>
-              <Switch
-                value={userModeOn(uploadSlot)}
-                onValueChange={(v) => setMode(uploadSlot, v)}
-                trackColor={{ false: theme.panelEdge, true: theme.accent }}
-                thumbColor="#fff"
-              />
-            </View>
-            <Stepper
-              label={`SLOT ${uploadSlot} GAIN`}
-              value={`${gainDbOf(uploadSlot) > 0 ? "+" : ""}${gainDbOf(uploadSlot).toFixed(1)} dB`}
-              onStep={(d) => setGain(uploadSlot, gainDbOf(uploadSlot) + d)}
-            />
             <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
-              Slots 7 & 8 each hold BOTH a factory cab and your uploaded cab. This switch picks
-              which one this preset plays — off = factory (
-              {uploadSlot === 7 ? "Voice 12L" : "Brit V30"}), on = your custom IR. Uploading only
-              replaces your custom cab; the factory cab always comes back when the switch is off.
+              Uploads at factory level and switches slot {uploadSlot} on automatically, so you hear
+              it right away — then Save the preset to keep it. Use the slot {uploadSlot} switch and
+              dB up in the list to toggle factory vs. your cab and trim its level.
             </Text>
             <View style={{ flexDirection: "row", gap: 10 }}>
               <Pressable
