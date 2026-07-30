@@ -41,9 +41,10 @@ by observing a pedal the author owns. It ships **no Tech 21 code, artwork, fonts
 
 ## Where the protocol "truth" lives
 
-`src/protocol/params.ts` is the single source of truth for parameter ids/offsets; `docs/PARAM-MAP.md`
-is the human-readable map; `docs/PROTOCOL.md` documents the transport and message vocabulary. If you
-change a mapping, update `params.ts` (the app, docs, and emulator derive from it) and add/adjust a test.
+`src/protocol/params.ts` is the single source of truth for parameter ids/offsets; the emulator
+derives from it. `docs/PARAM-MAP.md` (the human-readable map) and `docs/PROTOCOL.md` (transport +
+message vocabulary) are maintained **by hand** alongside it — keep them in sync. If you change a
+mapping, update `params.ts`, update `docs/PARAM-MAP.md` to match, and add/adjust a test.
 
 ## Developing without hardware
 
