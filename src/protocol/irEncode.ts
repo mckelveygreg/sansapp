@@ -26,6 +26,25 @@ const NAME_OFFSET = 4;
 const NAME_LEN = 32;
 const DATA_OFFSET = 36;
 
+/**
+ * Scale float samples so the largest magnitude is exactly 1.0 (returns zeros for pure silence). Keeps
+ * the IR SHAPE (a scalar multiply — the frequency curve is unchanged) while lifting a quiet source
+ * into full int8 range, so the makeup gain ({@link irGain}) can reach factory loudness. Applied to every
+ * generated upload; a source already at full scale (e.g. a pulled cab) is left essentially unchanged.
+ */
+export function peakNormalize(samples: ArrayLike<number>): Float64Array {
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const a = Math.abs(samples[i]!);
+    if (a > peak) peak = a;
+  }
+  const out = new Float64Array(samples.length);
+  if (peak <= 0) return out;
+  const g = 1 / peak;
+  for (let i = 0; i < samples.length; i++) out[i] = samples[i]! * g;
+  return out;
+}
+
 /** Quantize float IR samples ([-1,1]) to the pedal's 2400 × int8 (pad/truncate to IR_SAMPLES). */
 export function toInt8Samples(samples: ArrayLike<number>): Int8Array {
   const out = new Int8Array(IR_SAMPLES);
@@ -36,7 +55,28 @@ export function toInt8Samples(samples: ArrayLike<number>): Int8Array {
   return out;
 }
 
-/** RMS makeup gain EliteControl stores: min(1, 1.2/(√2·√energy)), energy = Σ(s/127)². */
+/**
+ * Target playback loudness for the makeup gain field (`gainField × RMS`). The pedal MULTIPLIES the
+ * stored gain field into the samples on playback (confirmed: EliteControl encoder writes it as a
+ * separate field, never into the samples, and the pedal applies it — a peak-normalized custom IR is
+ * otherwise silent, not loud). Reading every cab off a real pedal, healthy FACTORY cabs cluster at
+ * `gainField × RMS ≈ 0.18` (captures/ir-library-backup) — that's the loudness we match.
+ */
+const FACTORY_IR_LOUDNESS = 0.18;
+
+/**
+ * Makeup gain field stored at `.dat` offset 0x02 — set so `gainField × RMS ≈ {@link FACTORY_IR_LOUDNESS}`,
+ * matching the pedal's factory cabs. `gain = clamp(0.18 / RMS, 0, 1)`, RMS over the (peak-normalized)
+ * stored samples.
+ *
+ * Why NOT EliteControl's own `min(1, 1.2/(√2·√E))`: that formula assumes a RAW, un-normalized WAV
+ * (peak ≈0.13), which carries an implicit ≈8× makeup — its effective loudness is `0.0245/peak ≈ 0.18`.
+ * We peak-normalize crafted IRs first (peak = 1), so that formula collapses to a constant
+ * `gainField × RMS = 0.0173` — ~10× (≈20 dB) too quiet, the "custom IR is silent" bug. Targeting the
+ * measured factory loudness directly restores it. The field can only ATTENUATE (clamp ≤1): a near-delta
+ * source (a bare filter with no cab, RMS ~0.02) can't reach 0.18 even at gain 1.0 — the ±12 dB per-slot
+ * User IR Gain trims from there.
+ */
 export function irGain(int8: Int8Array): number {
   let energy = 0;
   for (const s of int8) {
@@ -44,7 +84,8 @@ export function irGain(int8: Int8Array): number {
     energy += x * x;
   }
   if (energy <= 0) return 1;
-  return Math.min(1, 1.2 / (Math.SQRT2 * Math.sqrt(energy)));
+  const rms = Math.sqrt(energy / int8.length);
+  return Math.min(1, FACTORY_IR_LOUDNESS / rms);
 }
 
 /** Build the 2436-byte user-IR `.dat` (the local file / pre-pack payload). */
@@ -139,7 +180,9 @@ export function buildIrUpload(
   name: string,
   target: readonly [number, number] = [0x00, 0x00],
 ): Uint8Array[] {
-  const dat = encodeIrDat(toInt8Samples(samples), name);
+  // Peak-normalize first so a quiet source reaches full int8 range and the makeup gain (irGain, called
+  // by encodeIrDat) can hit factory loudness — see FACTORY_IR_LOUDNESS.
+  const dat = encodeIrDat(toInt8Samples(peakNormalize(samples)), name);
   const packed = pack7Stream(dat);
   const header = [target[0] & 0x7f, target[1] & 0x7f, 0x00, 0x15, 0x61];
   const stream = new Uint8Array([...header, ...packed, ...irWireTrailer(packed)]);

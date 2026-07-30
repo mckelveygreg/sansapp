@@ -9,6 +9,7 @@ import {
   irGain,
   irWireTrailer,
   pack7Stream,
+  peakNormalize,
   toInt8Samples,
   unpackIrStream,
 } from "../src/protocol/irEncode";
@@ -38,11 +39,16 @@ describe("user-IR encoder", () => {
     expect((dat[38]! << 24) >> 24).toBe(-32); // round(-0.25 * 127), signed
   });
 
-  it("gain = min(1, 1.2/(√2·√energy)) — loud impulse ≈0.849, quiet ≈1.0 (clamped)", () => {
-    const loud = irGain(toInt8Samples([1])); // energy≈1 → 1.2/√2
-    expect(loud).toBeCloseTo(0.8485, 3);
-    const quiet = irGain(toInt8Samples([0.25])); // energy small → clamps to 1
-    expect(quiet).toBe(1);
+  it("gain field targets factory loudness: gainField × RMS ≈ 0.18, clamped ≤ 1", () => {
+    // A dense signal (RMS 0.3) is attenuated to hit the factory target ≈0.18.
+    const dense = toInt8Samples(Array.from({ length: IR_SAMPLES }, () => 0.3)); // int8 38 → RMS ≈ 0.299
+    const g = irGain(dense);
+    const rms = Math.sqrt([...dense].reduce((a, s) => a + (s / 127) ** 2, 0) / dense.length);
+    expect(g).toBeCloseTo(0.18 / rms, 3); // = FACTORY_IR_LOUDNESS / RMS
+    expect(g * rms).toBeCloseTo(0.18, 3); // the effective playback loudness we match
+    // A near-delta source (tiny RMS over 2400 taps) can't be boosted past 1.0 — clamps.
+    expect(irGain(toInt8Samples([1]))).toBe(1);
+    expect(irGain(toInt8Samples([0.25]))).toBe(1);
   });
 
   it("buildIrUpload frames match the pedal's structure (05 60 + 9×05 65 + 05 66)", () => {
@@ -107,6 +113,26 @@ describe("user-IR encoder", () => {
     const back = decodeIrStream(stream);
     expect(back?.name).toBe("PulledCab");
     expect([...toInt8Samples(back!.samples)]).toEqual([...int8]);
+  });
+
+  it("peakNormalize scales to unit peak, preserving shape (and no-ops on silence)", () => {
+    const scaled = peakNormalize([0.1, -0.05, 0.02]);
+    expect(Math.max(...[...scaled].map(Math.abs))).toBeCloseTo(1, 6);
+    expect(scaled[1]! / scaled[0]!).toBeCloseTo(-0.5, 6); // ratios (shape) unchanged
+    expect([...peakNormalize([0, 0, 0])]).toEqual([0, 0, 0]); // silence stays silence
+  });
+
+  it("a built upload plays at factory loudness: gainField × RMS ≈ 0.18 for a real cab", () => {
+    // A dense cab-like source at a QUIET level (peak 0.1) — the exact case the old formula left ~10×
+    // too quiet. buildIrUpload peak-normalizes then sets the makeup gain, so the decoded IR lands on
+    // the factory target.
+    const cab = Array.from({ length: IR_SAMPLES }, (_, i) => Math.sin(i / 3) * 0.1);
+    const frames = buildIrUpload(cab, "cab", [0x00, 0x7f]);
+    // reassemble the packed bodies (skip the 7-byte SysEx head F0..0A and the F7 tail) and decode
+    const packed = frames.flatMap((f) => [...f.subarray(7, -1)]);
+    const ir = decodeIrStream(Uint8Array.from(packed))!;
+    const rms = Math.sqrt([...ir.samples].reduce((a, x) => a + x * x, 0) / ir.samples.length);
+    expect(ir.gain * rms).toBeCloseTo(0.18, 2); // matches the measured factory-cab cluster
   });
 
   it("round-trips a designed IR back to its samples (decode(encode) == input int8)", () => {
