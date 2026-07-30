@@ -58,6 +58,23 @@ describe("param registry", () => {
     }
   });
 
+  it("models IR mode/gain, Preset Level, and Buzz/Crunch Q at blob = paramId + 0x22 (§3/§5)", () => {
+    const expected: Record<string, [number, number]> = {
+      irMode7: [0x28, 0x4a],
+      irMode8: [0x29, 0x4b],
+      irGain7: [0x2a, 0x4c],
+      irGain8: [0x2b, 0x4d],
+      presetLevel: [0x40, 0x62],
+      buzzQ: [0x2c, 0x4e],
+      crunchQ: [0x2e, 0x50],
+    };
+    for (const [id, [pid, blob]] of Object.entries(expected)) {
+      const p = PARAMS[id as keyof typeof PARAMS];
+      expect([p.paramId, p.blobOffset], id).toEqual([pid, blob]);
+      expect(p.blobOffset - (p.paramId ?? 0), id).toBe(0x22);
+    }
+  });
+
   it("has unique blob offsets and unique paramIds", () => {
     const offsets = PARAM_IDS.map((id) => PARAMS[id].blobOffset);
     expect(new Set(offsets).size).toBe(offsets.length);

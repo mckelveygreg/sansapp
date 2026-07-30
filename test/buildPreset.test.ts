@@ -65,6 +65,19 @@ describe("buildPresetBlob", () => {
     expect(blob[PARAMS.ambienceDecay.blobOffset]).toBe(5);
   });
 
+  it("captures the newly-modeled IR mode + Preset Level; absent leaves the base byte intact", () => {
+    const base = makeBase();
+    base[PARAMS.irMode7.blobOffset] = 0; // 0x4a — IR mode 7 off in the base
+    base[PARAMS.presetLevel.blobOffset] = 100; // 0x62 — base preset level
+    const blob = buildPresetBlob(base, { irMode7: 1, presetLevel: 14 }, "X", null);
+    expect(blob[PARAMS.irMode7.blobOffset]).toBe(1);
+    expect(blob[PARAMS.presetLevel.blobOffset]).toBe(14);
+    // With no values for them, the base bytes survive (silent-revert bug fixed by modeling them).
+    const untouched = buildPresetBlob(base, {}, "X", null);
+    expect(untouched[PARAMS.presetLevel.blobOffset]).toBe(100);
+    expect(untouched[PARAMS.irMode7.blobOffset]).toBe(0);
+  });
+
   it("round-trips: decoding the built blob yields the edited values", () => {
     const blob = buildPresetBlob(makeBase(), { drive: 77, gateThreshold: 10 }, "RT", null);
     const p = decodePreset(blob);

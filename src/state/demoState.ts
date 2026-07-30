@@ -41,9 +41,18 @@ export const DEMO_VALUES = {
   punch: 64,
   punchFreq: 65,
   punchQ: 64,
+  buzzQ: 64, // constant across amp models (§5)
+  crunchQ: 0, // constant across amp models (§5)
   // Blend (dry/wet) + IR cab
   blend: 104,
   irBlend: 32,
+  // User-IR slots (7/8): factory cabs (mode off), 0 dB makeup gain (64 = ~0 dB).
+  irMode7: 0,
+  irMode8: 0,
+  irGain7: 64,
+  irGain8: 64,
+  // Per-preset output level.
+  presetLevel: 32,
   // Compressor / gate
   ratio: 60,
   compOutput: 66,

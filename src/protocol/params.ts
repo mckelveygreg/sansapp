@@ -123,10 +123,29 @@ export const PARAMS = {
   punch: knob("punch", "Punch", "preamp", 0x25, 0x03, true),
   punchFreq: knob("punchFreq", "Punch Freq", "preamp", 0x2d, 0x0b, true),
   punchQ: knob("punchQ", "Punch Q", "preamp", 0x4f, 0x2d, true),
+  // Buzz Q / Crunch Q — the remaining drive-character Qs (PROTOCOL-MAP §3, idx 0x2c/0x2e). An amp
+  // model apply live-sets them to constants (Buzz Q = 64, Crunch Q = 0, §5); modeled so a SAVE after
+  // an apply records those bytes instead of silently keeping the base preset's old Qs.
+  buzzQ: knob("buzzQ", "Buzz Q", "preamp", 0x4e, 0x2c, true),
+  crunchQ: knob("crunchQ", "Crunch Q", "preamp", 0x50, 0x2e, true),
   // IR select/morph — the continuous 0x0E value the IR page's mic rides (0 = Off/flat, ~16·n = cab
   // n, values between blend neighbours). Store-backed so the IR stack reflects the LOADED preset's
   // cab instead of a guess. blobOffset 0x30 = wire 0x0e + 0x22; confirmed against the 128-preset bank.
   irBlend: knob("irBlend", "IR", "ir", 0x30, 0x0e, true),
+  // Per-USER-IR "IR Mode" ENABLE toggle + makeup gain (PROTOCOL-MAP §3, idx 0x28–0x2b). PER-PRESET:
+  // stored in the blob at paramId + 0x22 (mode 0x4a/0x4b, gain 0x4c/0x4d), CONFIRMED by the .p3b
+  // (slot-7 mode ON in 91 of 128 factory presets). Mode 0 = the factory cab, 1 = the uploaded user IR;
+  // gain 0..127 ↔ ±12 dB linear (see gainDbToValue). Store-backed so the IR page reflects the LOADED
+  // preset and a SAVE persists a toggle/gain edit instead of silently reverting it. Toggles follow the
+  // chorusOn/autoFilterOn convention (modeled as continuous knobs, value 0/1).
+  irMode7: knob("irMode7", "IR Mode 7", "ir", 0x4a, 0x28, true),
+  irMode8: knob("irMode8", "IR Mode 8", "ir", 0x4b, 0x29, true),
+  irGain7: knob("irGain7", "User IR Gain 7", "ir", 0x4c, 0x2a, true),
+  irGain8: knob("irGain8", "User IR Gain 8", "ir", 0x4d, 0x2b, true),
+  // Preset Level (PROTOCOL-MAP §3, idx 0x40) — a per-preset OUTPUT level an amp-model apply live-sets
+  // (e.g. British = 14 vs Bass Driver = 127). Modeled so applying a model then SAVING records the new
+  // level instead of the old byte — otherwise recall jumps in volume. Default 32; not yet a UI knob.
+  presetLevel: knob("presetLevel", "Preset Level", "level", 0x62, 0x40, true),
   // Auto Filter extras (RE 2026-07-15): a master enable toggle (0x3c, defaults OFF) plus Attack/
   // Release (0x3e/0x3f) — store-backed so they read back from the preset (Level is `filter` 0x3d).
   // The auto-filter has NO cutoff/resonance param; these are all it exposes over the wire.
@@ -243,9 +262,9 @@ export const PARAMETRIC_EQ = {
  * - 0x2f is "Mid Q" (mapped as `q` / eq.mid.q) — a real control.
  * - 0x13 is "Reverb Extension Factor" (2–5 semitones).
  * - 0x35–0x38 are the "User IR 7/8 Preset" addressing params for the writable IR slots.
- * - Deep reverb engine (0x10–0x18, 0x39–0x3b), Expander block (0x1e–0x20), Buzz/Punch/Crunch (+Qs),
- *   AnalogSim / Soft Clipping / Anti-aliasing / Clean Input, Tuner (0x34), Preset Level (0x40) are
- *   real params SansApp doesn't expose yet (roadmap). Full table + names in docs/PARAM-MAP.md.
+ * - Deep reverb engine (0x10–0x18, 0x39–0x3b), Expander block (0x1e–0x20),
+ *   AnalogSim / Soft Clipping / Anti-aliasing / Clean Input, Tuner (0x34) are real params SansApp
+ *   doesn't expose yet (roadmap). Full table + names in docs/PARAM-MAP.md.
  */
 
 /**
@@ -258,23 +277,18 @@ export const PARAMETRIC_EQ = {
 export const KNOB_LAYER_NOTIFY_PARAM = 0x4d;
 
 /**
- * Per-USER-IR makeup gain, sent live (`05 50`): `0x2a` = slot 7, `0x2b` = slot 8 (the two "User IR
- * Gain" params). Range 0–127 maps **linearly to ±{@link USER_IR_GAIN_DB_RANGE} dB**:
- * `dB = value/127·24 − 12` (so 0 → −12, 127 → +12, ~63.5 → 0). ±12 dB confirmed against the desktop
- * editor's readout (knob rails read 12.00 / −12.00 dB); the scale is linear (not logarithmic).
+ * Per-USER-IR makeup gain scaling. The gain params themselves are the store-backed `irGain7`/`irGain8`
+ * registry entries above (slot 7 = idx 0x2a, slot 8 = idx 0x2b); this is the wire↔dB conversion the IR
+ * page uses. Range 0–127 maps **linearly to ±{@link USER_IR_GAIN_DB_RANGE} dB**: `dB = value/127·24 −
+ * 12` (so 0 → −12, 127 → +12, ~63.5 → 0). ±12 dB confirmed against the desktop editor's readout (knob
+ * rails read 12.00 / −12.00 dB); the scale is linear (not logarithmic).
  */
-export const USER_IR_GAIN: Record<number, number> = { 7: 0x2a, 8: 0x2b };
-/**
- * Per-USER-IR "IR Mode" ENABLE toggle (the on/off switch next to each user slot in EliteControl):
- * `0x28` = slot 7, `0x29` = slot 8. **PER-PRESET** — stored in the preset blob at `paramId + 0x22`
- * (0x4a / 0x4b), CONFIRMED by the .p3b (slot-7 mode is ON in 91 of 128 presets, OFF in 37). OFF = the
- * preset uses its normal IR; ON = it uses the custom IR in that user slot. So the IR data is a global
- * library, but each preset opts in/out via this toggle — that's the per-preset behaviour.
- */
-export const USER_IR_MODE: Record<number, number> = { 7: 0x28, 8: 0x29 };
 export const USER_IR_GAIN_DB_RANGE = 12; // ± dB at the rails (0..127 linear) — CONFIRMED
-/** dB (−12..+12) → the 0..127 wire value for {@link USER_IR_GAIN} (clamped). */
+/** dB (−12..+12) → the 0..127 wire value (clamped). */
 export const gainDbToValue = (db: number): number => {
   const clamped = Math.max(-USER_IR_GAIN_DB_RANGE, Math.min(USER_IR_GAIN_DB_RANGE, db));
   return Math.round(((clamped + USER_IR_GAIN_DB_RANGE) / (2 * USER_IR_GAIN_DB_RANGE)) * 127);
 };
+/** The 0..127 wire value → dB (−12..+12) — inverse of {@link gainDbToValue}. */
+export const valueToGainDb = (value: number): number =>
+  (value / 127) * (2 * USER_IR_GAIN_DB_RANGE) - USER_IR_GAIN_DB_RANGE;

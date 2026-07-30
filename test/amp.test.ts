@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  AMP_APPLY_FIXED,
   AMP_BUNDLE_OFFSETS,
   AMP_BUNDLES,
+  ampApplyExtras,
   applyAmpBundle,
   bundleMatches,
   detectAmpModel,
@@ -79,6 +81,27 @@ describe("amp model bundles", () => {
     const neutralDi = new Uint8Array(256); // the DI default (64,64,65,64) → no model
     [0x24, 0x25, 0x2d, 0x4f].forEach((o, i) => (neutralDi[o] = [64, 64, 65, 64][i]!));
     expect(detectAmpModel(neutralDi)).toBeNull();
+  });
+
+  it("apply always live-sets Buzz Q = 64 and Crunch Q = 0 (PROTOCOL-MAP §5)", () => {
+    expect(AMP_APPLY_FIXED).toEqual([
+      { index: 0x2c, value: 64 }, // Buzz Q
+      { index: 0x2e, value: 0 }, // Crunch Q
+    ]);
+    for (const name of Object.keys(AMP_BUNDLES)) {
+      const extras = ampApplyExtras(name);
+      expect(extras).toContainEqual({ index: 0x2c, value: 64 });
+      expect(extras).toContainEqual({ index: 0x2e, value: 0 });
+    }
+  });
+
+  it("apply forces Mid (0x0c) = 0 for VT Bass & Para Driver only", () => {
+    for (const name of ["VT Bass", "Para Driver"]) {
+      expect(ampApplyExtras(name)).toContainEqual({ index: 0x0c, value: 0 });
+    }
+    for (const name of ["Bass Driver", "1970s", "British", "Shred", "Blackface"]) {
+      expect(ampApplyExtras(name).some((e) => e.index === 0x0c)).toBe(false);
+    }
   });
 
   it("bundleMatches keys on voicing, ignoring the per-preset Preset Level", () => {

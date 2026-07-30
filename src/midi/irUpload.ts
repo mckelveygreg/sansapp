@@ -45,12 +45,26 @@ export interface IrUploadOptions {
    */
   presetAddress?: readonly [number, number] | null;
   /**
+   * The `05 50` SET-IDs used to send that preset address (MSB, LSB). Slot 7 = `[0x39, 0x3A]`
+   * (byte-faithful to an EliteControl capture). Slot 8 = `[0x3B, 0x3C]` — a `+4`-rule inference from
+   * the User-IR7/8 Preset indices 0x35–0x38 (§3), NOT yet hardware-verified. Default slot 7.
+   */
+  addrSetIds?: readonly [number, number];
+  /**
    * After upload, persist to non-volatile memory (EliteControl's SAVE = setParam `0x12`=`0x7F`; the
    * pedal echoes a preset dump to confirm). Without this the IR is only live until power-cycle.
    */
   save?: boolean;
   onProgress?: (done: number, total: number) => void;
 }
+
+/**
+ * The `05 50` preset-address SET-IDs (MSB, LSB) that address a User-IR slot before an upload. Slot 7 =
+ * `[0x39, 0x3A]` — byte-faithful to an EliteControl capture. Slot 8 = `[0x3B, 0x3C]` — a `+4`-rule
+ * inference from the User-IR7/8 Preset indices 0x35–0x38 (PROTOCOL-MAP §3), NOT yet hardware-verified.
+ */
+export const irAddrSetIds = (slot: 7 | 8): readonly [number, number] =>
+  slot === 8 ? [0x3b, 0x3c] : [IR_ADDR_MSB, IR_ADDR_LSB];
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -88,6 +102,7 @@ export async function uploadIr(
     chunkDelayMs = 80,
     ackTimeoutMs = 4000,
     presetAddress = [0x00, 0x7f],
+    addrSetIds = [IR_ADDR_MSB, IR_ADDR_LSB],
     save,
     onProgress,
   } = opts;
@@ -113,15 +128,15 @@ export async function uploadIr(
       });
     });
 
-  // Address the User-IR slot BEFORE the upload — EliteControl sends 0x39 then 0x3A first. Paced so
-  // BLE doesn't drop the back-to-back sends.
+  // Address the User-IR slot BEFORE the upload — EliteControl sends the MSB then the LSB first (slot 7
+  // = set-ids 0x39/0x3A; slot 8 = 0x3B/0x3C). Paced so BLE doesn't drop the back-to-back sends.
   if (presetAddress) {
     session.sendRaw(
-      encode({ kind: "setParam", param: IR_ADDR_MSB, value: presetAddress[0] & 0x7f }),
+      encode({ kind: "setParam", param: addrSetIds[0], value: presetAddress[0] & 0x7f }),
     );
     await delay(chunkDelayMs);
     session.sendRaw(
-      encode({ kind: "setParam", param: IR_ADDR_LSB, value: presetAddress[1] & 0x7f }),
+      encode({ kind: "setParam", param: addrSetIds[1], value: presetAddress[1] & 0x7f }),
     );
     await delay(chunkDelayMs);
   }

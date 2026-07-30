@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decode } from "../src/protocol/messages";
 import type { PedalMessage } from "../src/protocol/messages";
-import { uploadIr } from "../src/midi/irUpload";
+import { irAddrSetIds, uploadIr } from "../src/midi/irUpload";
 
 // Minimal fake session: records sends and auto-acks begin (05 60→05 63) and end (05 66→05 61), and
 // echoes a preset dump on the SAVE (setParam 0x12→05 41), like the real pedal. Only the surface
@@ -115,6 +115,27 @@ describe("uploadIr", () => {
     // send is gapped by ~GAP: chunk2..chunk9 and the end frame.
     for (let i = 2; i < s.times.length; i++) {
       expect(s.times[i]! - s.times[i - 1]!).toBeGreaterThanOrEqual(GAP - 10);
+    }
+  });
+
+  it("addresses the right User-IR slot before the upload (slot 7 = 0x39/0x3A, slot 8 = 0x3B/0x3C)", async () => {
+    // The IR data always lands in the edit-buffer IR [0x00,0x7F]; only the preset-ADDRESS set-ids
+    // differ per slot. Slot 7 is byte-faithful to an EliteControl capture; slot 8 (0x3B/0x3C) is a
+    // +4-rule inference from the User-IR7/8 Preset indices 0x35–0x38 (§3), NOT yet hardware-verified.
+    expect(irAddrSetIds(7)).toEqual([0x39, 0x3a]);
+    expect(irAddrSetIds(8)).toEqual([0x3b, 0x3c]);
+    for (const slot of [7, 8] as const) {
+      const s = new FakeSession();
+      const [msb, lsb] = irAddrSetIds(slot);
+      await uploadIr(s as never, upload, {
+        chunkDelayMs: 0,
+        presetAddress: [0x00, 0x7f],
+        addrSetIds: irAddrSetIds(slot),
+      });
+      expect(s.sent.slice(0, 2).map((f) => decode(Uint8Array.from(f)))).toEqual([
+        { kind: "setParam", param: msb, value: 0x00 },
+        { kind: "setParam", param: lsb, value: 0x7f },
+      ]);
     }
   });
 });

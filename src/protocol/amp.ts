@@ -11,6 +11,30 @@
 /** Blob offsets that define the amp voicing (preamp/presence/drive + 5 more). */
 export const AMP_BUNDLE_OFFSETS = [0x23, 0x24, 0x25, 0x26, 0x27, 0x2d, 0x4f, 0x62] as const;
 
+/**
+ * Constant voicing params EliteControl live-sets on EVERY amp apply, ON TOP of the AMP_BUNDLES bytes
+ * (PROTOCOL-MAP §5): Buzz Q is always 64, Crunch Q always 0. Keyed by wire INDEX (== the notify id /
+ * `paramId`; the caller maps to the live-set id via `liveSetId`). VT Bass & Para Driver additionally
+ * force Mid (idx 0x0c) to 0 — see {@link ampApplyExtras}.
+ */
+export const AMP_APPLY_FIXED: readonly { readonly index: number; readonly value: number }[] = [
+  { index: 0x2c, value: 64 }, // Buzz Q
+  { index: 0x2e, value: 0 }, // Crunch Q
+];
+
+/** Models whose apply forces Mid (idx 0x0c) to 0 (PROTOCOL-MAP §5). */
+const MID_ZERO_MODELS: ReadonlySet<string> = new Set(["VT Bass", "Para Driver"]);
+
+/**
+ * The extra params (beyond the {@link AMP_BUNDLES} bytes) an apply of `name` live-sets: the fixed
+ * Buzz Q / Crunch Q, plus Mid → 0 for VT Bass & Para Driver only. Index-keyed like AMP_APPLY_FIXED.
+ */
+export function ampApplyExtras(name: string): { index: number; value: number }[] {
+  const extras = AMP_APPLY_FIXED.map((e) => ({ ...e }));
+  if (MID_ZERO_MODELS.has(name)) extras.push({ index: 0x0c, value: 0 }); // Mid forced to 0
+  return extras;
+}
+
 /** Per-model values at AMP_BUNDLE_OFFSETS, keyed by AMP_MODELS name. */
 export const AMP_BUNDLES: Readonly<Record<string, readonly number[]>> = {
   "Bass Driver": [20, 64, 9, 59, 15, 75, 95, 127],

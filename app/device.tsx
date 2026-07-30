@@ -4,7 +4,7 @@
  * Byte→function map (src/protocol/settings.ts) was documented from a capture on
  * 2026-07-04. When connected, this reads the pedal's settings block on mount and writes changes
  * back (05 52 block write → 05 53 ack) — modifying only the changed byte so unknown bytes are
- * preserved. A couple of entries are still tentative (marked "?"). RN app surface.
+ * preserved. RN app surface.
  */
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -332,8 +332,7 @@ export default function Device() {
           The pedal's Special Page Functions.{" "}
           {ready
             ? "Live — changes write to the pedal (only the changed byte; the rest of the block is preserved)."
-            : "Connect to read and write these."}{" "}
-          Entries marked <Text style={{ color: theme.amber }}>?</Text> are tentative.
+            : "Connect to read and write these."}
         </Text>
       </View>
 
@@ -347,14 +346,6 @@ export default function Device() {
           {control(fn)}
         </Row>
       ))}
-
-      <Row
-        label="Preset Protection"
-        desc="Lock programs from being overwritten (byte unconfirmed)"
-        tentative
-      >
-        <Toggle value={false} onChange={() => {}} />
-      </Row>
     </ScrollView>
   );
 }
