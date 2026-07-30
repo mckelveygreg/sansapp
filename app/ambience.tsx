@@ -3,7 +3,8 @@
  *
  * Type selection applies a bundle of blob bytes (read the edit buffer, patch, write it back —
  * captured 2026-07-05). Deep controls are live params: Level = the AMBIANCE knob (0x08), Decay =
- * 0x15, Time = 0x14 (Echo / Echo Verb only). RN app surface.
+ * 0x11 (Reverb Decay Time), Time = 0x10 (Reverb Room Size, Echo / Echo Verb only) — wire ids taken
+ * from EliteControl's ShowAmbience binary (issue #38). RN app surface.
  */
 import { Pressable, Text, View } from "react-native";
 import { KnobScroll } from "../src/components/KnobScroll";

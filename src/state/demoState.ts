@@ -64,6 +64,7 @@ export const DEMO_VALUES = {
   // Ambience + chorus
   ambienceDecay: 60,
   ambienceTime: 90,
+  chorusOn: 1,
   chorus: 46,
   chorusModFreq: 40,
   chorusModDepth: 55,

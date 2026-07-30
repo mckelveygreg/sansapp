@@ -41,8 +41,10 @@ export function buildPresetBlob(
   dyn: DynamicsSnapshot,
   amb: AmbienceSnapshot,
 ): Uint8Array {
-  // Bake the ambience TYPE's 10-byte profile FIRST — two of its offsets (0x36/0x37) are the
-  // ambienceTime/Decay params overlaid just below, so order matters. type < 0 keeps the base profile.
+  // Bake the ambience TYPE's 10-byte profile FIRST — ambienceTime (blob 0x32 = Reverb Room Size) is
+  // one of the profile offsets and is overlaid just below, so order matters (the Time knob value wins
+  // over the type default). ambienceDecay (blob 0x33 = Reverb Decay Time) sits outside the profile.
+  // type < 0 keeps the base profile.
   const withAmb = amb.type >= 0 ? applyAmbienceBundle(base, amb.type) : base.slice();
   const decoded = decodePreset(withAmb);
   // Start from the base's full value set (so no modeled param is undefined), overlay the app's live

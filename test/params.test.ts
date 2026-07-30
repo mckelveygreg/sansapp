@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { PARAM_IDS, PARAMS } from "../src/protocol/params";
+import {
+  AMBIENCE_PARAMS,
+  AUTO_FILTER_PARAMS,
+  CHORUS_PARAMS,
+  PARAM_IDS,
+  PARAMS,
+  liveSetId,
+} from "../src/protocol/params";
 
 describe("param registry", () => {
   it("has the paramIds confirmed from live capture", () => {
@@ -56,6 +63,50 @@ describe("param registry", () => {
     expect(new Set(offsets).size).toBe(offsets.length);
     const paramIds = PARAM_IDS.map((id) => PARAMS[id].paramId).filter((v) => v !== undefined);
     expect(new Set(paramIds).size).toBe(paramIds.length);
+  });
+
+  it("chorus wire ids match PROTOCOL-MAP §3 (issue #40 — verified, not mismapped)", () => {
+    // Authoritative binary RE: On 0x41, Level 0x42, Mod Freq 0x43, Mod Depth 0x44, Delay Size 0x45,
+    // Feedback 0x46 — each a deep param whose live-SET id = index + 4.
+    expect(CHORUS_PARAMS).toEqual({
+      on: 0x41,
+      level: 0x42,
+      modFreq: 0x43,
+      modDepth: 0x44,
+      delaySize: 0x45,
+      feedback: 0x46,
+    });
+    // The blob offsets follow the +0x22 rule and the live-set ids the +4 rule (deep range).
+    expect([PARAMS.chorusOn.blobOffset, PARAMS.chorus.blobOffset]).toEqual([0x63, 0x64]);
+    expect(Object.values(CHORUS_PARAMS).map(liveSetId)).toEqual([
+      0x45, 0x46, 0x47, 0x48, 0x49, 0x4a,
+    ]);
+  });
+
+  it("ambience Decay/Time map to Reverb Decay Time / Room Size (issue #38, EliteControl binary)", () => {
+    // EliteControl's ShowAmbience (func.1000dbae8) builds DECAY on index 0x11 (Reverb Decay Time) and
+    // TIME on index 0x10 (Reverb Room Size) — same knob constructor whose LEVEL knob uses index 0x08.
+    // The old 0x15 (Fbk Filter) / 0x14 (Fbk Delay Size) pointed Time at the feedback repeats only.
+    expect(AMBIENCE_PARAMS).toEqual({ level: 0x08, decay: 0x11, time: 0x10 });
+    expect([PARAMS.ambienceDecay.paramId, PARAMS.ambienceTime.paramId]).toEqual([0x11, 0x10]);
+    expect([PARAMS.ambienceDecay.blobOffset, PARAMS.ambienceTime.blobOffset]).toEqual([0x33, 0x32]);
+    // live-set ids (index+4, deep range): Decay 0x11→0x15, Time 0x10→0x14 — what EliteControl sends.
+    expect([liveSetId(0x11), liveSetId(0x10)]).toEqual([0x15, 0x14]);
+  });
+
+  it("auto-filter maps to the 4 real params (issue #41, EliteControl constructor func.1000b8f88)", () => {
+    // Binary-confirmed via GetParam(idx)->InitParam (offset/8 = index; Room Size = 0x10 validates it):
+    // 0x3c enable (default 0, range 0..1 — a real toggle), 0x3d Level (default 64, 0..127, BIPOLAR
+    // Bypass at 64), 0x3e AF Attack, 0x3f AF Release. No cutoff/resonance param exists.
+    expect(PARAMS.autoFilterOn.paramId).toBe(0x3c);
+    expect(AUTO_FILTER_PARAMS).toEqual({ level: 0x3d, attack: 0x3e, release: 0x3f });
+    expect([
+      PARAMS.filter.paramId,
+      PARAMS.filterAttack.paramId,
+      PARAMS.filterRelease.paramId,
+    ]).toEqual([0x3d, 0x3e, 0x3f]);
+    // live-set ids (index+4, deep range): 0x3c→0x40, 0x3d→0x41, 0x3e→0x42, 0x3f→0x43.
+    expect([0x3c, 0x3d, 0x3e, 0x3f].map(liveSetId)).toEqual([0x40, 0x41, 0x42, 0x43]);
   });
 
   it("deep-param blob offsets recovered 2026-07-07 form contiguous blocks", () => {

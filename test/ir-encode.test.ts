@@ -65,6 +65,17 @@ describe("user-IR encoder", () => {
     expect([...frames[0]!.subarray(7, 12)]).toEqual([0x00, 0x00, 0x00, 0x15, 0x61]);
   });
 
+  it("uses EliteControl's edit-buffer import header [0x00, 0x7F] (issue #37, captures/ir-save.jsonl)", () => {
+    // The app's custom-IR import targets the edit-buffer IR exactly as EliteControl does — NOT the
+    // raw library bank [0x02, slot-1], which could brick the connect handshake.
+    const frames = buildIrUpload(
+      Array.from({ length: IR_SAMPLES }, () => 0.05),
+      "editbuf",
+      [0x00, 0x7f],
+    );
+    expect([...frames[0]!.subarray(7, 12)]).toEqual([0x00, 0x7f, 0x00, 0x15, 0x61]);
+  });
+
   it("targets a slot in the header and appends the 14-bit packed-sum checksum (hardware-verified)", () => {
     // target library slot 3 (0-based 2) → header [0x02, 0x02, 00 15 61]
     const frames = buildIrUpload(

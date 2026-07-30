@@ -58,11 +58,14 @@ async function main(): Promise<void> {
     const { samples: pcm, sampleRate } = decodeWav(new Uint8Array(readFileSync(file)));
     const floats = Array.from(pcm, (s) => s / 32768);
     console.log(`  uploading "${name}" (${floats.length} samp @ ${sampleRate} Hz)…`);
-    // Same as uploadCustomIr (bundleIo), but low-level so tsx doesn't transitively pull in RN:
-    // header [0x02, slot-1], activate the slot live, save to non-volatile.
+    // DEV/RECOVERY tool: this deliberately targets the raw IR-LIBRARY bank (header [0x02, slot-1]) to
+    // rewrite global slots 7/8 — a different operation than the app's custom-IR import, which uses
+    // EliteControl's edit-buffer path (see uploadCustomIr / issue #37). presetAddress is skipped (the
+    // library-bank header already targets the slot); we read back below to verify, so no live-select
+    // is needed. Run with the recover-pedal tool handy if the pedal ever refuses to reconnect.
     const frames = buildIrUpload(floats, name, [0x02, (slot - 1) & 0x7f]);
     await uploadIr(session, frames, {
-      activateValue: Math.min(127, slot * 16),
+      presetAddress: null,
       save: true,
       onProgress: (d, t) => process.stdout.write(`\r    frame ${d}/${t}`),
     });

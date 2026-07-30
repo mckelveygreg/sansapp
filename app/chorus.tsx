@@ -5,7 +5,7 @@
  * reflect the loaded preset. Ranges from EliteControl's readouts: Mod Freq 0–6 Hz, Depth/Delay/Level
  * 0–100 %, Feedback −100…+100 %. Adjusting a knob sends it to the pedal + updates the store.
  */
-import { View } from "react-native";
+import { Switch, Text, View } from "react-native";
 import { useStore } from "zustand";
 import { Knob } from "../src/components/Knob";
 import { KnobScroll } from "../src/components/KnobScroll";
@@ -48,11 +48,16 @@ export default function Chorus() {
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
   const values = useStore(pedalStore, (s) => s.values);
   const baseline = useStore(pedalStore, (s) => s.baseline);
+  const chorusOn = (values.chorusOn ?? 0) > 0;
 
   // Send live + update the store so the editor stays in sync.
   const set = (storeId: ParamId, param: number) => (val: number) => {
     sendParam(param, val);
     pedalStore.getState().setValueLocal(storeId, val);
+  };
+  const toggleOn = (on: boolean) => {
+    sendParam(CHORUS_PARAMS.on, on ? 1 : 0);
+    pedalStore.getState().setValueLocal("chorusOn", on ? 1 : 0);
   };
 
   return (
@@ -60,6 +65,34 @@ export default function Chorus() {
       <IntroNote ready={ready}>
         The pedal&apos;s chorus — modulation, delay size, feedback, and level.
       </IntroNote>
+
+      {/* Master enable. If a preset loads with chorus OFF, the knobs below have no audible effect
+          until this is on — the likely cause of "the chorus controls don't seem to do anything". */}
+      <View
+        style={{
+          backgroundColor: theme.panel,
+          borderColor: theme.panelEdge,
+          borderWidth: 1,
+          borderRadius: radius,
+          padding: 16,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <View>
+          <Text style={{ color: theme.text, fontWeight: "700", letterSpacing: 0.5 }}>CHORUS</Text>
+          <Text style={{ color: theme.textDim, fontSize: 12, marginTop: 2 }}>
+            {chorusOn ? "On" : "Off — turn on to hear the controls below"}
+          </Text>
+        </View>
+        <Switch
+          value={chorusOn}
+          onValueChange={toggleOn}
+          trackColor={{ false: theme.panelEdge, true: theme.accent }}
+          thumbColor="#fff"
+        />
+      </View>
 
       <View
         style={{
@@ -72,6 +105,7 @@ export default function Chorus() {
           flexWrap: "wrap",
           justifyContent: "space-around",
           rowGap: 20,
+          opacity: chorusOn ? 1 : 0.5,
         }}
       >
         {CONTROLS.map((c) => {

@@ -81,6 +81,24 @@ describe("pedal store + controller", () => {
     expect(store.getState().dirty).toBe(false); // external change isn't a local edit
   });
 
+  it("physical AMBIANCE knob (0x08) updates values.ambiance — the deep page's Level (issue #39)", async () => {
+    // The Ambience deep page renders `pedalStore.values.ambiance`, so a physical-knob notify for wire
+    // 0x08 must land there live. Confirmed on hardware the pedal emits `05 51 0A 08 <v>` for that knob
+    // (captures/settings-map.jsonl); this locks the app half of the round-trip.
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel());
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+
+    devIO.send(encode({ kind: "paramNotify", param: 0x08, value: 56 })); // physical AMBIANCE knob
+    await new Promise((r) => setTimeout(r, 10));
+    expect(store.getState().values.ambiance).toBe(56);
+    expect(store.getState().dirty).toBe(false);
+    ctl.dispose();
+  });
+
   it("tracks the knob layer from the 0x4d footswitch notify (and never as a knob value)", async () => {
     const [appIO, devIO] = createLoopback();
     wireModel(devIO, new PedalModel());
