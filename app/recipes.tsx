@@ -12,7 +12,6 @@ import { useStore } from "zustand";
 import { radius, theme } from "../src/components/theme";
 import { FEATURES } from "../src/config/features";
 import { getSession, pedalStore, setAmbienceType } from "../src/midi/pedal";
-import { ambienceStore } from "../src/state/ambience";
 import { AMBIENCE_ENGINES } from "../src/protocol/constants";
 import {
   AMBIENCE_PARAMS,
@@ -63,8 +62,8 @@ const P = {
   mid: wire("mid"), // 0x0c
   blend: wire("blend"), // 0x47 (was hardcoded 0x4b)
   ambienceLevel: AMBIENCE_PARAMS.level, // 0x08
-  ambienceTime: AMBIENCE_PARAMS.time, // 0x14
-  ambienceDecay: AMBIENCE_PARAMS.decay, // 0x15
+  ambienceTime: AMBIENCE_PARAMS.time, // 0x10 (Reverb Room Size)
+  ambienceDecay: AMBIENCE_PARAMS.decay, // 0x11 (Reverb Decay Time)
   filterLevel: AUTO_FILTER_PARAMS.level, // 0x3d (was 0x41)
   filterAttack: AUTO_FILTER_PARAMS.attack, // 0x3e (was 0x42)
   filterRelease: AUTO_FILTER_PARAMS.release, // 0x3f (was 0x43)
@@ -287,17 +286,13 @@ function RecipesScreen() {
                   value: s.apply!.raw & 0x7f,
                 })),
               );
-              // Reflect into the editor knobs + shared ambience store (not on the wire).
+              // Reflect into the editor knobs (not on the wire). Every applied param — ambience
+              // Decay/Time (0x11/0x10) included — has a store-backed ParamId now, so one
+              // setValueLocal per control keeps the editor + save state in sync.
               for (const s of applyable) {
                 if (!s.apply) continue;
                 const id = PARAM_BY_WIRE[s.apply.param];
-                if (id) pedalStore.getState().setValueLocal(id, s.apply.raw); // reflect editor knobs
-                // Ambience Decay/Time are send-only — mirror into the shared store so the Ambience
-                // page reflects them (Level is param 0x08 → covered by setValueLocal above).
-                if (s.apply.param === AMBIENCE_PARAMS.decay)
-                  ambienceStore.getState().patch({ decay: s.apply.raw });
-                if (s.apply.param === AMBIENCE_PARAMS.time)
-                  ambienceStore.getState().patch({ time: s.apply.raw });
+                if (id) pedalStore.getState().setValueLocal(id, s.apply.raw);
               }
               const n = applyable.length + (engineFailed ? 0 : engines.length);
               const warn = engineFailed

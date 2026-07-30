@@ -6,9 +6,11 @@
  * overlay the app's modeled param values onto a base blob (the last-loaded preset's raw), preserving
  * every unmodeled byte (IR data + name, expander, tuner, reserved regions, …).
  *
- * Deep params live OUTSIDE pedalStore.values: the gate/comp block is in the dynamics store and
- * ambience decay/time + type in the ambience store (the deep-edit pages write only there). They're
- * merged over `values` here. Result is exactly 256 bytes; the SysEx encoder adds the 14-bit checksum.
+ * Every modeled parameter — the gate/comp block and ambience decay/time included — is read from
+ * `values` (pedalStore's single source of truth). `ambienceType` is the ONE piece of non-parameter
+ * state: pass the engine index to re-bake its canonical 10-byte profile (only when the user actually
+ * picked a type this session), or null to preserve the base blob's profile bytes as-is. Result is
+ * exactly 256 bytes; the SysEx encoder adds the 14-bit checksum.
  *
  * Framework-free: no React/React Native imports.
  */
@@ -16,50 +18,24 @@ import { applyAmbienceBundle } from "./ambience";
 import type { ParamId } from "./params";
 import { decodePreset, encodePreset } from "./preset";
 
-export interface DynamicsSnapshot {
-  gateThreshold: number;
-  gateRatio: number;
-  gateRelease: number;
-  compOutput: number;
-  compAttack: number;
-  compRelease: number;
-  autoGain: boolean;
-  lookahead: boolean;
-}
-
-export interface AmbienceSnapshot {
-  /** Index into AMBIENCE_ENGINES, or -1 for custom/unknown (leaves the base blob's profile as-is). */
-  type: number;
-  decay: number;
-  time: number;
-}
-
 export function buildPresetBlob(
   base: Uint8Array,
   values: Partial<Record<ParamId, number>>,
   name: string,
-  dyn: DynamicsSnapshot,
-  amb: AmbienceSnapshot,
+  ambienceType: number | null,
 ): Uint8Array {
-  // Bake the ambience TYPE's 10-byte profile FIRST — ambienceTime (blob 0x32 = Reverb Room Size) is
-  // one of the profile offsets and is overlaid just below, so order matters (the Time knob value wins
-  // over the type default). ambienceDecay (blob 0x33 = Reverb Decay Time) sits outside the profile.
-  // type < 0 keeps the base profile.
-  const withAmb = amb.type >= 0 ? applyAmbienceBundle(base, amb.type) : base.slice();
+  // Bake the ambience TYPE's 10-byte profile FIRST when a type was applied this session: ambienceTime
+  // (blob 0x32 = Reverb Room Size) is one of the profile offsets and is overlaid from `values` just
+  // below, so order matters (the Time knob value wins over the type default). ambienceDecay (blob
+  // 0x33 = Reverb Decay Time) sits outside the profile. null → keep the base blob's profile bytes.
+  const withAmb =
+    ambienceType != null && ambienceType >= 0
+      ? applyAmbienceBundle(base, ambienceType)
+      : base.slice();
   const decoded = decodePreset(withAmb);
-  // Start from the base's full value set (so no modeled param is undefined), overlay the app's live
-  // edits, then the deep-store params (which the edit pages keep only in dynamics/ambience stores).
+  // Start from the base's full value set (so no modeled param is undefined), then overlay the app's
+  // live values — the single source of truth for every modeled param (gate/comp/ambience included).
   const merged = { ...decoded.values, ...values } as Record<ParamId, number>;
-  merged.gateThreshold = dyn.gateThreshold;
-  merged.gateRatio = dyn.gateRatio;
-  merged.gateRelease = dyn.gateRelease;
-  merged.compOutput = dyn.compOutput;
-  merged.compAttack = dyn.compAttack;
-  merged.compRelease = dyn.compRelease;
-  merged.autoGain = dyn.autoGain ? 1 : 0;
-  merged.lookahead = dyn.lookahead ? 1 : 0;
-  merged.ambienceDecay = amb.decay;
-  merged.ambienceTime = amb.time;
   // Keep the base's IR name byte-exact (encodePreset's "changed?" guard leaves 0xc0..0xdf untouched).
   return encodePreset({ name, irName: decoded.irName, values: merged, raw: withAmb });
 }

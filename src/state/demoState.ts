@@ -72,23 +72,9 @@ export const DEMO_VALUES = {
   chorusFeedback: 30,
 } satisfies Record<ParamId, number>;
 
-/** Deep-store values that mirror the demo preset (the Dynamics/Ambience pages read these). */
-export const DEMO_DYNAMICS = {
-  gateThreshold: DEMO_VALUES.gateThreshold,
-  gateRatio: DEMO_VALUES.gateRatio,
-  gateRelease: DEMO_VALUES.gateRelease,
-  compOutput: DEMO_VALUES.compOutput,
-  compAttack: DEMO_VALUES.compAttack,
-  compRelease: DEMO_VALUES.compRelease,
-  autoGain: true,
-  lookahead: false,
-};
-
-export const DEMO_AMBIENCE = {
-  type: 1, // Hall
-  decay: DEMO_VALUES.ambienceDecay,
-  time: DEMO_VALUES.ambienceTime,
-};
+/** Which ambience engine the demo poses as (index into AMBIENCE_ENGINES) — Hall. The gate/comp and
+ * ambience decay/time values live in DEMO_VALUES like every other parameter. */
+export const DEMO_AMBIENCE_TYPE = 1;
 
 /** Slot→name map for a populated Presets list. All names are synthetic/original. */
 export const DEMO_NAMES: Record<number, string> = {

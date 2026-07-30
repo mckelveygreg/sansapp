@@ -8,10 +8,8 @@ import { liveSetId } from "../protocol/params";
 import { buildPresetBlob } from "../protocol/buildPreset";
 import { encodePreset, withName } from "../protocol/preset";
 import { ambienceStore } from "../state/ambience";
-import { dynamicsStore } from "../state/dynamics";
 import {
-  DEMO_AMBIENCE,
-  DEMO_DYNAMICS,
+  DEMO_AMBIENCE_TYPE,
   DEMO_NAME,
   DEMO_NAMES,
   DEMO_SLOT,
@@ -21,7 +19,12 @@ import { ensureBluetoothMidi } from "./bleMidi";
 import { loadNameCache, saveNameCache } from "./nameCache";
 import { requestMIDIAccess } from "./requestAccess";
 import { listPortNames, midiIOAutodetect, midiIOFromWebMidi } from "./webMidiAdapter";
-import { bindSession, createPedalStore, type PedalController } from "../state/store";
+import {
+  applyAmbienceType,
+  bindSession,
+  createPedalStore,
+  type PedalController,
+} from "../state/store";
 
 export const pedalStore = createPedalStore();
 
@@ -123,8 +126,7 @@ export function loadDemoState(): void {
   const st = pedalStore.getState();
   st.loadPreset(DEMO_SLOT, DEMO_VALUES, DEMO_NAME);
   st.setNames({ ...st.names, ...DEMO_NAMES });
-  dynamicsStore.getState().patch(DEMO_DYNAMICS);
-  ambienceStore.getState().patch(DEMO_AMBIENCE);
+  ambienceStore.getState().patch({ type: DEMO_AMBIENCE_TYPE, typeDirty: false });
   st.setConnection("ready");
   st.pushLog("● demo state loaded (no hardware)");
 }
@@ -167,20 +169,18 @@ export async function saveCurrentTo(slot: number): Promise<void> {
   if (!session) throw new Error("Not connected");
   const st = pedalStore.getState();
   if (!st.raw) throw new Error("No preset loaded yet — connect and load a preset first");
-  const blob = buildPresetBlob(
-    st.raw,
-    st.values,
-    st.name ?? "",
-    dynamicsStore.getState(),
-    ambienceStore.getState(),
-  );
+  const amb = ambienceStore.getState();
+  // Re-bake the ambience profile ONLY if the user picked a type this session; otherwise preserve the
+  // base blob's profile bytes (a hand-tuned reverb must not be normalized back to canonical defaults).
+  const blob = buildPresetBlob(st.raw, st.values, st.name ?? "", amb.typeDirty ? amb.type : null);
   await session.writePreset(slot, blob);
   cacheName(slot, st.name ?? "");
   // Clear the dirty/baseline ("changed" ghost) ONLY when we saved to the CURRENTLY-LOADED slot — then
-  // the working sound really is the saved state. Saving the current sound to a DIFFERENT slot leaves
-  // the loaded preset's edits unsaved to ITS slot, so the dirty state must stand (otherwise the
-  // unsaved-changes guard would let the user switch away and silently lose them).
-  if (slot === st.slot) pedalStore.getState().markSaved();
+  // the working sound really is the saved state. Passing `blob` adopts it as the new base so a re-save
+  // preserves the just-written bytes (incl. a baked profile). Saving the current sound to a DIFFERENT
+  // slot leaves the loaded preset's edits unsaved to ITS slot, so the dirty state must stand (otherwise
+  // the unsaved-changes guard would let the user switch away and silently lose them).
+  if (slot === st.slot) pedalStore.getState().markSaved(blob);
   pedalStore.getState().pushLog(`💾 saved current sound → ${slot + 1}`);
 }
 
@@ -203,7 +203,9 @@ export async function renamePreset(slot: number, name: string): Promise<void> {
 export async function setAmbienceType(index: number): Promise<void> {
   const vals = AMBIENCE_BUNDLES[index];
   if (!vals) return;
-  ambienceStore.getState().patch({ type: index }); // optimistic UI, even when disconnected
+  // Optimistic (even when disconnected): mark the type dirty + push the modeled profile params
+  // (ambienceTime) into pedalStore.values so a later save captures the type the user is hearing.
+  applyAmbienceType(pedalStore, index);
   if (!session) return;
   await session.setParamsPaced(
     AMBIENCE_PROFILE_WIRES.map((wire, i) => ({ param: liveSetId(wire), value: vals[i]! & 0x7f })),

@@ -3,7 +3,9 @@ import { decode, encode } from "../src/protocol/messages";
 import { PedalModel } from "../src/device/pedalModel";
 import { DeviceSession } from "../src/device/session";
 import { createLoopback, type MidiIO } from "../src/device/transport";
-import { bindSession, createPedalStore } from "../src/state/store";
+import { AMBIENCE_BUNDLES } from "../src/protocol/ambience";
+import { ambienceStore } from "../src/state/ambience";
+import { applyAmbienceType, bindSession, createPedalStore } from "../src/state/store";
 import { angleToValue, dragToValue, toDisplay, valueToAngle } from "../src/ui/knobMath";
 
 function wireModel(io: MidiIO, model: PedalModel): void {
@@ -119,5 +121,37 @@ describe("pedal store + controller", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(store.getState().layer).toBe("primary");
     ctl.dispose();
+  });
+});
+
+describe("ambience type → store single source of truth", () => {
+  it("applyAmbienceType marks dirty + writes the modeled profile params into pedalStore.values", () => {
+    const store = createPedalStore();
+    applyAmbienceType(store, 2); // Spring — its wire-0x10 (ambienceTime) bundle value is 109
+    expect(ambienceStore.getState().type).toBe(2);
+    expect(ambienceStore.getState().typeDirty).toBe(true);
+    // ambienceTime (wire 0x10) is the one profile param that IS modeled — it lands in values + dirty,
+    // so a save captures the type the user is hearing (the old code left it stale → the "Spring saved
+    // as 51" bug).
+    expect(store.getState().values.ambienceTime).toBe(AMBIENCE_BUNDLES[2]![0]);
+    expect(store.getState().dirty).toBe(true);
+  });
+
+  it("applyAmbienceType ignores an out-of-range type", () => {
+    const store = createPedalStore();
+    applyAmbienceType(store, 99);
+    expect(store.getState().dirty).toBe(false);
+  });
+
+  it("markSaved clears dirty, adopts the written base blob, and clears the ambience typeDirty flag", () => {
+    const store = createPedalStore();
+    applyAmbienceType(store, 2); // sets dirty + typeDirty
+    expect(store.getState().dirty).toBe(true);
+    const written = new Uint8Array(256);
+    written[0] = 0x42;
+    store.getState().markSaved(written);
+    expect(store.getState().dirty).toBe(false);
+    expect(store.getState().raw).toBe(written); // saved blob becomes the base for the next save
+    expect(ambienceStore.getState().typeDirty).toBe(false);
   });
 });

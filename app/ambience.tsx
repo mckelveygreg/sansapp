@@ -1,10 +1,10 @@
 /**
  * Ambience — pick the reverb/echo TYPE and adjust its Level / Decay / Time, all in one place.
  *
- * Type selection applies a bundle of blob bytes (read the edit buffer, patch, write it back —
- * captured 2026-07-05). Deep controls are live params: Level = the AMBIANCE knob (0x08), Decay =
- * 0x11 (Reverb Decay Time), Time = 0x10 (Reverb Room Size, Echo / Echo Verb only) — wire ids taken
- * from EliteControl's ShowAmbience binary (issue #38). RN app surface.
+ * Type selection LIVE-SETS the type's 10-param profile on the pedal (no edit-buffer write) and marks
+ * it dirty so a save re-bakes it. Deep controls are live params read from pedalStore.values: Level =
+ * the AMBIANCE knob (0x08), Decay = 0x11 (Reverb Decay Time), Time = 0x10 (Reverb Room Size, Echo /
+ * Echo Verb only) — wire ids taken from EliteControl's ShowAmbience binary (issue #38). RN app surface.
  */
 import { Pressable, Text, View } from "react-native";
 import { KnobScroll } from "../src/components/KnobScroll";
@@ -23,13 +23,14 @@ const isEcho = (t: number) => AMBIENCE_ENGINES[t]?.startsWith("Echo");
 
 export default function Ambience() {
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
-  // All read from stores that are updated on recall (type via detectAmbienceType, level from the
-  // preset) — NOT from a re-read of the pedal's edit buffer, which is stale and caused the "flash to
-  // the last-set value" on preset change. Level = the main AMBIANCE knob (param 0x08).
+  // Level/Decay/Time all read from pedalStore.values (synced from the loaded preset, updated by
+  // physical-knob notifies) — NOT from a re-read of the pedal's edit buffer, which is stale and
+  // caused the "flash to the last-set value" on preset change. Level = the AMBIANCE knob (0x08),
+  // Decay = ambienceDecay (0x11), Time = ambienceTime (0x10). Only the highlighted TYPE is separate.
   const type = useStore(ambienceStore, (s) => s.type);
   const level = useStore(pedalStore, (s) => s.values.ambiance) ?? 64;
-  const decay = useStore(ambienceStore, (s) => s.decay);
-  const time = useStore(ambienceStore, (s) => s.time);
+  const decay = useStore(pedalStore, (s) => s.values.ambienceDecay) ?? 64;
+  const time = useStore(pedalStore, (s) => s.values.ambienceTime) ?? 64;
   const baseline = useStore(pedalStore, (s) => s.baseline);
 
   function selectType(i: number) {
@@ -44,11 +45,11 @@ export default function Ambience() {
   };
   const onDecay = (v: number) => {
     sendParam(AMBIENCE_PARAMS.decay, v);
-    ambienceStore.getState().patch({ decay: v });
+    pedalStore.getState().setValueLocal("ambienceDecay", v);
   };
   const onTime = (v: number) => {
     sendParam(AMBIENCE_PARAMS.time, v);
-    ambienceStore.getState().patch({ time: v });
+    pedalStore.getState().setValueLocal("ambienceTime", v);
   };
 
   return (
