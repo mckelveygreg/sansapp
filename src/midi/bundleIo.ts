@@ -89,17 +89,19 @@ export async function restoreBundle(
 }
 
 /**
- * GENERATE a custom IR from float samples and upload it to one of the pedal's 8 IR slots (7/8 are writable), live over
- * MIDI — no EliteControl, no WAV round-trip. This is the phone-side custom-IR path unlocked by
- * implementing the encoding (src/protocol/irEncode, docs/PROTOCOL.md): e.g. a brick-wall
- * high-pass cab from IR Studio goes straight onto the pedal. `samples` are the IR (≈2400, [-1,1]).
+ * GENERATE a custom IR from float samples and import it onto the pedal, live over MIDI — no
+ * EliteControl, no WAV round-trip. This is the phone-side custom-IR path unlocked by implementing the
+ * encoding (src/protocol/irEncode, docs/PROTOCOL.md): e.g. a brick-wall high-pass cab from IR Studio
+ * goes straight onto the pedal. `samples` are the IR (≈2400, [-1,1]).
  *
- * ✅ HARDWARE-VERIFIED 2026-07-15: uploaded a marker IR to slot 3 and read it straight back. The slot
- * is addressed in the upload's 5-byte header `[0x02, slot-1, 00 15 61]` (same scheme as the `05 69`
- * read selector), the packed `.dat` is followed by the 14-bit checksum trailer (see
- * {@link irWireTrailer}) the pedal validates, and `save` commits it (`0x12=7F`). We also select it
- * live (`0x0E`) so it's audible immediately. ⚠ REMAINING: makeup gain is off for real cabs (playback
- * LEVEL only — see irEncode.ts), and the pedal's IR playback sample-rate is a calibration constant.
+ * The upload is byte-faithful to EliteControl's own Import (captures/ir-save.jsonl): the IR targets
+ * the EDIT-BUFFER IR (header `[0x00, 0x7F]`), the User-IR preset address is set first, and `save`
+ * persists it (`0x12=0x7F`) — see {@link uploadIr}. ⚠ Issue #37: an earlier version wrote directly to
+ * the raw library bank (`[0x02, slot-1]`), which could brick the connect handshake until a factory
+ * reset. `slot` selects which User-IR slot (7/8) the current preset uses via its per-preset IR-mode
+ * toggle; the imported IR itself lands in the edit-buffer IR exactly as EliteControl does it.
+ * ⚠ REMAINING: makeup gain is off for real cabs (playback LEVEL only — see irEncode.ts), and the
+ * pedal's IR playback sample-rate is a calibration constant.
  */
 export async function uploadCustomIr(
   session: DeviceSession,
@@ -107,8 +109,10 @@ export async function uploadCustomIr(
   name: string,
   opts: { slot?: 7 | 8; save?: boolean; onProgress?: (done: number, total: number) => void } = {},
 ): Promise<void> {
-  const { slot = 7, save = true, onProgress } = opts;
-  // Slots 1–6 are factory — custom IRs only ever go to the user slots 7/8, at header (0x02, slot-1).
-  const frames = buildIrUpload(samples, name, [0x02, (slot - 1) & 0x7f]);
-  await uploadIr(session, frames, { activateValue: Math.min(127, slot * 16), save, onProgress });
+  const { save = true, onProgress } = opts;
+  // EliteControl's Import path: the IR goes to the edit-buffer target [0x00, 0x7F] (NOT a direct
+  // library-bank write), with the User-IR preset address set first and a SAVE after. Proven not to
+  // brick the connect handshake — see captures/ir-save.jsonl and the uploadIr header note.
+  const frames = buildIrUpload(samples, name, [0x00, 0x7f]);
+  await uploadIr(session, frames, { presetAddress: [0x00, 0x7f], save, onProgress });
 }

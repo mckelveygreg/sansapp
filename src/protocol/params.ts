@@ -92,6 +92,10 @@ export const PARAMS = {
   chorusModDepth: knob("chorusModDepth", "Chorus Mod Depth", "ambience", 0x66, 0x44, true),
   chorusDelaySize: knob("chorusDelaySize", "Chorus Delay Size", "ambience", 0x67, 0x45, true),
   chorusFeedback: knob("chorusFeedback", "Chorus Feedback", "ambience", 0x68, 0x46, true),
+  // Chorus master enable (PROTOCOL-MAP §3: idx 0x41, blob 0x63, live-set id 0x45). Store-backed so
+  // the toggle reflects the loaded preset — if a preset has chorus OFF, none of the chorus knobs are
+  // audible, which reads as "the chorus controls don't do anything" (issue #40).
+  chorusOn: knob("chorusOn", "Chorus On", "ambience", 0x63, 0x41, true),
   // Deep params now read back from presets. blobOffset = wireId + 0x22 — binary-confirmed 2026-07-15
   // two ways: EliteControl's 05 41 decode loop applies body[0x22+k] to param k for k=0x00..0x49, and
   // a 128-preset oracle places every known toggle at its predicted +0x22 offset. Previously these
@@ -105,8 +109,14 @@ export const PARAMS = {
   compRelease: knob("compRelease", "Comp Release", "dynamics", 0x3e, 0x1c, true),
   autoGain: knob("autoGain", "Auto Gain", "dynamics", 0x54, 0x32, true),
   lookahead: knob("lookahead", "Look-ahead", "dynamics", 0x55, 0x33, true),
-  ambienceDecay: knob("ambienceDecay", "Ambience Decay", "ambience", 0x37, 0x15, true),
-  ambienceTime: knob("ambienceTime", "Ambience Time", "ambience", 0x36, 0x14, true),
+  // Ambience Decay/Time — wire ids CORRECTED from EliteControl's binary (issue #38). Its ShowAmbience
+  // UI (func.1000dbae8) builds the DECAY knob on param index 0x11 (Reverb Decay Time) and the TIME knob
+  // on index 0x10 (Reverb Room Size) — the same knob constructor (func.1000a6d64) whose LEVEL knob uses
+  // index 0x08, which pins the reading. The old ids (0x15 Fbk Filter / 0x14 Fbk Delay Size) were wrong:
+  // Fbk Delay only moves the LATER echoes, so the Echo's first echo stayed fixed. Room Size drives the
+  // whole echo time. blobOffset = index + 0x22.
+  ambienceDecay: knob("ambienceDecay", "Ambience Decay", "ambience", 0x33, 0x11, true),
+  ambienceTime: knob("ambienceTime", "Ambience Time", "ambience", 0x32, 0x10, true),
   // Amp-voicing params — the "hidden" bytes an amp-model bundle sets besides Pre-Amp/Drive/Presence.
   // Exposed so the amp models become re-voiceable starting points. Ranges uncalibrated (shown raw %).
   buzz: knob("buzz", "Buzz", "preamp", 0x24, 0x02, true),
@@ -177,6 +187,7 @@ export const AUTO_FILTER_PARAMS = {
  * rest. Ranges: Mod Freq 0–6 Hz, Mod Depth/Delay Size/Level 0–100 %, Feedback −100…+100 % (bipolar).
  */
 export const CHORUS_PARAMS = {
+  on: 0x41,
   level: 0x42,
   modFreq: 0x43,
   modDepth: 0x44,
@@ -185,14 +196,17 @@ export const CHORUS_PARAMS = {
 } as const;
 
 /**
- * Deep Ambience-page paramIds. The **AMBIANCE knob (0x08) is Level**; Decay = 0x15; Time = 0x14
- * (Echo / Echo Verb only). Selecting an ambience *type* also rewrites a small block of blob offsets
- * (0x32, 0x34–0x3A, 0x5C/0x5D/0x5F); those aren't individually labelled yet (roadmap).
+ * Deep Ambience-page paramIds (iPlug indices; sendParam maps them to the live-set wire via liveSetId).
+ * The **AMBIANCE knob (0x08) is Level**; Decay = **0x11 (Reverb Decay Time)**; Time = **0x10 (Reverb
+ * Room Size)**, Echo / Echo Verb only. Decay/Time wire ids were corrected from EliteControl's binary
+ * (ShowAmbience @func.1000dbae8; DECAY→0x11, TIME→0x10) — issue #38. The old 0x15/0x14 pointed the
+ * Time knob at Fbk Delay Size (later echoes only), leaving the first echo fixed. Selecting an ambience
+ * *type* also rewrites a small block of blob offsets; those aren't all individually labelled yet.
  */
 export const AMBIENCE_PARAMS = {
   level: 0x08,
-  decay: 0x15,
-  time: 0x14,
+  decay: 0x11,
+  time: 0x10,
 } as const;
 
 /**

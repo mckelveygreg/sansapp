@@ -3,13 +3,15 @@ import { decode } from "../src/protocol/messages";
 import type { PedalMessage } from "../src/protocol/messages";
 import { uploadIr } from "../src/midi/irUpload";
 
-// Minimal fake session: records sends and auto-acks begin (05 60→05 63) and end (05 66→05 61),
-// like the real pedal. Only the surface uploadIr uses (sendRaw + onMessage).
+// Minimal fake session: records sends and auto-acks begin (05 60→05 63) and end (05 66→05 61), and
+// echoes a preset dump on the SAVE (setParam 0x12→05 41), like the real pedal. Only the surface
+// uploadIr uses (sendRaw + onMessage).
 class FakeSession {
   sent: number[][] = [];
   times: number[] = []; // wall-clock ms per send, so a test can assert the sends are gapped
   private cbs = new Set<(m: PedalMessage) => void>();
   ackEnd = true;
+  ackBegin = true;
   onMessage(cb: (m: PedalMessage) => void) {
     this.cbs.add(cb);
     return () => this.cbs.delete(cb);
@@ -21,9 +23,15 @@ class FakeSession {
     this.sent.push([...b]);
     this.times.push(Date.now());
     const sub = b[5];
-    if (sub === 0x60) queueMicrotask(() => this.emit({ kind: "writeAck", code: 0x63 }));
+    if (sub === 0x60 && this.ackBegin)
+      queueMicrotask(() => this.emit({ kind: "writeAck", code: 0x63 }));
     if (sub === 0x66 && this.ackEnd)
       queueMicrotask(() => this.emit({ kind: "writeAck", code: 0x61 }));
+    // SAVE (05 50 0A 12 7F) → the pedal echoes a preset dump.
+    if (sub === 0x50 && b[7] === 0x12)
+      queueMicrotask(() =>
+        this.emit({ kind: "presetDump", slot: 0x7f, blob: new Uint8Array(256), checksumOk: true }),
+      );
   }
 }
 
@@ -32,16 +40,40 @@ const frame = (sub: number) =>
 const upload = [frame(0x60), ...Array.from({ length: 9 }, () => frame(0x65)), frame(0x66)];
 
 describe("uploadIr", () => {
-  it("sends begin, all chunks, end in order and resolves on acks", async () => {
+  it("sets the User-IR preset address, then sends begin, all chunks, end in order", async () => {
     const s = new FakeSession();
     const seen: number[] = [];
     // biome: cast fake to the session shape uploadIr needs
     await uploadIr(s as never, upload, { chunkDelayMs: 0, onProgress: (d) => seen.push(d) });
-    expect(s.sent).toHaveLength(11);
-    expect(s.sent[0]![5]).toBe(0x60); // begin first
-    expect(s.sent.at(-1)![5]).toBe(0x66); // end last
-    expect(s.sent.slice(1, -1).every((f) => f[5] === 0x65)).toBe(true); // 9 chunks
-    expect(seen).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]); // progress 1..total
+    // 2 preset-address setParams (0x39, 0x3A) precede the 11 upload frames.
+    expect(s.sent).toHaveLength(13);
+    expect(s.sent.slice(0, 2).map((f) => decode(Uint8Array.from(f)))).toEqual([
+      { kind: "setParam", param: 0x39, value: 0x00 }, // address MSB — matches EliteControl's import
+      { kind: "setParam", param: 0x3a, value: 0x7f }, // address LSB = 0x7F (was wrongly 0 — issue #37)
+    ]);
+    const up = s.sent.slice(2);
+    expect(up[0]![5]).toBe(0x60); // begin first
+    expect(up.at(-1)![5]).toBe(0x66); // end last
+    expect(up.slice(1, -1).every((f) => f[5] === 0x65)).toBe(true); // 9 chunks
+    expect(seen).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]); // progress 1..total (upload frames)
+  });
+
+  it("skips the preset address when presetAddress is null (capture replay)", async () => {
+    const s = new FakeSession();
+    await uploadIr(s as never, upload, { chunkDelayMs: 0, presetAddress: null });
+    expect(s.sent).toHaveLength(11); // just the 11 upload frames, no 0x39/0x3A
+    expect(s.sent[0]![5]).toBe(0x60);
+  });
+
+  it("SAVE sends 05 50 0A 12 7F and resolves on the pedal's preset-dump echo", async () => {
+    const s = new FakeSession();
+    await uploadIr(s as never, upload, { chunkDelayMs: 0, save: true });
+    // last send is the SAVE commit (EliteControl's persist)
+    expect(decode(Uint8Array.from(s.sent.at(-1)!))).toEqual({
+      kind: "setParam",
+      param: 0x12,
+      value: 0x7f,
+    });
   });
 
   it("rejects if the end is never acked", async () => {
@@ -52,25 +84,36 @@ describe("uploadIr", () => {
     ).rejects.toThrow(/no ack/);
   });
 
-  it("throws on a too-short sequence", async () => {
+  it("best-effort sends the end frame on a mid-transfer failure (clean abort, issue #37)", async () => {
     const s = new FakeSession();
-    await expect(uploadIr(s as never, [frame(0x60)], {})).rejects.toThrow(/begin/);
+    s.ackBegin = false; // begin never acked → fail before the end is sent
+    await expect(
+      uploadIr(s as never, upload, { chunkDelayMs: 0, ackTimeoutMs: 20 }),
+    ).rejects.toThrow(/no ack/);
+    // The transfer must not be left half-open: an 05 66 end frame was sent to close it.
+    expect(s.sent.some((f) => f[5] === 0x66)).toBe(true);
   });
 
-  it("gaps the post-upload activate sends (IR-select + 2 gains) so BLE doesn't drop them", async () => {
+  it("throws on a too-short sequence before sending anything", async () => {
+    const s = new FakeSession();
+    await expect(uploadIr(s as never, [frame(0x60)], {})).rejects.toThrow(/begin/);
+    expect(s.sent).toHaveLength(0); // aborted pre-flight — nothing went to the pedal
+  });
+
+  it("rejects a malformed frame sequence (wrong sub-code) before sending", async () => {
+    const s = new FakeSession();
+    const bad = [frame(0x60), frame(0x51), frame(0x66)]; // middle is not a 05 65 chunk
+    await expect(uploadIr(s as never, bad, {})).rejects.toThrow(/chunk/);
+    expect(s.sent).toHaveLength(0);
+  });
+
+  it("gaps the chunk sends so BLE doesn't drop the burst", async () => {
     const s = new FakeSession();
     const GAP = 20;
-    await uploadIr(s as never, upload, { chunkDelayMs: GAP, activateValue: 48 });
-    // The 3 activate setParams follow the 11 upload frames (begin + 9 chunks + end).
-    const activate = s.sent.slice(11);
-    expect(activate).toHaveLength(3);
-    expect(activate.map((f) => decode(Uint8Array.from(f)))).toEqual([
-      { kind: "setParam", param: 0x0e, value: 48 }, // IR select
-      { kind: "setParam", param: 0x39, value: 0 }, // gain A
-      { kind: "setParam", param: 0x3a, value: 0 }, // gain B
-    ]);
-    // Consecutive activate sends are separated by ~GAP (not fired in adjacent microtasks).
-    for (let i = 12; i < s.times.length; i++) {
+    await uploadIr(s as never, upload, { chunkDelayMs: GAP, presetAddress: null });
+    // sent[0]=begin, sent[1]=chunk1 (fired right after the begin-ack, no delay), then each following
+    // send is gapped by ~GAP: chunk2..chunk9 and the end frame.
+    for (let i = 2; i < s.times.length; i++) {
       expect(s.times[i]! - s.times[i - 1]!).toBeGreaterThanOrEqual(GAP - 10);
     }
   });

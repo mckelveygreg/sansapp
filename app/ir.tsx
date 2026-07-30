@@ -528,24 +528,26 @@ export default function IrStudio() {
     try {
       setStatus(`Uploading IR to slot ${uploadSlot}…`);
       await uploadCustomIr(session, craft, irName().slice(0, 32), { slot: uploadSlot, save: true });
-      // Refresh the uploaded slot so the stack shows its new name + curve immediately.
-      const fresh = await readIrSlot(session, uploadSlot);
-      if (fresh) {
-        const samples = Float64Array.from(fresh.samples);
-        setPulled((p) => {
-          const merged = {
-            ...p,
-            [uploadSlot]: {
-              name: fresh.name || slotFallback(uploadSlot),
-              ir: samples,
-              db: curveOf(samples),
-            },
-          };
-          persist(merged); // keep the cache in sync with the newly-uploaded slot
-          return merged;
-        });
-      }
-      setStatus(`Uploaded "${irName()}" → slot ${uploadSlot} (saved & refreshed).`);
+      // Reflect the just-uploaded IR into the stack directly from the crafted samples. We do NOT
+      // read the slot back over MIDI here: the import writes the edit-buffer IR (EliteControl's
+      // path — see uploadCustomIr), so a slot read wouldn't reflect it, and a heavy read burst right
+      // after the upload is exactly the kind of BLE traffic that's flaky. Show what we sent.
+      const samples = Float64Array.from(craft);
+      setPulled((p) => {
+        const merged = {
+          ...p,
+          [uploadSlot]: {
+            name: irName().slice(0, 32) || slotFallback(uploadSlot),
+            ir: samples,
+            db: curveOf(samples),
+          },
+        };
+        persist(merged); // keep the cache in sync with the newly-uploaded IR
+        return merged;
+      });
+      setStatus(
+        `Uploaded "${irName()}" → slot ${uploadSlot} (saved). Turn on the slot ${uploadSlot} switch to use it.`,
+      );
     } catch (e) {
       setStatus(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
     }

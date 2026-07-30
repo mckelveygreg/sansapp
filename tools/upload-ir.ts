@@ -30,7 +30,7 @@ async function main() {
   console.log(`connected — state ${session.state}`);
 
   await uploadIr(session, pack.frames.map(hexToBytes), {
-    activateValue: 112, // select User IR 7 so it's the active IR after upload
+    presetAddress: null, // the captured frames are self-contained; don't inject address bytes
     save: true, // persist to non-volatile (EliteControl's SAVE)
     onProgress: (d, t) => process.stdout.write(`\r  frame ${d}/${t}`),
   });

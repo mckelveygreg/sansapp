@@ -57,19 +57,19 @@ describe("buildPresetBlob", () => {
   it("bakes the ambience type profile, then overlays decay/time on top", () => {
     const hall = AMBIENCE_BUNDLES[1]!; // [64, 8, 2, 64, 127, 64, 64, 20, 4, 127]
     const blob = buildPresetBlob(makeBase(), {}, "X", DYN, { type: 1, decay: 42, time: 77 });
-    // A non-decay/time profile byte comes straight from the Hall bundle (offset 0x32 = bundle[0]).
-    expect(blob[0x32]).toBe(hall[0]);
+    // A profile byte that ISN'T decay/time comes straight from the Hall bundle (0x34 = bundle[1]).
+    expect(blob[0x34]).toBe(hall[1]);
     expect(blob[0x5d]).toBe(hall[9]);
-    // ambienceTime (0x36) and ambienceDecay (0x37) override the bundle with the store values.
+    // ambienceTime (0x32 = Room Size) and ambienceDecay (0x33 = Decay Time) override with store values.
     expect(blob[PARAMS.ambienceTime.blobOffset]).toBe(77);
     expect(blob[PARAMS.ambienceDecay.blobOffset]).toBe(42);
   });
 
   it("leaves the base ambience profile alone for a custom type (-1)", () => {
     const base = makeBase();
-    base[0x32] = 111; // a custom profile byte
+    base[0x34] = 111; // a custom profile byte (0x34 isn't overlaid by decay/time)
     const blob = buildPresetBlob(base, {}, "X", DYN, { type: -1, decay: 5, time: 6 });
-    expect(blob[0x32]).toBe(111); // not baked over
+    expect(blob[0x34]).toBe(111); // not baked over
   });
 
   it("round-trips: decoding the built blob yields the edited values", () => {
