@@ -216,10 +216,9 @@ export async function renamePreset(slot: number, name: string): Promise<void> {
 
 /**
  * Switch the ambience type (Room…Echo Verb, index into AMBIENCE_ENGINES). Like EliteControl, we
- * LIVE-SET the type's 10 profile params (05 50 each) — no edit-buffer write, no commit. This is what
- * actually sticks; the old blob-write approach was silently discarded by the pedal. The 10 sends are
- * PACED (setParamsPaced) so BLE doesn't silently drop the burst — the same reason connect() gaps its
- * fire-and-forget sends; firing them back-to-back lost most of the profile on the wire.
+ * LIVE-SET the type's 10 profile params (05 50 each) — no edit-buffer write, no commit; a blob write
+ * to 0x7F doesn't stick. The 10 sends are PACED (setParamsPaced) so BLE doesn't silently drop the
+ * burst — the same reason connect() gaps its fire-and-forget sends.
  */
 export async function setAmbienceType(index: number): Promise<void> {
   const vals = AMBIENCE_BUNDLES[index];

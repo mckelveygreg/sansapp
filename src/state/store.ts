@@ -111,7 +111,7 @@ export interface PedalController {
 
 /**
  * Detect and set the ambience TYPE from a decoded preset, and clear typeDirty — the gate/comp/ambience
- * PARAMETERS all read back from pedalStore.values automatically now (their ghost/baseline comes from
+ * PARAMETERS all read back from pedalStore.values automatically (their ghost/baseline comes from
  * the pedal store), so the only non-parameter state to sync is the highlighted engine.
  */
 function syncAmbienceType(preset: Preset): void {
@@ -143,7 +143,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
   // Re-read the pedal's current preset into the store WITHOUT changing the pedal — used on connect
   // and whenever the pedal changes preset on its own (below).
   const loadCurrent = async (): Promise<Preset> => {
-    // There is NO live "edit buffer" — 0x7F is just program 127 (binary-confirmed via EliteControl RE).
+    // There is NO live "edit buffer" — 0x7F is just program 127 (confirmed by observing EliteControl).
     // The current sound = the pedal's ACTIVE program, whose slot is byte 0 of settings block 0. Read
     // THAT program for its values, name, AND base blob (stashed for save-from-state). Only if the slot
     // is unknown (settings read failed) do we fall back to a raw 0x7F read.
@@ -189,9 +189,9 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
       });
     }),
     session.onParamNotify((e) => {
-      // The red "shift" footswitch reports as a 0x4d notify — same raw id as High-EQ Freq. Never
-      // treat that notify as a knob change (High Freq is set-only; it never legitimately notifies),
-      // or a red-button press would jog the High-Freq value.
+      // The red "shift" footswitch reports as a 0x4d notify. 0x4d is High Freq's live-set id, never
+      // its notify id (High Freq notifies on 0x49), so a 0x4d notify is always the footswitch — never
+      // a knob change; route it to the layer, not noteExternal.
       if (e.paramId && e.param !== KNOB_LAYER_NOTIFY_PARAM) {
         store.getState().noteExternal(e.paramId, e.value);
       }

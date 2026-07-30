@@ -23,12 +23,12 @@ describe("param registry", () => {
       preamp: 0x01,
       freq: 0x0d, // parametric Mid Filter freq (Mid Shift)
       ambiance: 0x08,
-      ratio: 0x19, // comp ratio, corrected from 0x1d (Expander) → 0x19 (Compressor block)
-      // Deep-param wire ids corrected −4 from the parameter-map + hardware confirmation (2026-07-14). See ELITECONTROL-RE.md.
-      filter: 0x3d, // was 0x41
-      q: 0x2f, // mid Q, was 0x33
-      chorus: 0x42, // was 0x46
-      blend: 0x47, // was 0x4b
+      ratio: 0x19, // comp ratio (Compressor block)
+      // Deep-param wire ids, confirmed against the parameter map + hardware. See docs/PARAM-MAP.md.
+      filter: 0x3d,
+      q: 0x2f, // mid Q
+      chorus: 0x42,
+      blend: 0x47,
     };
     for (const [id, pid] of Object.entries(expected)) {
       expect(PARAMS[id as keyof typeof PARAMS].paramId).toBe(pid);
@@ -83,8 +83,8 @@ describe("param registry", () => {
   });
 
   it("chorus wire ids match PROTOCOL-MAP §3 (issue #40 — verified, not mismapped)", () => {
-    // Authoritative binary RE: On 0x41, Level 0x42, Mod Freq 0x43, Mod Depth 0x44, Delay Size 0x45,
-    // Feedback 0x46 — each a deep param whose live-SET id = index + 4.
+    // Derived from observing EliteControl: On 0x41, Level 0x42, Mod Freq 0x43, Mod Depth 0x44, Delay
+    // Size 0x45, Feedback 0x46 — each a deep param whose live-SET id = index + 4.
     expect(CHORUS_PARAMS).toEqual({
       on: 0x41,
       level: 0x42,
@@ -100,10 +100,10 @@ describe("param registry", () => {
     ]);
   });
 
-  it("ambience Decay/Time map to Reverb Decay Time / Room Size (issue #38, EliteControl binary)", () => {
-    // EliteControl's ShowAmbience (func.1000dbae8) builds DECAY on index 0x11 (Reverb Decay Time) and
-    // TIME on index 0x10 (Reverb Room Size) — same knob constructor whose LEVEL knob uses index 0x08.
-    // The old 0x15 (Fbk Filter) / 0x14 (Fbk Delay Size) pointed Time at the feedback repeats only.
+  it("ambience Decay/Time map to Reverb Decay Time / Room Size (issue #38, from observing EliteControl)", () => {
+    // EliteControl's ShowAmbience page builds DECAY on index 0x11 (Reverb Decay Time) and TIME on
+    // index 0x10 (Reverb Room Size) — same knob constructor whose LEVEL knob uses index 0x08. The
+    // nearby 0x14 (Fbk Delay Size) only moves the feedback repeats, so it isn't the Time control.
     expect(AMBIENCE_PARAMS).toEqual({ level: 0x08, decay: 0x11, time: 0x10 });
     expect([PARAMS.ambienceDecay.paramId, PARAMS.ambienceTime.paramId]).toEqual([0x11, 0x10]);
     expect([PARAMS.ambienceDecay.blobOffset, PARAMS.ambienceTime.blobOffset]).toEqual([0x33, 0x32]);
@@ -111,10 +111,10 @@ describe("param registry", () => {
     expect([liveSetId(0x11), liveSetId(0x10)]).toEqual([0x15, 0x14]);
   });
 
-  it("auto-filter maps to the 4 real params (issue #41, EliteControl constructor func.1000b8f88)", () => {
-    // Binary-confirmed via GetParam(idx)->InitParam (offset/8 = index; Room Size = 0x10 validates it):
-    // 0x3c enable (default 0, range 0..1 — a real toggle), 0x3d Level (default 64, 0..127, BIPOLAR
-    // Bypass at 64), 0x3e AF Attack, 0x3f AF Release. No cutoff/resonance param exists.
+  it("auto-filter maps to the 4 real params (issue #41, from observing EliteControl)", () => {
+    // Observed in EliteControl (Room Size = 0x10 validates the indexing): 0x3c enable (default 0,
+    // range 0..1 — a real toggle), 0x3d Level (default 64, 0..127, BIPOLAR Bypass at 64), 0x3e AF
+    // Attack, 0x3f AF Release. No cutoff/resonance param exists.
     expect(PARAMS.autoFilterOn.paramId).toBe(0x3c);
     expect(AUTO_FILTER_PARAMS).toEqual({ level: 0x3d, attack: 0x3e, release: 0x3f });
     expect([

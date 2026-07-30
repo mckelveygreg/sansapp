@@ -174,8 +174,9 @@ export class DeviceSession {
       await this.delay(this.sendGapMs);
       this.send({ kind: "control", code: 0x5b });
       // Deliberately send NOTHING else. An earlier build sent `setParam 0x13 = 1` on a hypothesis it
-      // was "Live Edit Mode" — but 0x13 is the Reverb Extension Factor (docs/PROTOCOL.md), so that
-      // write silently changed a reverb setting (and possibly toggled a mode) on every connect.
+      // was "Live Edit Mode" — but in the set/command space 0x13 is a reserved command id, not a
+      // parameter write (the Reverb Extension Factor sets on 0x17), so that emitted a stray command
+      // on every connect.
       this.setState("ready");
     } catch (e) {
       this.setState("disconnected");
@@ -183,7 +184,8 @@ export class DeviceSession {
     }
   }
 
-  /** Read a stored preset (or the edit buffer, slot 0x7F) without changing the active one. */
+  /** Read a stored preset (or slot 0x7F = program 127, which doesn't track live edits) without
+   * changing the active one. */
   async readPreset(slot: number): Promise<Preset> {
     // Require checksumOk: a corrupted dump must NOT resolve the read. Worst case a corrupt 256-byte
     // block is decoded, one byte flipped, and the WHOLE block written back — the config-block brick.
@@ -389,7 +391,7 @@ export class DeviceSession {
     this.onSendFailure();
   }
 
-  /** Read the live edit buffer. */
+  /** Read slot 0x7F (program 127; does not track live edits). */
   readEditBuffer(): Promise<Preset> {
     return this.readPreset(EDIT_BUFFER_SLOT);
   }

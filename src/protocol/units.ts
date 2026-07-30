@@ -10,6 +10,8 @@ const lin = (r: number, lo: number, hi: number): number => lo + (r / 127) * (hi 
 const logMap = (r: number, lo: number, hi: number): number => lo * (hi / lo) ** (r / 127);
 
 /* ── Compressor ─────────────────────────────────────────────────────────────── */
+// Endpoints below are screenshot-calibrated; the protocol map disagrees on Ratio (16:1) and Release
+// (50–5000 ms) — pending re-verification against the pedal.
 // Threshold: knob fully down (raw 0) reads "Bypass"; raw 1 = −0.5 dB … raw 127 = −60.0 dB (linear).
 export const compThresholdDb = (r: number): number | null =>
   r <= 0 ? null : -0.5 + ((r - 1) / 126) * (-60 - -0.5);
@@ -23,10 +25,8 @@ export const compAttackMs = (r: number): number => logMap(r, 1, 100); // 1 … 1
 export const compReleaseMs = (r: number): number => logMap(r, 10, 1000); // 10 … 1000 ms (log)
 
 /* ── Gate (noise gate, on the Dynamics page) ─────────────────────────────────── */
-// Captured 2026-07-08: Threshold raw 0 = Bypass, then ≈−90…−30 dB (−30 max + Bypass floor confirmed
-// from the min/max screenshots; low end estimated). Ratio 1–10:1 linear; Release 10–1000 ms log.
-// Bypass at raw 0, then ≈ −99 … −30 dB (EliteControl min/mid/max read-outs 2026-07-14: raw≈64 → −64.5,
-// max → −30; the low end is extrapolated from those anchors).
+// Threshold: Bypass at raw 0, then ≈ −99 … −30 dB (EliteControl min/mid/max read-outs 2026-07-14:
+// raw≈64 → −64.5, max → −30; the low end is extrapolated from those anchors).
 export const gateThresholdDb = (r: number): number | null => (r <= 0 ? null : lin(r, -99, -30));
 export const gateThresholdLabel = (r: number): string => {
   const db = gateThresholdDb(r);

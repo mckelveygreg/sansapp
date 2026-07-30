@@ -26,7 +26,11 @@ const BEGIN_ACK = 0x63; // pedal acks 05 60 begin with 05 63 00 F7
 const END_ACK = 0x61; //   pedal acks 05 66 end   with 05 61 F7
 const IR_ADDR_MSB = 0x39; // User-IR preset address MSB — EliteControl sets this before the upload
 const IR_ADDR_LSB = 0x3a; // User-IR preset address LSB
-const SAVE_COMMIT = 0x12; // setParam 0x12 = 0x7f = EliteControl's SAVE (pedal echoes a preset dump)
+// SAVE = EliteControl's IR-import commit, byte-faithful to a captured import: setParam 0x12 = 0x7F,
+// after which the pedal echoes a preset dump. This conflicts with the numbered-slot path, where
+// PROTOCOL-MAP §1 says 0x12=0x7F saves-to-program-128 (writePreset rejects it); the IR-import use
+// appears to be an exception. On-device check pending.
+const SAVE_COMMIT = 0x12;
 const SAVE_VALUE = 0x7f;
 // Re-send the SAVE this many times, each awaiting the `05 41` echo, before giving up — mirrors
 // DeviceSession.writePreset's commit loop. A silently-dropped SAVE over BLE means the IR is gone on

@@ -4,7 +4,7 @@
  * Type selection LIVE-SETS the type's 10-param profile on the pedal (no edit-buffer write) and marks
  * it dirty so a save re-bakes it. Deep controls are live params read from pedalStore.values: Level =
  * the AMBIANCE knob (0x08), Decay = 0x11 (Reverb Decay Time), Time = 0x10 (Reverb Room Size, Echo /
- * Echo Verb only) — wire ids taken from EliteControl's ShowAmbience binary (issue #38). RN app surface.
+ * Echo Verb only) — wire ids derived from observing EliteControl (issue #38). RN app surface.
  */
 import { Pressable, Text, View } from "react-native";
 import { KnobScroll } from "../src/components/KnobScroll";

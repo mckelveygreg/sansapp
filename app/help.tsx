@@ -4,12 +4,21 @@
  */
 import { ScrollView, Text, View } from "react-native";
 import { radius, theme } from "../src/components/theme";
+import { FEATURES } from "../src/config/features";
 
 /** A guide section. Lines beginning with "- " render as bullets; others as paragraphs. */
 interface Section {
   title: string;
   lines: string[];
 }
+
+// In-progress, personal feature gated off in the public app (same flag the Recipes route uses).
+const RECIPES_SECTION: Section = {
+  title: "5 · Recipes",
+  lines: [
+    "The Recipes page has curated starting points for specific songs and sounds, mapped to this pedal's controls. Tap Apply to load one into the live edit buffer, then tune by ear and Save it if you like it.",
+  ],
+};
 
 const GUIDE: Section[] = [
   {
@@ -26,7 +35,7 @@ const GUIDE: Section[] = [
   {
     title: "2 · Edit your tone",
     lines: [
-      "The Editor is the pedal's front panel on your phone: drag a knob up/down to change it. The deep pages (Amp, EQ, Comp, Gate, Auto Filter, Ambience, Chorus) hold the rest.",
+      "The Editor is the pedal's front panel on your phone: drag a knob up/down to change it. The deep pages (Amp, EQ, Dynamics, Auto Filter, Ambience, Chorus, IR Studio) hold the rest.",
       "Edits are live — they change the pedal's current sound (its edit buffer), not any saved preset, until you Save. So tweak freely; nothing is overwritten until you choose a slot.",
       "A knob that's moved off its preset glows amber with a tick marking the preset value — long-press it to snap back to the preset.",
     ],
@@ -47,12 +56,7 @@ const GUIDE: Section[] = [
       "Backup & Restore exports every preset to a single file you can keep or share with another player; restoring writes them back to the pedal.",
     ],
   },
-  {
-    title: "5 · Recipes",
-    lines: [
-      "The Recipes page has curated starting points for specific songs and sounds, mapped to this pedal's controls. Tap Apply to load one into the live edit buffer, then tune by ear and Save it if you like it.",
-    ],
-  },
+  ...(FEATURES.recipes ? [RECIPES_SECTION] : []),
   {
     title: "Troubleshooting",
     lines: [

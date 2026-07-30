@@ -43,7 +43,7 @@ describe("DeviceSession ↔ PedalModel", () => {
     const blob = new Uint8Array(256);
     blob[0] = 0x01;
     blob[0x27] = 0x42;
-    await session.writePreset(3, blob); // resolves only when the ack arrives
+    await session.writePreset(3, blob); // resolves only after the stage ack + the save-echo commit
     expect(model.presets[3]![0x27]).toBe(0x42);
   });
 

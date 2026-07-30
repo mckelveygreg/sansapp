@@ -1,9 +1,9 @@
 /**
  * Recipes — a tone cookbook: curated dial-in starting points for specific songs/sounds, mapped to
  * this pedal's own controls. Meant to be read on the phone at the studio — get close with these,
- * then tune by ear. Each recipe has an "Apply to pedal" button that writes the settings live to the
- * edit buffer (it does NOT overwrite any saved slot until you Save). Settings whose control can't be
- * set over MIDI yet (e.g. the Ambience *type* selector) are listed as "set by hand". RN app surface.
+ * then tune by ear. Each recipe has an "Apply to pedal" button that live-sets the settings onto the
+ * pedal's current sound (it does NOT overwrite any saved slot until you Save). A few settings with
+ * no MIDI-addressable control are listed as "set by hand". RN app surface.
  */
 import { Redirect } from "expo-router";
 import { useState } from "react";
@@ -33,7 +33,7 @@ interface Setting {
   value: string;
   /** Present when this control can be pushed to the pedal live; absent → "set by hand". */
   apply?: Apply;
-  /** Ambience engine to select (index into AMBIENCE_ENGINES) — applied via an edit-buffer write. */
+  /** Ambience engine to select (index into AMBIENCE_ENGINES) — applied via setAmbienceType (live-set). */
   applyEngine?: number;
 }
 interface Section {
@@ -50,9 +50,8 @@ interface Recipe {
 }
 
 // Raw wire param ids (the `05 50 0A <param> <val>` byte) used by these recipes. DERIVED from the
-// single source of truth in params.ts — do NOT hardcode (an earlier hardcoded copy carried the
-// pre-fix +4 deep-param ids, so recipes sent Auto Filter / Chorus / Blend to the WRONG params;
-// corrected 2026-07-14 with the wire-id fix, see docs/ELITECONTROL-RE.md).
+// single source of truth in params.ts — do NOT hardcode; a hardcoded copy would drift from the
+// registry. See docs/PARAM-MAP.md.
 const wire = (id: ParamId) => PARAMS[id].paramId!;
 const P = {
   presence: wire("presence"), // 0x04
@@ -60,17 +59,17 @@ const P = {
   low: wire("low"), // 0x06
   high: wire("high"), // 0x07
   mid: wire("mid"), // 0x0c
-  blend: wire("blend"), // 0x47 (was hardcoded 0x4b)
+  blend: wire("blend"), // 0x47
   ambienceLevel: AMBIENCE_PARAMS.level, // 0x08
   ambienceTime: AMBIENCE_PARAMS.time, // 0x10 (Reverb Room Size)
   ambienceDecay: AMBIENCE_PARAMS.decay, // 0x11 (Reverb Decay Time)
-  filterLevel: AUTO_FILTER_PARAMS.level, // 0x3d (was 0x41)
-  filterAttack: AUTO_FILTER_PARAMS.attack, // 0x3e (was 0x42)
-  filterRelease: AUTO_FILTER_PARAMS.release, // 0x3f (was 0x43)
-  chorusLevel: CHORUS_PARAMS.level, // 0x42 (was 0x46)
-  chorusModFreq: CHORUS_PARAMS.modFreq, // 0x43 (was 0x47)
-  chorusModDepth: CHORUS_PARAMS.modDepth, // 0x44 (was 0x48)
-  chorusFeedback: CHORUS_PARAMS.feedback, // 0x46 (was 0x4a)
+  filterLevel: AUTO_FILTER_PARAMS.level, // 0x3d
+  filterAttack: AUTO_FILTER_PARAMS.attack, // 0x3e
+  filterRelease: AUTO_FILTER_PARAMS.release, // 0x3f
+  chorusLevel: CHORUS_PARAMS.level, // 0x42
+  chorusModFreq: CHORUS_PARAMS.modFreq, // 0x43
+  chorusModDepth: CHORUS_PARAMS.modDepth, // 0x44
+  chorusFeedback: CHORUS_PARAMS.feedback, // 0x46
 } as const;
 
 const RECIPES: Recipe[] = [
@@ -255,7 +254,7 @@ function RecipesScreen() {
                 return;
               }
               // A recipe applies onto the CURRENT sound. There is no live edit buffer to pre-flight —
-              // 0x7F is just program 127 (binary-confirmed), so the old readEditBuffer() pulled the
+              // 0x7F is just program 127 (confirmed), so the old readEditBuffer() pulled the
               // wrong preset and added a flaky heavy BLE read. Require a loaded preset from the store
               // instead (the same snapshot save/amp use).
               if (!pedalStore.getState().raw) {
@@ -265,10 +264,10 @@ function RecipesScreen() {
                 });
                 return;
               }
-              // Engine changes rewrite the edit buffer, so they must run BEFORE the setParams (which
-              // aren't reflected in an edit-buffer read-back and would otherwise be clobbered). Await
-              // each so the engine's own paced profile sends finish before the params (also removes
-              // the old fire-and-forget race).
+              // Apply engine changes BEFORE the params: selecting a type live-sets the engine's full
+              // 10-param profile, which overlaps some recipe params (ambience Level/Time/Decay). Run
+              // the engine first so the recipe's own values land last and win. Await each so its paced
+              // profile sends finish before the params (no fire-and-forget race).
               let engineFailed = false;
               for (const s of engines) {
                 try {

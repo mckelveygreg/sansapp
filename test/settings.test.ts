@@ -75,8 +75,8 @@ describe("special functions decode the captured block", () => {
   });
 
   it("confirmed 2026-07-07 offsets read from the block", () => {
-    // MIDI Thru (offset 2) and Preset Protection (offset 9) were relabeled after a clean
-    // single-toggle capture (they were mislabeled "Safe Level Mode" / "MIDI CC Mode").
+    // MIDI Thru is offset 2 and Preset Protection offset 9 (confirmed by a clean single-toggle
+    // capture, 2026-07-07).
     expect(byId("midiThru").offset).toBe(2);
     expect(isSettingOn(BLOCK0, byId("midiThru").offset)).toBe(true);
     expect(byId("presetProtection").offset).toBe(9);

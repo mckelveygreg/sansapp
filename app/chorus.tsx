@@ -1,7 +1,7 @@
 /**
- * Chorus — the pedal's chorus effect, LIVE over MIDI. Params (wire ids corrected 2026-07-14):
- * Level 0x42, Mod Freq 0x43, Mod Depth 0x44, Delay Size 0x45, Feedback 0x46 (CHORUS_PARAMS); their preset
- * blob offsets were recovered (chorus block 0x64–0x68), so all five read live from the store and
+ * Chorus — the pedal's chorus effect, LIVE over MIDI. Params: Level 0x42, Mod Freq 0x43, Mod Depth
+ * 0x44, Delay Size 0x45, Feedback 0x46 (CHORUS_PARAMS); their preset blob offsets were recovered
+ * (chorus block 0x64–0x68), so all five read live from the store and
  * reflect the loaded preset. Ranges from EliteControl's readouts: Mod Freq 0–6 Hz, Depth/Delay/Level
  * 0–100 %, Feedback −100…+100 %. Adjusting a knob sends it to the pedal + updates the store.
  */

@@ -9,11 +9,12 @@ import { SYSEX_PREFIX } from "../protocol/constants";
 import { type DecodedIr, decodeIrStream } from "../protocol/irEncode";
 
 /**
- * `(a, b)` selector for each IR slot (1-indexed). **HARDWARE-CONFIRMED 2026-07-15**: the pedal has
- * **8 IR slots at bank `a=0x02`, `b=0..7`**. Slots **1–6 are FACTORY** cabs; slots **7–8 are the USER
- * import slots** (they read empty until you upload — verified by writing markers to (0x02,0x06/0x07)).
- * The slots are a GLOBAL library (a marker written to slot 3 survived a preset change); it's the
- * per-preset `0x0E` selection that picks which one a preset uses. Custom IRs must only go to 7/8.
+ * `(a, b)` selector for each IR slot (1-indexed). Hardware-confirmed 2026-07-15: the pedal has 8 IR
+ * slots at bank `a=0x02`, `b=0..7`. Slots 1–6 are FACTORY cabs; 7–8 are the USER-pair slots (each
+ * pairs a factory cab with a user IR, selected per-preset by the IR Mode toggle). The slots are a
+ * GLOBAL library (a marker written to slot 3 survived a preset change); the per-preset `0x0E`
+ * selection picks which cab a preset uses. Reading the bank (here) is safe; never WRITE it directly
+ * from the app — uploads go through the edit-buffer import (see irUpload.ts / issue #37).
  */
 export const IR_READ_AB: Record<number, [number, number]> = {
   1: [0x02, 0x00],

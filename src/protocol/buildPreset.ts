@@ -1,6 +1,6 @@
 /**
  * Build the 256-byte preset blob for the CURRENT sound from the app's OWN state — the way EliteControl
- * does it (serialize its in-memory model), NOT by reading the pedal's 0x7F. Binary RE (EliteControl)
+ * does it (serialize its in-memory model), NOT by reading the pedal's 0x7F. Observing EliteControl
  * confirmed the pedal has no live "edit buffer": 0x7F is just program 127, so reading it to "save the
  * current sound" grabs the wrong preset (this was the "patch 128 landed in slot 1" bug). Instead we
  * overlay the app's modeled param values onto a base blob (the last-loaded preset's raw), preserving

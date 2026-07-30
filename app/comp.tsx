@@ -1,7 +1,7 @@
 /**
  * Compressor — the deep compressor page, LIVE: each control sends its captured param over MIDI
  * (Threshold = the COMP knob 0x0A; Ratio/Output/Attack/Release = 0x19–0x1c; Auto Gain/Lookahead =
- * 0x32/0x33 — wire ids corrected 2026-07-14). Every control reads from pedalStore.values (the single
+ * 0x32/0x33). Every control reads from pedalStore.values (the single
  * source of truth), so physical-knob notifies and preset recalls update the page live. The dynamics
  * graph, shared with the Gate section on this page, is drawn from those same values: the compressor is
  * the upper-right (right dot = threshold, angle = ratio); the gate is the lower-left. RN app surface.

@@ -1,13 +1,13 @@
 /**
- * Ambience type = a profile of 10 params. Binary RE (2026-07-15) of EliteControl: picking an
- * ambience type LIVE-SETS these 10 params (`05 50`) from a per-type table — it does NOT write the
+ * Ambience type = a profile of 10 params. Derived from observing EliteControl (2026-07-15): picking
+ * an ambience type LIVE-SETS these 10 params (`05 50`) from a per-type table — it does NOT write the
  * edit buffer, does NOT commit, and does NOT touch "Reverb Mode" (0x39). The 7 types (Room…Echo Verb)
  * are all this same mechanism; 0x13 "Reverb Extension Factor" (2–5) is the coarse family selector and
  * the other 9 params differentiate within it. Values below are index-aligned to AMBIENCE_ENGINES and
  * exactly match EliteControl's profile table. Framework-free.
  *
- * (The earlier edit-buffer-write approach never stuck — the pedal discards 0x7F writes — and it also
- * wrongly set blob 0x5E, which is the AUTO-FILTER ENABLE, not an "ambience engaged" flag.)
+ * A blob write to the edit buffer (0x7F) would not stick — the pedal discards 0x7F writes — which is
+ * why the type is applied by live-set rather than a buffer patch.
  */
 
 /** The 10 param WIRE indices an ambience type live-sets (set-id = index+4 via liveSetId). */
