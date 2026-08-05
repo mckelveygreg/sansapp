@@ -14,7 +14,7 @@ export const theme = {
 
 /**
  * Tone-domain color language — one stable hue per tone domain, shared by every response graph
- * (home EqCurve, the EQ page, the Amp Voice Print, the auto-filter page, the IR/cab page) and by
+ * (the home Tone Shaper, the EQ page, the Amp Voice Print, the auto-filter page, the IR/cab page) and by
  * any combined view that overlays them. This map is the single source of truth: graphs read their
  * curve colors from here, never from a local literal, so a hue means the same domain on every page.
  * Hues are CVD-checked as a set against `theme.bg` (all pairs ΔE ≥ 8 under protan/deutan

@@ -1,0 +1,170 @@
+/**
+ * ToneShaper — the combined tone view: drive + EQ + cab on one log-frequency axis, replacing the
+ * editor's old EQ-only glance graph. The master line is the summed drive + EQ response from the
+ * pedal's own filter model (src/dsp/tone.ts) — exact, absolute dB; each stage is a toggleable
+ * overlay in its shared tone color (theme.toneColors). The cab overlays the active pulled IR's
+ * shape but is never summed into the master: its curve is relative dB on a nominal rate, unlike
+ * the exact model curves. Editing stays on the per-effect pages — this is the glance/compare
+ * view. Deliberately NOT the whole signal path: the auto-filter is envelope-driven and Comp/Gate
+ * are dynamics, so a static curve can't represent them. RN app surface.
+ */
+import { useEffect, useMemo, useState } from "react";
+import { Pressable, Text, View } from "react-native";
+import { logGrid } from "../dsp/ir";
+import { cabCurveDb, cabResponseAt, toneResponse } from "../dsp/tone";
+import { loadIrCache } from "../midi/irCache";
+import type { ParamId } from "../protocol/params";
+import { fitDbWindow } from "../ui/graphWindow";
+import type { IrCurve } from "./IrGraph";
+import { IrGraph } from "./IrGraph";
+import { mixHex, radius, theme, toneColors } from "./theme";
+
+const GRID = logGrid(30, 18000, 140);
+const FLAT_DB: readonly number[] = GRID.map(() => 0);
+const PAD = 8;
+
+function LegendChip({
+  label,
+  color,
+  on,
+  onPress,
+}: {
+  label: string;
+  color: string;
+  on: boolean;
+  onPress?: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: on ? color : theme.panelEdge,
+        opacity: on ? 1 : 0.55,
+      }}
+    >
+      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
+      <Text style={{ color: on ? theme.text : theme.textDim, fontSize: 11 }}>{label}</Text>
+    </Pressable>
+  );
+}
+
+export function ToneShaper({ values }: { values: Readonly<Partial<Record<ParamId, number>>> }) {
+  const [boxW, setBoxW] = useState(0);
+  const [show, setShow] = useState({ eq: true, drive: true, cab: true });
+  const [cabDb, setCabDb] = useState<Record<number, number[]>>({});
+
+  // The cab curves come from the IR page's persisted pull cache — nothing is read off the pedal
+  // here. No cache yet (or web) just means the cab overlay reads "not pulled".
+  useEffect(() => {
+    void loadIrCache().then((cached) => {
+      if (!cached) return;
+      const next: Record<number, number[]> = {};
+      for (const [pos, s] of Object.entries(cached)) {
+        next[Number(pos)] = cabCurveDb(s.samples, GRID);
+      }
+      setCabDb(next);
+    });
+  }, []);
+
+  const v = (id: ParamId) => values[id] ?? 64;
+  const { eq, drive, master } = useMemo(
+    () =>
+      toneResponse(
+        {
+          low: v("low"),
+          mid: v("mid"),
+          high: v("high"),
+          freq: v("freq"),
+          q: v("q"),
+          lowFreq: v("lowFreq"),
+          lowQ: v("lowQ"),
+          highFreq: v("highFreq"),
+          highQ: v("highQ"),
+          buzz: v("buzz"),
+          buzzQ: v("buzzQ"),
+          punch: v("punch"),
+          punchFreq: v("punchFreq"),
+          punchQ: v("punchQ"),
+          presence: v("presence"),
+          crunchQ: v("crunchQ"),
+        },
+        GRID,
+      ),
+    [values],
+  );
+
+  // The active cab at the preset's IR position, from the pulled curves — same gating as the IR
+  // page: a user slot (7/8) with its IR Mode off plays the factory cab, whose curve we can't read.
+  const morph = values.irBlend ?? 0;
+  const cab = useMemo(() => {
+    const dbAt = (pos: number): readonly number[] | null => {
+      const modeOn =
+        pos === 7 ? (values.irMode7 ?? 0) > 0 : pos === 8 ? (values.irMode8 ?? 0) > 0 : true;
+      return modeOn ? (cabDb[pos] ?? null) : null;
+    };
+    return cabResponseAt(morph, dbAt, FLAT_DB);
+  }, [morph, cabDb, values.irMode7, values.irMode8]);
+
+  // The dB window fits the exact model curves only. The cab overlay is excluded on purpose — its
+  // HF rolloff dives past any useful scale (it clamps at the floor, like on the IR page).
+  const { dbTop, dbBot } = fitDbWindow([master, eq, drive], 15, -15);
+
+  const driveColor = mixHex(toneColors.drive.from, toneColors.drive.to, v("presence") / 127);
+  const curves: IrCurve[] = [
+    ...(show.cab && cab ? [{ db: cab, color: toneColors.cab, width: 1.6, opacity: 0.7 }] : []),
+    ...(show.eq ? [{ db: eq, color: toneColors.eq, width: 1.6, opacity: 0.7 }] : []),
+    ...(show.drive ? [{ db: drive, color: driveColor, width: 1.6, opacity: 0.7 }] : []),
+    { db: master, color: theme.text, width: 2.6 },
+  ];
+
+  const cabUnknown = morph > 0 && !cab;
+  const toggle = (key: "eq" | "drive" | "cab") => () => setShow((s) => ({ ...s, [key]: !s[key] }));
+
+  return (
+    <View style={{ gap: 10 }}>
+      <View
+        onLayout={(e) => setBoxW(e.nativeEvent.layout.width)}
+        style={{
+          backgroundColor: theme.bg,
+          borderColor: theme.panelEdge,
+          borderWidth: 1,
+          borderRadius: radius,
+          padding: PAD,
+        }}
+      >
+        {boxW > 0 ? (
+          <IrGraph
+            grid={GRID}
+            curves={curves}
+            width={boxW - PAD * 2 - 2}
+            height={150}
+            dbTop={dbTop}
+            dbBot={dbBot}
+          />
+        ) : null}
+      </View>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <LegendChip label="Master" color={theme.text} on />
+        <LegendChip label="EQ" color={toneColors.eq} on={show.eq} onPress={toggle("eq")} />
+        <LegendChip label="Drive" color={driveColor} on={show.drive} onPress={toggle("drive")} />
+        <LegendChip label="Cab" color={toneColors.cab} on={show.cab} onPress={toggle("cab")} />
+      </View>
+      <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
+        {cabUnknown
+          ? "The active cab's curve isn't pulled yet — open the IR Studio and Pull from pedal to see its shape here. "
+          : ""}
+        Master sums the drive voicing + EQ — the pedal's static tone stages, from its own filter
+        model. The cab overlays its own relative shape (not summed), and the envelope-driven filter
+        and dynamics aren&apos;t static curves, so they aren&apos;t drawn.
+      </Text>
+    </View>
+  );
+}
