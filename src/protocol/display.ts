@@ -1,12 +1,14 @@
 /**
  * Human-readable knob readouts for the generic KnobPanel (editor + Red Zone). Uses the calibrated
- * formatters in units.ts where we have them — EQ gain (dB), the parametric Mid's Freq/Q, the
- * compressor Ratio, and the Auto-Filter's centre "Bypass" detent — and falls back to a raw percent
- * for the controls whose taper isn't calibrated yet. Framework-free; display-only (the wire value is
- * always the raw 0–127 byte). Deep pages format their own params directly against units.ts.
+ * laws where we have them — EQ gain (dB) and the Mid Freq sweep from units.ts, the Mid Q from the
+ * pedal's own filter model (eliteFilters.ts), the compressor Ratio, and the Auto-Filter's centre
+ * "Bypass" detent — and falls back to a raw percent for the controls whose taper isn't calibrated
+ * yet. Framework-free; display-only (the wire value is always the raw 0–127 byte). Deep pages
+ * format their own params directly.
  */
+import { designEliteFilter } from "../dsp/eliteFilters";
 import type { ParamId } from "./params";
-import { compRatio, EQ_BANDS, eqGainDb, filterLevelLabel } from "./units";
+import { compRatio, eqGainDb, filterLevelLabel, sweepFreqHz } from "./units";
 
 const pct = (raw: number): string => `${Math.round((raw / 127) * 100)}%`;
 const hz = (h: number): string =>
@@ -22,9 +24,9 @@ export function displayFor(id: ParamId, raw: number): string {
       return `${db > 0 ? "+" : ""}${db.toFixed(1)} dB`;
     }
     case "freq":
-      return hz(EQ_BANDS.mid.freq(raw));
-    case "q":
-      return `Q ${EQ_BANDS.mid.q(raw).toFixed(1)}`;
+      return hz(sweepFreqHz(raw));
+    case "q": // Mid's Q law doesn't depend on the other two knobs, so noon stand-ins are exact
+      return `Q ${designEliteFilter("mid", 64, 64, raw).q.toFixed(1)}`;
     case "ratio":
       return `${compRatio(raw).toFixed(1)}:1`;
     case "filter": // Auto-Filter Level — reads "Bypass" at the centre detent (raw 64)

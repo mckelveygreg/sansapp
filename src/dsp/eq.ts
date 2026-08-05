@@ -1,25 +1,28 @@
 /**
- * Pedal tone-stack → response curve. Builds the SansAmp Elite's EQ as a filter cascade and
- * evaluates its magnitude response for the tone graph. Framework-free.
+ * Pedal tone-stack → response curve. Builds the SansAmp Elite's EQ exactly the way the pedal does —
+ * every filter comes from the hardware-verified model in eliteFilters.ts — and evaluates the
+ * cascade's magnitude response for the tone graphs. Framework-free.
  *
- * The Elite's Low/Mid/High are a 3-band semi-parametric EQ (each with its own Gain/Freq/Q — see the
- * deep filter pages). Modelled as the classic SansAmp active-EQ topology: Low shelf · parametric Mid
- * bell · High shelf, plus a fixed Presence high shelf; each band's Q sets its slope/width. Band
- * ranges and tapers come from src/protocol/units.ts (EQ_BANDS/eqGainDb — see there for provenance).
- * Per-band Freq/Q default to noon (64) when the caller only has the gains.
+ * The shapes are not fixed: Low and High switch on the sign of the gain (a cut is a shelf, a boost
+ * is a peaking bell), and High runs its section twice. Mid is a peaking bell on the asymmetric
+ * 200–1977 Hz sweep. Presence is the pedal's Crunch filter: a peaking bell fixed at 2500 Hz,
+ * cascaded ×2, and boost-only — value 0 is flat and it can never cut. With every knob at the 64
+ * detent the whole cascade is exactly flat.
  */
-import { EQ_BANDS, eqGainDb } from "../protocol/units";
 import type { Biquad } from "./biquad";
-import { cascadeResponseDb, highShelf, lowShelf, peaking } from "./biquad";
+import { cascadeResponseDb } from "./biquad";
+import { ELITE_SAMPLE_RATE, eliteFilterBiquads } from "./eliteFilters";
 
-/** Live EQ knob values, each raw 0..127 (64 ≈ centre/flat). */
+/** Live EQ knob values, each raw 0..127 (64 = centre/flat). */
 export interface EqKnobs {
   low: number;
   mid: number;
   high: number;
-  /** Presence (0..127). Optional: a fixed high-shelf voicing for the OVERALL tone chart; omit it on
-   * the Parametric EQ page, which shows only the 3 adjustable bands. */
+  /** Presence (0..127) — the Crunch bell. Optional: an overlay for the OVERALL tone chart; omit it
+   * on the Parametric EQ page, which shows only the 3 adjustable bands. */
   presence?: number;
+  /** Presence width (Crunch Q, 0..127); defaults to noon when omitted. */
+  presenceQ?: number;
   /** Parametric mid centre-frequency knob (0..127). */
   freq: number;
   /** Parametric mid width knob (0..127). */
@@ -31,35 +34,25 @@ export interface EqKnobs {
   highQ?: number;
 }
 
-const PRESENCE_HZ = 6000;
 const NOON = 64;
 
-export function eqFilters(eq: EqKnobs, sampleRate = 44100): Biquad[] {
+export function eqFilters(eq: EqKnobs): Biquad[] {
   const filters = [
-    lowShelf(
-      EQ_BANDS.low.freq(eq.lowFreq ?? NOON),
-      sampleRate,
-      EQ_BANDS.low.q(eq.lowQ ?? NOON),
-      eqGainDb(eq.low),
-    ),
-    peaking(EQ_BANDS.mid.freq(eq.freq), sampleRate, EQ_BANDS.mid.q(eq.q), eqGainDb(eq.mid)),
-    highShelf(
-      EQ_BANDS.high.freq(eq.highFreq ?? NOON),
-      sampleRate,
-      EQ_BANDS.high.q(eq.highQ ?? NOON),
-      eqGainDb(eq.high),
-    ),
+    ...eliteFilterBiquads("low", eq.low, eq.lowFreq ?? NOON, eq.lowQ ?? NOON),
+    ...eliteFilterBiquads("mid", eq.mid, eq.freq, eq.q),
+    ...eliteFilterBiquads("high", eq.high, eq.highFreq ?? NOON, eq.highQ ?? NOON),
   ];
   // Presence is a preamp voicing control, not one of the 3 EQ bands — only overlay it when the
   // caller asks for the overall tone (the editor chart). The Parametric EQ page omits it, so its
   // graph is flat when the bands are flat.
   if (eq.presence !== undefined) {
-    filters.push(highShelf(PRESENCE_HZ, sampleRate, Math.SQRT1_2, eqGainDb(eq.presence)));
+    filters.push(...eliteFilterBiquads("crunch", eq.presence, NOON, eq.presenceQ ?? NOON));
   }
   return filters;
 }
 
-/** Tone-stack magnitude response (dB) across `grid`, for the EQ curve display. */
-export function eqResponse(eq: EqKnobs, grid: readonly number[], sampleRate = 44100): number[] {
-  return cascadeResponseDb(eqFilters(eq, sampleRate), grid, sampleRate);
+/** Tone-stack magnitude response (dB) across `grid`, for the EQ curve display. Evaluated at the
+ * pedal's own 44.1 kHz — the model's trig quantisation is tied to that rate. */
+export function eqResponse(eq: EqKnobs, grid: readonly number[]): number[] {
+  return cascadeResponseDb(eqFilters(eq), grid, ELITE_SAMPLE_RATE);
 }
