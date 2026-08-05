@@ -4,6 +4,7 @@
  * Renders with react-native-svg so it works on iOS, Android, and web.
  */
 import { G, Line, Path, Svg, Text as SvgText } from "react-native-svg";
+import { fitDbWindow } from "../ui/graphWindow";
 import { theme } from "./theme";
 
 export interface IrCurve {
@@ -26,6 +27,9 @@ interface IrGraphProps {
   fMax?: number;
   dbTop?: number;
   dbBot?: number;
+  /** Treat dbTop/dbBot as a minimum window and expand it so no curve clips (see fitDbWindow).
+   * Off by default: the IR plots want their fixed window. */
+  fitData?: boolean;
 }
 
 const PAD = { l: 38, r: 10, t: 12, b: 22 };
@@ -50,9 +54,17 @@ export function IrGraph({
   height,
   fMin = 30,
   fMax = 18000,
-  dbTop = 12,
-  dbBot = -42,
+  dbTop: minTop = 12,
+  dbBot: minBot = -42,
+  fitData = false,
 }: IrGraphProps) {
+  const { dbTop, dbBot } = fitData
+    ? fitDbWindow(
+        curves.flatMap((c) => (c.fillFrom ? [c.db, c.fillFrom] : [c.db])),
+        minTop,
+        minBot,
+      )
+    : { dbTop: minTop, dbBot: minBot };
   const innerW = width - PAD.l - PAD.r;
   const innerH = height - PAD.t - PAD.b;
   const lminF = Math.log(fMin);

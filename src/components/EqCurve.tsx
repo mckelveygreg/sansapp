@@ -52,6 +52,7 @@ export function EqCurve({ values }: { values: Readonly<Partial<Record<ParamId, n
           height={132}
           dbTop={15}
           dbBot={-15}
+          fitData
         />
       ) : null}
     </View>
