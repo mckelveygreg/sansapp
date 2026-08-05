@@ -23,35 +23,49 @@ function terms(fc: number, sampleRate: number, q: number, gainDb: number) {
   return { A, cw: Math.cos(w0), alpha: Math.sin(w0) / (2 * q) };
 }
 
+/** Peaking bell from precomputed intermediates, for callers that derive trig their own way. */
+export function peakingFromTerms(A: number, cw: number, alpha: number): Biquad {
+  return norm(1 + alpha * A, -2 * cw, 1 - alpha * A, 1 + alpha / A, -2 * cw, 1 - alpha / A);
+}
+
+/** Low shelf from precomputed intermediates. `beta` is the shelf slope term — the RBJ cookbook
+ * uses `2·√A·alpha`; other voicings (e.g. the Elite's `√(2A)·alpha`) pass their own. */
+export function lowShelfFromTerms(A: number, cw: number, beta: number): Biquad {
+  return norm(
+    A * (A + 1 - (A - 1) * cw + beta),
+    2 * A * (A - 1 - (A + 1) * cw),
+    A * (A + 1 - (A - 1) * cw - beta),
+    A + 1 + (A - 1) * cw + beta,
+    -2 * (A - 1 + (A + 1) * cw),
+    A + 1 + (A - 1) * cw - beta,
+  );
+}
+
+/** High shelf from precomputed intermediates; `beta` as in {@link lowShelfFromTerms}. */
+export function highShelfFromTerms(A: number, cw: number, beta: number): Biquad {
+  return norm(
+    A * (A + 1 + (A - 1) * cw + beta),
+    -2 * A * (A - 1 + (A + 1) * cw),
+    A * (A + 1 + (A - 1) * cw - beta),
+    A + 1 - (A - 1) * cw + beta,
+    2 * (A - 1 - (A + 1) * cw),
+    A + 1 - (A - 1) * cw - beta,
+  );
+}
+
 export function peaking(fc: number, sampleRate: number, q: number, gainDb: number): Biquad {
   const { A, cw, alpha } = terms(fc, sampleRate, q, gainDb);
-  return norm(1 + alpha * A, -2 * cw, 1 - alpha * A, 1 + alpha / A, -2 * cw, 1 - alpha / A);
+  return peakingFromTerms(A, cw, alpha);
 }
 
 export function lowShelf(fc: number, sampleRate: number, q: number, gainDb: number): Biquad {
   const { A, cw, alpha } = terms(fc, sampleRate, q, gainDb);
-  const tsa = 2 * Math.sqrt(A) * alpha;
-  return norm(
-    A * (A + 1 - (A - 1) * cw + tsa),
-    2 * A * (A - 1 - (A + 1) * cw),
-    A * (A + 1 - (A - 1) * cw - tsa),
-    A + 1 + (A - 1) * cw + tsa,
-    -2 * (A - 1 + (A + 1) * cw),
-    A + 1 + (A - 1) * cw - tsa,
-  );
+  return lowShelfFromTerms(A, cw, 2 * Math.sqrt(A) * alpha);
 }
 
 export function highShelf(fc: number, sampleRate: number, q: number, gainDb: number): Biquad {
   const { A, cw, alpha } = terms(fc, sampleRate, q, gainDb);
-  const tsa = 2 * Math.sqrt(A) * alpha;
-  return norm(
-    A * (A + 1 + (A - 1) * cw + tsa),
-    -2 * A * (A - 1 + (A + 1) * cw),
-    A * (A + 1 + (A - 1) * cw - tsa),
-    A + 1 - (A - 1) * cw + tsa,
-    2 * (A - 1 - (A + 1) * cw),
-    A + 1 - (A - 1) * cw - tsa,
-  );
+  return highShelfFromTerms(A, cw, 2 * Math.sqrt(A) * alpha);
 }
 
 export function lowpass(fc: number, sampleRate: number, q: number): Biquad {
