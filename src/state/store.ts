@@ -16,6 +16,9 @@ export type KnobLayer = "primary" | "red";
 
 export interface PedalState {
   connection: ConnectionState;
+  /** The connected pedal's firmware version (1.0, 1.1, …), or null until it reports one. Read off
+   * byte 6 of its messages — see docs/PROTOCOL.md. Drives the "firmware update available" notice. */
+  firmware: number | null;
   /** The pedal's active knob layer (tracked from the 0x4d footswitch notify + our own sets). */
   layer: KnobLayer;
   /** Active preset slot (null = the pedal's current/live edit buffer, slot unknown). */
@@ -41,6 +44,7 @@ export interface PedalState {
   log: string[];
 
   setConnection: (s: ConnectionState) => void;
+  setFirmware: (firmware: number | null) => void;
   setLayer: (layer: KnobLayer) => void;
   loadPreset: (
     slot: number | null,
@@ -65,6 +69,7 @@ export function createPedalStore() {
   return createStore<PedalState>((set) => ({
     connection: "disconnected",
     layer: "primary",
+    firmware: null,
     slot: null,
     name: null,
     names: {},
@@ -75,6 +80,7 @@ export function createPedalStore() {
     log: [],
 
     setConnection: (connection) => set({ connection }),
+    setFirmware: (firmware) => set({ firmware }),
     setLayer: (layer) => set({ layer }),
     loadPreset: (slot, values, name = null, raw = null) =>
       set((s) => ({
@@ -173,6 +179,10 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
   let reloading = false; // avoid overlapping reloads from repeated slot notifications
   const unsubs = [
     session.onState((s) => store.getState().setConnection(s)),
+    session.onFirmwareVersion((firmware) => {
+      store.getState().setFirmware(firmware);
+      store.getState().pushLog(`pedal firmware ${firmware.toFixed(1)}`);
+    }),
     // The pedal changes preset on its own (footswitch) → it pushes the full 05 41 dump. Apply it
     // INSTANTLY (number + name + every knob/deep param), exactly like EliteControl. This is the
     // primary path; the heartbeat slot-check below is only a backstop for a dropped BLE push.

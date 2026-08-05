@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { liveSetId, PARAMS } from "../src/protocol/params";
 
-// Rule derived from observing EliteControl: live-set wire id == iPlug index for the shallow range
-// 0x00-0x0F, but index+4 for the deep range 0x10-0x4D. The notify/read path keeps the raw index;
-// only the SET path maps through liveSetId.
+// Live-set wire id == iPlug index for the shallow range 0x00-0x0F, index+4 for 0x10-0x49, and
+// 0x4A-0x4D wrap to 0x10-0x13. The notify/read path keeps the raw index; only SET maps through here.
+// Cross-checked against the pedal firmware's own 78-entry set-id -> index table, which is an exact
+// bijection (sansApp_lab/docs/FIRMWARE-RE.md).
 describe("liveSetId — index → live-set wire id", () => {
   it("is identity for the shallow main-panel knobs (0x00-0x0F)", () => {
     for (const idx of [0x00, 0x01, 0x05, 0x08, 0x0a, 0x0c, 0x0d, 0x0f]) {
@@ -11,16 +12,27 @@ describe("liveSetId — index → live-set wire id", () => {
     }
   });
 
-  it("adds 4 across the deep range (0x10-0x4D)", () => {
+  it("adds 4 across the deep range (0x10-0x49)", () => {
     expect(liveSetId(0x10)).toBe(0x14);
     expect(liveSetId(0x3d)).toBe(0x41); // Auto-Filter Level
     expect(liveSetId(0x47)).toBe(0x4b); // Blend (the reported bug — notify 0x47, set 0x4b)
     expect(liveSetId(0x48)).toBe(0x4c); // Low Freq
     expect(liveSetId(0x49)).toBe(0x4d); // High Freq
-    expect(liveSetId(0x4d)).toBe(0x51);
   });
 
-  it("leaves ids outside 0x10-0x4D untouched (reserved / jump-table range)", () => {
+  it("wraps 0x4A-0x4D onto set-ids 0x10-0x13 (they do NOT continue the +4 run)", () => {
+    expect(liveSetId(0x4a)).toBe(0x10);
+    expect(liveSetId(0x4b)).toBe(0x11);
+    expect(liveSetId(0x4c)).toBe(0x12); // the save-to-slot param
+    expect(liveSetId(0x4d)).toBe(0x13);
+  });
+
+  it("is a bijection over 0x00-0x4D, exactly like the firmware's table", () => {
+    const ids = Array.from({ length: 0x4e }, (_, i) => liveSetId(i));
+    expect([...ids].sort((a, b) => a - b)).toEqual(Array.from({ length: 0x4e }, (_, i) => i));
+  });
+
+  it("leaves ids outside 0x00-0x4D untouched", () => {
     expect(liveSetId(0x4e)).toBe(0x4e);
     expect(liveSetId(0x12)).not.toBe(0x12); // sanity: 0x12 IS in-range (+4) — not a command here
   });

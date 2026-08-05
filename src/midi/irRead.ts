@@ -70,7 +70,17 @@ export function readIr(
             finish(decodeIrStream(Uint8Array.from(packed)));
           }
         });
-        session.sendRaw(Uint8Array.of(...SYSEX_PREFIX, 0x05, 0x69, 0x0a, a & 0x7f, b & 0x7f, 0xf7));
+        session.sendRaw(
+          Uint8Array.of(
+            ...SYSEX_PREFIX,
+            0x05,
+            0x69,
+            session.protocolVersion,
+            a & 0x7f,
+            b & 0x7f,
+            0xf7,
+          ),
+        );
       }),
   );
 }

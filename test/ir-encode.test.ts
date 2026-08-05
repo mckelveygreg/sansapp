@@ -13,6 +13,7 @@ import {
   toInt8Samples,
   unpackIrStream,
 } from "../src/protocol/irEncode";
+import { DEFAULT_PROTOCOL_VERSION } from "../src/protocol/constants";
 
 // Verified 2026-07-14: the user-IR wire is the time-domain .dat, 7-bit packed.
 // Verified byte-exact vs real hardware for the amplitude-ladder probes; these tests lock the codec.
@@ -61,9 +62,16 @@ describe("user-IR encoder", () => {
     expect(sub(frames[0]!)).toBe(0x60);
     expect(frames.slice(1, -1).every((f) => sub(f) === 0x65)).toBe(true);
     expect(sub(frames.at(-1)!)).toBe(0x66);
-    // every frame is F0 00 51 21 05 <sub> 0A … F7 and 7-bit-clean between header and F7
+    // every frame is F0 00 51 21 05 <sub> <ver> … F7 and 7-bit-clean between header and F7
     for (const f of frames) {
-      expect([f[0], f[1], f[2], f[3], f[4], f[6]]).toEqual([0xf0, 0x00, 0x51, 0x21, 0x05, 0x0a]);
+      expect([f[0], f[1], f[2], f[3], f[4], f[6]]).toEqual([
+        0xf0,
+        0x00,
+        0x51,
+        0x21,
+        0x05,
+        DEFAULT_PROTOCOL_VERSION,
+      ]);
       expect(f.at(-1)).toBe(0xf7);
       expect(f.subarray(7, -1).every((b) => b < 0x80)).toBe(true);
     }

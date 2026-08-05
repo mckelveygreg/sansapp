@@ -18,7 +18,7 @@
  * affects playback LEVEL only, not whether the upload is accepted; the pedal's per-slot IR gain
  * compensates. Feed {@link buildIrUpload} frames to {@link uploadIr}. Framework-free.
  */
-import { SYSEX_PREFIX } from "./constants";
+import { DEFAULT_PROTOCOL_VERSION, SYSEX_PREFIX } from "./constants";
 
 export const IR_SAMPLES = 2400; // int8 time-domain samples in a user IR
 export const IR_DAT_SIZE = 2436; // 01 00 + gain(2) + name(32) + 2400 samples
@@ -151,8 +151,8 @@ export function decodeIrStream(packedWithHeader: Uint8Array): DecodedIr | null {
   return decodeIrDat(dat.subarray(0, IR_DAT_SIZE));
 }
 
-const sysex = (sub: number, body: Uint8Array): Uint8Array =>
-  Uint8Array.of(...SYSEX_PREFIX, 0x05, sub, 0x0a, ...body, 0xf7);
+const sysex = (sub: number, body: Uint8Array, version: number): Uint8Array =>
+  Uint8Array.of(...SYSEX_PREFIX, 0x05, sub, version & 0x7f, ...body, 0xf7);
 
 /**
  * Wire trailer appended after the packed `.dat`: `00`, then a 14-bit sum of the packed bytes split
@@ -179,6 +179,7 @@ export function buildIrUpload(
   samples: ArrayLike<number>,
   name: string,
   target: readonly [number, number] = [0x00, 0x00],
+  version: number = DEFAULT_PROTOCOL_VERSION,
 ): Uint8Array[] {
   // Peak-normalize first so a quiet source reaches full int8 range and the makeup gain (irGain, called
   // by encodeIrDat) can hit factory loudness — see FACTORY_IR_LOUDNESS.
@@ -187,10 +188,10 @@ export function buildIrUpload(
   const header = [target[0] & 0x7f, target[1] & 0x7f, 0x00, 0x15, 0x61];
   const stream = new Uint8Array([...header, ...packed, ...irWireTrailer(packed)]);
   const frames: Uint8Array[] = [];
-  frames.push(sysex(0x60, stream.subarray(0, 261))); // begin: 5-byte header + first 256 packed
+  frames.push(sysex(0x60, stream.subarray(0, 261), version)); // begin: 5-byte header + first 256 packed
   for (let off = 261; off < stream.length; off += 256) {
     const slice = stream.subarray(off, Math.min(off + 256, stream.length));
-    frames.push(sysex(off + 256 < stream.length ? 0x65 : 0x66, slice)); // chunks, last = end
+    frames.push(sysex(off + 256 < stream.length ? 0x65 : 0x66, slice, version)); // chunks, last = end
   }
   return frames;
 }

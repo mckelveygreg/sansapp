@@ -31,10 +31,13 @@ async function main(): Promise<void> {
     [0x02, 0x07, "slot 8 user"],
     [0x02, 0x01, "slot 2"],
   ];
+  const ver = session.protocolVersion; // negotiated by connect() — 0x0A on fw 1.0, 0x0B on 1.1
   for (const [a, b, label] of targets) {
-    console.log(`--- 05 69 0A ${a.toString(16)} ${b.toString(16)}  (${label}) ---`);
+    console.log(
+      `--- 05 69 ${ver.toString(16).toUpperCase()} ${a.toString(16)} ${b.toString(16)}  (${label}) ---`,
+    );
     rx = 0;
-    io.send(Uint8Array.of(...SYSEX_PREFIX, 0x05, 0x69, 0x0a, a, b, 0xf7));
+    io.send(Uint8Array.of(...SYSEX_PREFIX, 0x05, 0x69, ver, a, b, 0xf7));
     await delay(3500);
     console.log(`  → ${rx} raw chunk(s) received\n`);
   }

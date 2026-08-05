@@ -14,6 +14,26 @@ export const SYSEX_END = 0xf7;
 export const MANUFACTURER_ID: readonly number[] = Object.freeze([0x00, 0x51, 0x21]);
 export const SYSEX_PREFIX = Uint8Array.of(SYSEX_START, 0x00, 0x51, 0x21);
 
+// --- Protocol version (byte 6 of every framed message) ---
+// Byte 6 is the pedal's firmware version × 10, NOT a fixed marker: firmware 1.0 uses 0x0A and
+// firmware 1.1 uses 0x0B. EliteControl displays it as `version/10` with one decimal, warns "please
+// upgrade" below 0x0A, and "editor out of date" above 0x77 — so it reads the byte as a number, and
+// both ends must agree on it. EliteControl itself is pinned to one version per release (1.0 → 0x0A,
+// 1.1 → 0x0B) and rejects the other; SansApp instead negotiates, so one build talks to both.
+/** Firmware 1.0. */
+export const PROTOCOL_V1_0 = 0x0a;
+/** Firmware 1.1. */
+export const PROTOCOL_V1_1 = 0x0b;
+/** Tried first on connect; DeviceSession falls back to the other candidate, then latches whatever
+ * version the pedal actually replies with. */
+export const DEFAULT_PROTOCOL_VERSION = PROTOCOL_V1_1;
+/** Versions the connect handshake probes, in order. */
+export const PROTOCOL_VERSIONS: readonly number[] = Object.freeze([PROTOCOL_V1_1, PROTOCOL_V1_0]);
+/** Accepted range on decode, matching EliteControl's own window (it rejects <0x0A and >0x77). Being
+ * permissive here means a future firmware keeps talking to us instead of going silent. */
+export const MIN_PROTOCOL_VERSION = PROTOCOL_V1_0;
+export const MAX_PROTOCOL_VERSION = 0x77;
+
 // --- Preset blob layout (confirmed against 128 factory .dat files, all 256 bytes) ---
 export const PRESET_SIZE = 256;
 /** Bytes 0..1 are a constant version/header. */

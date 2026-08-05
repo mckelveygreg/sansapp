@@ -1,13 +1,27 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { bytesToHex, hexToBytes } from "../src/protocol/hex";
-import { checksum14, decode, encode, type PedalMessage } from "../src/protocol/messages";
+import {
+  checksum14,
+  decode,
+  encode,
+  isSupportedVersion,
+  sysexVersion,
+  type PedalMessage,
+} from "../src/protocol/messages";
+import { DEFAULT_PROTOCOL_VERSION, PROTOCOL_V1_0, PROTOCOL_V1_1 } from "../src/protocol/constants";
 
-/** decode(hex) must equal `expected`, and re-encoding must reproduce the exact bytes. */
+/**
+ * decode(hex) must equal `expected`, and re-encoding IN THE SAME PROTOCOL VERSION must reproduce the
+ * exact bytes. Byte 6 is the firmware version (0x0A = fw 1.0, 0x0B = fw 1.1), so it has to be fed
+ * back into encode() — that pairing is exactly what DeviceSession does on the wire.
+ */
 function roundTrip(hex: string, expected: PedalMessage) {
-  const msg = decode(hexToBytes(hex));
+  const bytes = hexToBytes(hex);
+  const msg = decode(bytes);
   expect(msg).toEqual(expected);
-  if (msg.kind !== "unknown") expect(bytesToHex(encode(msg))).toBe(hex);
+  const version = sysexVersion(bytes) ?? DEFAULT_PROTOCOL_VERSION;
+  if (msg.kind !== "unknown") expect(bytesToHex(encode(msg, version))).toBe(hex);
 }
 
 describe("sysex messages (all confirmed from live capture)", () => {
@@ -23,6 +37,39 @@ describe("sysex messages (all confirmed from live capture)", () => {
 
   it("pedal→app paramNotify", () => {
     roundTrip("F0 00 51 21 05 51 0A 05 3E F7", { kind: "paramNotify", param: 0x05, value: 0x3e });
+  });
+
+  // Byte 6 is the firmware version × 10, not a fixed marker: EliteControl 1.0 speaks 0x0A and 1.1
+  // speaks 0x0B, each rejecting the other. SansApp reads both and answers in the pedal's version.
+  it("decodes both firmware versions of the same message", () => {
+    roundTrip("F0 00 51 21 05 51 0B 05 3E F7", { kind: "paramNotify", param: 0x05, value: 0x3e });
+    roundTrip("F0 00 51 21 05 50 0B 05 28 F7", { kind: "setParam", param: 0x05, value: 0x28 });
+    roundTrip("F0 00 51 21 05 5B 0B F7", { kind: "control", code: 0x5b });
+  });
+
+  it("encodes in the requested firmware version", () => {
+    const set: PedalMessage = { kind: "setParam", param: 0x05, value: 0x28 };
+    expect(bytesToHex(encode(set, PROTOCOL_V1_0))).toBe("F0 00 51 21 05 50 0A 05 28 F7");
+    expect(bytesToHex(encode(set, PROTOCOL_V1_1))).toBe("F0 00 51 21 05 50 0B 05 28 F7");
+    expect(bytesToHex(encode(set))).toBe(
+      bytesToHex(encode(set, DEFAULT_PROTOCOL_VERSION)), // default = newest firmware
+    );
+  });
+
+  it("reads the version byte and rejects out-of-range ones", () => {
+    expect(sysexVersion(hexToBytes("F0 00 51 21 05 51 0A 05 3E F7"))).toBe(PROTOCOL_V1_0);
+    expect(sysexVersion(hexToBytes("F0 00 51 21 05 51 0B 05 3E F7"))).toBe(PROTOCOL_V1_1);
+    expect(sysexVersion(hexToBytes("F0 00 51 21 05 21 F7"))).toBeNull(); // short ack, no version
+    // EliteControl's own window: below 0x0A it says "upgrade the pedal", above 0x77 "upgrade the editor"
+    expect(isSupportedVersion(0x09)).toBe(false);
+    expect(isSupportedVersion(0x78)).toBe(false);
+    expect(decode(hexToBytes("F0 00 51 21 05 51 09 05 3E F7")).kind).toBe("unknown");
+    // a FUTURE firmware inside the window still decodes — we don't go deaf on 1.2
+    expect(decode(hexToBytes("F0 00 51 21 05 51 0C 05 3E F7"))).toEqual({
+      kind: "paramNotify",
+      param: 0x05,
+      value: 0x3e,
+    });
   });
 
   it("writeAck (05 21, no marker) — pedal's ack of a write", () => {

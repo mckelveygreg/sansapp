@@ -123,7 +123,7 @@ export async function uploadCustomIr(
   // brick the connect handshake — see captures/ir-save.jsonl and the uploadIr header note. `slot`
   // only picks the address SET-IDs (slot 8 = 0x3B/0x3C, a +4-rule inference; slot 7 = the captured
   // 0x39/0x3A).
-  const frames = buildIrUpload(samples, name, [0x00, 0x7f]);
+  const frames = buildIrUpload(samples, name, [0x00, 0x7f], session.protocolVersion);
   await uploadIr(session, frames, {
     presetAddress: [0x00, 0x7f],
     addrSetIds: irAddrSetIds(slot),

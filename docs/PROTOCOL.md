@@ -27,9 +27,30 @@ F0   00 51 21   <command> [data …]   F7
 ^start  ^Tech 21 mfr id   ^body       ^end
 ```
 
-Every message shares the shape `05 <sub> 0A <args…>` (`0x05` = "data" command, `0x0A` = fixed
-marker). Big payloads carry a 256-byte body + a 2-byte 14-bit checksum. **100% of the captured
-device SysEx decodes** (`test/messages.test.ts`). Full vocabulary (`src/protocol/messages.ts`):
+Every message shares the shape `05 <sub> <ver> <args…>` (`0x05` = "data" command). Big payloads carry
+a 256-byte body + a 2-byte 14-bit checksum. **100% of the captured device SysEx decodes**
+(`test/messages.test.ts`). Full vocabulary (`src/protocol/messages.ts`):
+
+### Byte 6 is the firmware version, not a marker ⚠️
+
+Earlier notes here called byte 6 a "fixed marker `0x0A`". It is actually the pedal's **firmware
+version × 10**, and firmware 1.1 (August 2026) changed it:
+
+| firmware | byte 6 |
+| -------- | ------ |
+| 1.0      | `0x0A` |
+| 1.1      | `0x0B` |
+
+EliteControl reads that byte, shows it as `VERSION: <byte/10>` with one decimal, and warns "please
+upgrade Elite" below `0x0A` / "editor version out of date" above `0x77`. Each EliteControl release is
+**pinned to one version** and silently drops the other, which is why Tech 21 ships the editor and the
+firmware as a matched pair.
+
+SansApp does not pin it. `decode` accepts any version in `0x0A…0x77`, the connect handshake probes
+the newest first and falls back (`DeviceSession.helloWithVersionProbe`), and from the first reply
+onward every outbound message mirrors the version the **pedal** used. So one build talks to firmware
+1.0 and 1.1, and `session.firmwareVersion` reports which one is on the other end. Tables below show
+`0A` (firmware 1.0) for continuity with the original captures.
 
 | Dir       | Bytes                        | Meaning                                                                                                                                                                   |
 | --------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -14,8 +14,14 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Input, Output } from "@julusian/midi";
 import { PedalModel } from "../src/device/pedalModel";
-import { PRESET_SIZE } from "../src/protocol/constants";
-import { decode, encode } from "../src/protocol/messages";
+import { DEFAULT_PROTOCOL_VERSION, PRESET_SIZE, PROTOCOL_V1_0 } from "../src/protocol/constants";
+import { decode, encode, sysexVersion } from "../src/protocol/messages";
+
+/** Version this emulated pedal claims when a message carries none. `ELITE_EMU_FIRMWARE=1.0` emulates
+ * a pre-update pedal, which is how you exercise DeviceSession's version fallback without hardware. */
+const EMU_VERSION =
+  process.env.ELITE_EMU_FIRMWARE === "1.0" ? PROTOCOL_V1_0 : DEFAULT_PROTOCOL_VERSION;
+const EMU_LABEL = `firmware ${(EMU_VERSION / 10).toFixed(1)}`;
 
 const PRESET_DIR = join(
   homedir(),
@@ -101,6 +107,15 @@ console.log(
 
 midiIn.on("message", (_dt, raw) => {
   const b = Uint8Array.from(raw);
+  // Byte 6 is the firmware version and a real pedal STAYS SILENT on any other one (PROTOCOL.md).
+  // Emulating that is what makes ELITE_EMU_FIRMWARE=1.0 a real test of the version fallback.
+  const inVersion = sysexVersion(b);
+  if (inVersion !== null && inVersion !== EMU_VERSION) {
+    console.log(
+      `ignoring message for firmware ${(inVersion / 10).toFixed(1)} (we are ${EMU_LABEL})`,
+    );
+    return;
+  }
   // User-IR upload framing decodes as "unknown"; ack it so an IR import completes:
   // 05 60 begin -> 05 63 00 F7, 05 66 end -> 05 61 F7, 05 65 chunks -> no ack.
   if (b[4] === 0x05 && b[5] === 0x60) {
@@ -122,7 +137,7 @@ midiIn.on("message", (_dt, raw) => {
   console.log(`recv ${m.kind}`);
   // Everything else: delegate to the shared PedalModel so the emulator matches the pedal's behavior
   // (0x12 save-echo, block-write 05 53 ack, discarded 0x7F edit-buffer stage) exactly as the tests do.
-  for (const reply of model.handle(m)) send(encode(reply));
+  for (const reply of model.handle(m)) send(encode(reply, EMU_VERSION));
 });
 
 process.on("SIGINT", () => {

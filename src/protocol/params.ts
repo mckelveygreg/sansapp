@@ -162,14 +162,23 @@ export const PARAM_IDS = Object.keys(PARAMS) as ParamId[];
 
 /**
  * Map a parameter's iPlug INDEX (== its `05 51` notify id, what we store as `paramId`) to the wire
- * id the pedal expects in a live `05 50` SET message. Derived from observing EliteControl
- * (2026-07-15): indices 0x00–0x0F set on the same id (identity — the shallow main-panel knobs), but
- * the deep range 0x10–0x4D sets on **index + 4**. So Blend (index 0x47) is set via 0x4B, not 0x47
- * (0x47 is only its notify id; setting 0x47 actually hits chorus-mod — the "blend moved the chorus"
- * bug). The notify/read path stays on the index; only the write path uses this.
+ * id the pedal expects in a live `05 50` SET message. Indices 0x00–0x0F set on the same id (identity
+ * — the shallow main-panel knobs); 0x10–0x49 set on **index + 4**. So Blend (index 0x47) is set via
+ * 0x4B, not 0x47 (0x47 is only its notify id; setting 0x47 actually hits chorus-mod — the "blend
+ * moved the chorus" bug). The notify/read path stays on the index; only the write path uses this.
+ *
+ * Indices **0x4A–0x4D wrap around to set-ids 0x10–0x13**, they do NOT continue the +4 run. Those four
+ * were long assumed to be a gap, and the ids 0x10–0x13 to be "reserved commands" outside the
+ * parameter space — the pedal's own firmware says otherwise. It carries a 78-entry set-id → index
+ * table that is an exact bijection, and its last stanza maps 0x10–0x13 onto 0x4A–0x4D. The other 74
+ * entries match the rule above exactly. That reconciles the save command: `05 50 <ver> 12 <slot>` is
+ * not a special opcode, it is a plain set of index 0x4C, whose firmware handler persists to a slot.
+ * (Derivation: sansApp_lab/docs/FIRMWARE-RE.md.)
  */
-export const liveSetId = (index: number): number =>
-  index >= 0x10 && index <= 0x4d ? index + 4 : index;
+export const liveSetId = (index: number): number => {
+  if (index >= 0x4a && index <= 0x4d) return index - 0x3a; // 0x4A..0x4D -> 0x10..0x13
+  return index >= 0x10 && index <= 0x49 ? index + 4 : index;
+};
 
 /**
  * Deep Compressor-page paramIds (the `05 50` param byte). The main-panel **COMP knob (0x0A) is the
