@@ -12,6 +12,7 @@
  *  - at or above 200 Hz, sin/cos come from a 32768-step quarter-wave table, quantising the corner
  *    frequency to 44100/32768 ≈ 1.346 Hz steps. Only Low (40..199 Hz) gets the exact path.
  */
+import { sweepFreqHz } from "../protocol/units";
 import type { Biquad } from "./biquad";
 import { highShelfFromTerms, lowShelfFromTerms, peakingFromTerms } from "./biquad";
 
@@ -34,12 +35,6 @@ export interface EliteFilterDesign {
 
 const norm = (value: number): number => value / 128;
 const bipolar = (value: number): number => 2 * norm(value) - 1;
-
-/** Punch and Mid share this asymmetric sweep: 300 Hz below the 500 Hz detent, 1500 above. */
-const sweepFreqHz = (value: number): number => {
-  const xp = bipolar(value);
-  return 500 + xp * (xp < 0 ? 300 : 1500);
-};
 
 /** One control's designer arguments from its three wire values (0..127 each; Buzz and Crunch
  * have no frequency knob and ignore `freqValue`). */

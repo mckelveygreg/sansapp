@@ -5,8 +5,8 @@
  * The Elite's Low/Mid/High are a 3-band semi-parametric EQ (each with its own Gain/Freq/Q — see the
  * deep filter pages). Modelled as the classic SansAmp active-EQ topology: Low shelf · parametric Mid
  * bell · High shelf, plus a fixed Presence high shelf; each band's Q sets its slope/width. Band
- * ranges and tapers are the hardware-measured values in src/protocol/units.ts (EQ_BANDS/eqGainDb),
- * calibrated 2026-07-05. Per-band Freq/Q default to noon (64) when the caller only has the gains.
+ * ranges and tapers come from src/protocol/units.ts (EQ_BANDS/eqGainDb — see there for provenance).
+ * Per-band Freq/Q default to noon (64) when the caller only has the gains.
  */
 import { EQ_BANDS, eqGainDb } from "../protocol/units";
 import type { Biquad } from "./biquad";

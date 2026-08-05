@@ -45,21 +45,32 @@ describe("unit calibration (measured vs EliteControl)", () => {
     expect(filterTimePct(127)).toBe(100);
   });
 
-  it("parametric EQ bands: gain ±12, per-band freq taper + Q range", () => {
-    expect(eqGainDb(0)).toBeCloseTo(-12);
-    expect(eqGainDb(127)).toBeCloseTo(12);
-    // Low freq linear (noon 120); Mid freq log (noon ≈ 632, hit ~500 at the user's mid); High linear (noon 4.5k)
-    expect(EQ_BANDS.low.freq(0)).toBeCloseTo(40);
-    expect(EQ_BANDS.low.freq(127)).toBeCloseTo(200);
-    expect(EQ_BANDS.low.freq(64)).toBeCloseTo(120.6, 0);
-    expect(EQ_BANDS.mid.freq(0)).toBeCloseTo(200);
-    expect(EQ_BANDS.mid.freq(127)).toBeCloseTo(2000);
-    expect(EQ_BANDS.high.freq(0)).toBeCloseTo(1000);
-    expect(EQ_BANDS.high.freq(127)).toBeCloseTo(8000);
-    expect(EQ_BANDS.high.freq(64)).toBeCloseTo(4527, -1);
-    // High band's Q range differs from Low/Mid
-    expect(EQ_BANDS.low.q(0)).toBeCloseTo(0.5);
-    expect(EQ_BANDS.low.q(127)).toBeCloseTo(2.0);
+  it("parametric EQ: the pedal's /128 scale puts the noon detent exactly on centre", () => {
+    // gain = 24x − 12 with x = r/128: exactly 0 dB at 64 — the whole point of issue #15
+    expect(eqGainDb(64)).toBe(0);
+    expect(eqGainDb(0)).toBe(-12);
+    expect(eqGainDb(127)).toBe(11.8125); // 24·(127/128) − 12: travel tops out shy of +12
+    // Low/High freq are linear in x (all values dyadic → exact)
+    expect(EQ_BANDS.low.freq(0)).toBe(40);
+    expect(EQ_BANDS.low.freq(64)).toBe(120);
+    expect(EQ_BANDS.low.freq(127)).toBe(198.75);
+    expect(EQ_BANDS.high.freq(0)).toBe(1000);
+    expect(EQ_BANDS.high.freq(64)).toBe(4500);
+    expect(EQ_BANDS.high.freq(127)).toBe(7945.3125);
+    // Mid is the asymmetric bipolar sweep — exactly 500 Hz at the detent, 300 Hz of travel below
+    // it vs 1500 above
+    expect(EQ_BANDS.mid.freq(64)).toBe(500);
+    expect(EQ_BANDS.mid.freq(0)).toBe(200);
+    expect(EQ_BANDS.mid.freq(127)).toBe(1976.5625);
+    // Low/Mid Q are exponential, exactly 1.0 at the detent
+    expect(EQ_BANDS.low.q(0)).toBe(0.5);
+    expect(EQ_BANDS.low.q(64)).toBe(1);
+    expect(EQ_BANDS.low.q(127)).toBeCloseTo(1.978, 3);
+    expect(EQ_BANDS.mid.q(0)).toBe(0.25);
+    expect(EQ_BANDS.mid.q(64)).toBe(1);
+    expect(EQ_BANDS.mid.q(127)).toBeCloseTo(3.914, 3);
+    // High's Q read-out stays screenshot-calibrated (/127, endpoints inclusive): the hardware law
+    // switches taper on the gain knob's sign, which a one-knob display can't express
     expect(EQ_BANDS.high.q(0)).toBeCloseTo(0.1);
     expect(EQ_BANDS.high.q(127)).toBeCloseTo(1.4);
   });

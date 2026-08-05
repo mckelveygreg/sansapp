@@ -1,13 +1,29 @@
 /**
  * Raw wire value (0–127) → human display units for the deep-page controls.
  *
- * Calibrated 2026-07-05 by reading EliteControl's own displays at each control's extremes (plus a
- * noon point where the taper is non-linear, to tell linear from log). Framework-free — no
- * react/expo imports. What reaches the pedal is always the raw 0–127 byte; these are display-only.
+ * Two calibration sources, and the denominator differs between them — don't unify it:
+ *
+ *  - **Hardware-model tapers** (the 3-band parametric EQ) follow the pedal's own filter maths
+ *    (src/dsp/eliteFilters.ts, golden-tested against the pedal). The pedal normalises a wire value
+ *    as x = value/128, so the noon detent (64) sits exactly on centre — 0.00 dB, 500 Hz, Q 1.0 —
+ *    and the top of travel (127) stops just shy of the nominal maximum.
+ *
+ *  - **Screenshot-calibrated tapers** (compressor, gate, auto-filter) were read off EliteControl's
+ *    own displays at each control's extremes on 2026-07-05 (plus a noon point where the taper is
+ *    non-linear, to tell linear from log). They divide by 127 so both endpoints land exactly on the
+ *    displayed extremes. Leave these at /127: their laws aren't hardware-verified, and the protocol
+ *    map already disagrees with two of them (see the compressor note below).
+ *
+ * Framework-free — no react/expo imports. What reaches the pedal is always the raw 0–127 byte;
+ * these are display-only.
  */
 
+// Screenshot-calibrated helpers: 0..127 maps onto [lo, hi] inclusive.
 const lin = (r: number, lo: number, hi: number): number => lo + (r / 127) * (hi - lo);
 const logMap = (r: number, lo: number, hi: number): number => lo * (hi / lo) ** (r / 127);
+// Hardware-model helpers: x = value/128 (exactly 0.5 at 64), x' = 2x − 1 (bipolar, 0 at 64).
+const lin128 = (r: number, lo: number, hi: number): number => lo + (r / 128) * (hi - lo);
+const bipolar = (r: number): number => 2 * (r / 128) - 1;
 
 /* ── Compressor ─────────────────────────────────────────────────────────────── */
 // Endpoints below are screenshot-calibrated; the protocol map disagrees on Ratio (16:1) and Release
@@ -43,12 +59,24 @@ export const filterLevelLabel = (r: number): string =>
 export const filterTimePct = (r: number): number => Math.round(lin(r, 0, 100)); // attack & release
 
 /* ── 3-band parametric EQ ────────────────────────────────────────────────────── */
-// Gain is ±12 dB on every band; freq taper + Q range differ per band (measured, see table).
-export const eqGainDb = (r: number): number => lin(r, -12, 12);
+// Hardware-model tapers, matching src/dsp/eliteFilters.ts: gain is 24x − 12 on every band
+// (−12 … +11.8 dB, exactly 0 at 64); Low/High freq are linear in x; Low/Mid Q are exponential
+// (exactly 1.0 at 64). Only High's Q display is still screenshot-calibrated — the hardware law
+// switches taper on the sign of the *gain* knob (a different param), which a one-knob display
+// can't express; it joins the shared filter model when the tone chart moves onto it.
+export const eqGainDb = (r: number): number => lin128(r, -12, 12);
+
+/** Punch and Mid's shared centre-frequency sweep — deliberately asymmetric (300 Hz of travel below
+ * the detent, 1500 above, so the knob feels centred): 200 … 1977 Hz, exactly 500 Hz at 64. */
+export const sweepFreqHz = (r: number): number => {
+  const xp = bipolar(r);
+  return 500 + xp * (xp < 0 ? 300 : 1500);
+};
+
 export const EQ_BANDS = {
-  low: { freq: (r: number) => lin(r, 40, 200), q: (r: number) => lin(r, 0.5, 2.0) },
-  mid: { freq: (r: number) => logMap(r, 200, 2000), q: (r: number) => lin(r, 0.5, 2.0) },
-  high: { freq: (r: number) => lin(r, 1000, 8000), q: (r: number) => lin(r, 0.1, 1.4) },
+  low: { freq: (r: number) => lin128(r, 40, 200), q: (r: number) => 2 ** bipolar(r) },
+  mid: { freq: sweepFreqHz, q: (r: number) => 2 ** (2 * bipolar(r)) },
+  high: { freq: (r: number) => lin128(r, 1000, 8000), q: (r: number) => lin(r, 0.1, 1.4) },
 } as const;
 
 /** Format a frequency the way EliteControl does: "200", "500", "2.0k", "8.0k". */

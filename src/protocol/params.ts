@@ -251,8 +251,10 @@ export const GATE_PARAMS = {
  * 3-band parametric EQ (Low / Mid / High), each with Gain / Freq / Q — captured 2026-07-05 by
  * sweeping every band's deep page. Gain = the main-panel LOW/MID/HIGH knob (0x06/0x0C/0x07); Freq
  * and Q are deep params (the Q ids are consecutive 0x33/0x34/0x35). Display ranges + tapers are in
- * src/protocol/units.ts (EQ_BANDS): Low freq 40–200 Hz linear, Mid 200–2000 Hz log, High 1–8 kHz
- * linear; Q 0.5–2.0 on Low/Mid but 0.1–1.4 on High; gain ±12 dB on all three.
+ * src/protocol/units.ts (EQ_BANDS), following the pedal's own filter maths (x = value/128): gain
+ * 24x − 12 dB on all three; Low freq 40–199 Hz linear, Mid a bipolar 200–1977 Hz sweep centred at
+ * exactly 500 Hz, High 1000–7945 Hz linear; Q exponential 0.5–2 (Low) / 0.25–3.9 (Mid), High's Q
+ * read-out still the screenshot-calibrated 0.1–1.4.
  */
 export const PARAMETRIC_EQ = {
   low: { gain: 0x06, freq: 0x48, q: 0x30 },
