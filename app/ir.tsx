@@ -30,6 +30,7 @@ import { KnobScroll } from "../src/components/KnobScroll";
 import { radius, theme, toneColors } from "../src/components/theme";
 import { blendIr, cascadeIr, generateIr, type IrGenKind } from "../src/dsp/generators";
 import { frequencyResponse, logGrid } from "../src/dsp/ir";
+import { PEDAL_IR_RATE, cabCurveDb, cabResponseAt } from "../src/dsp/tone";
 import { uploadCustomIr } from "../src/midi/bundleIo";
 import { pickFileBytes, saveAndShare } from "../src/midi/exportFile";
 import { loadIrCache, saveIrCache } from "../src/midi/irCache";
@@ -104,11 +105,9 @@ interface Pulled {
   ir: Float64Array;
 }
 
-// The pedal plays its 2400-sample IRs at a fixed rate we haven't pinned exactly (calibration TODO);
-// a nominal rate keeps the curve SHAPE right (x-axis Hz labels are approximate).
-const PEDAL_IR_RATE = 88200;
-const curveOf = (ir: Float64Array): number[] =>
-  frequencyResponse(ir, GRID, { sampleRate: PEDAL_IR_RATE, normalizeBand: [700, 1400] });
+// The pedal-IR display convention (nominal rate + normalize band) is shared with the editor's
+// Tone Shaper — src/dsp/tone.ts owns it.
+const curveOf = (ir: Float64Array): number[] => cabCurveDb(ir, GRID);
 const persist = (map: Record<number, Pulled>): void =>
   void saveIrCache(
     Object.fromEntries(
@@ -409,18 +408,6 @@ function MicStack({
   );
 }
 
-/** Linear blend of two dB curves (either may be null = not pulled). */
-function blendDb(
-  a: readonly number[] | null,
-  b: readonly number[] | null,
-  f: number,
-): number[] | null {
-  if (!a && !b) return null;
-  if (!a) return b!.slice();
-  if (!b) return a.slice();
-  return a.map((v, i) => v * (1 - f) + b[i]! * f);
-}
-
 export default function IrStudio() {
   const { width } = useWindowDimensions();
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
@@ -524,16 +511,11 @@ export default function IrStudio() {
   // user slot with its IR Mode OFF plays the factory cab, whose curve we can't read — treat it as
   // unknown (null) so we never draw the pulled user IR as if it were the active sound.
   const stackDb = useMemo(() => {
-    if (morph <= 0) return FLAT_DB.slice();
-    const rf = morph / 16;
-    const lo = Math.floor(rf);
-    const hi = Math.min(8, Math.ceil(rf));
     const dbAt = (pos: number) => {
-      if (pos <= 0) return FLAT_DB;
       if ((pos === 7 && !irMode7) || (pos === 8 && !irMode8)) return null;
       return pulled[pos]?.db ?? null;
     };
-    return blendDb(dbAt(lo), dbAt(hi), rf - lo);
+    return cabResponseAt(morph, dbAt, FLAT_DB);
   }, [morph, pulled, irMode7, irMode8]);
 
   const stackCurves: IrCurve[] = [

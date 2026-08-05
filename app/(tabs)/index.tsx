@@ -7,7 +7,7 @@ import { Pressable, Text, View } from "react-native";
 import { KnobScroll } from "../../src/components/KnobScroll";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "zustand";
-import { EqCurve } from "../../src/components/EqCurve";
+import { ToneShaper } from "../../src/components/ToneShaper";
 import { KnobPanel } from "../../src/components/KnobPanel";
 import { Section } from "../../src/components/Section";
 import { SectionBar } from "../../src/components/SectionBar";
@@ -74,8 +74,8 @@ export default function Editor() {
       <SectionBar />
 
       <View style={{ gap: 16, opacity: ready ? 1 : 0.55 }}>
-        <Section title="TONE">
-          <EqCurve values={values} />
+        <Section title="TONE SHAPER">
+          <ToneShaper values={values} />
         </Section>
         <Section title="PREAMP · EQ">
           <KnobPanel ids={PREAMP} values={values} baseline={baseline} onChange={setValue} />
