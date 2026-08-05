@@ -11,7 +11,7 @@ import { eqResponse } from "../dsp/eq";
 import { logGrid } from "../dsp/ir";
 import type { ParamId } from "../protocol/params";
 import { IrGraph } from "./IrGraph";
-import { radius, theme } from "./theme";
+import { radius, theme, toneColors } from "./theme";
 
 const GRID = logGrid(30, 18000, 140);
 const PAD = 8;
@@ -47,7 +47,7 @@ export function EqCurve({ values }: { values: Readonly<Partial<Record<ParamId, n
       {boxW > 0 ? (
         <IrGraph
           grid={GRID}
-          curves={[{ db, color: theme.amber, width: 2.4 }]}
+          curves={[{ db, color: toneColors.eq, width: 2.4 }]}
           width={boxW - PAD * 2 - 2}
           height={132}
           dbTop={15}

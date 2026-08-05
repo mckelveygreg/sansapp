@@ -27,7 +27,7 @@ import { useStore } from "zustand";
 import { IrGraph } from "../src/components/IrGraph";
 import type { IrCurve } from "../src/components/IrGraph";
 import { KnobScroll } from "../src/components/KnobScroll";
-import { radius, theme } from "../src/components/theme";
+import { radius, theme, toneColors } from "../src/components/theme";
 import { blendIr, cascadeIr, generateIr, type IrGenKind } from "../src/dsp/generators";
 import { frequencyResponse, logGrid } from "../src/dsp/ir";
 import { uploadCustomIr } from "../src/midi/bundleIo";
@@ -539,11 +539,11 @@ export default function IrStudio() {
   const stackCurves: IrCurve[] = [
     ...Object.values(pulled).map((p) => ({
       db: p.db,
-      color: theme.textDim,
+      color: toneColors.cab,
       width: 1,
       opacity: 0.22,
     })),
-    ...(stackDb ? [{ db: stackDb, color: theme.accent, width: 2.6 }] : []),
+    ...(stackDb ? [{ db: stackDb, color: toneColors.cab, width: 2.6 }] : []),
   ];
 
   // --- CRAFT A CUSTOM IR (Studio) ---
@@ -973,7 +973,7 @@ export default function IrStudio() {
           >
             <IrGraph
               grid={GRID}
-              curves={[{ db: craftDb, color: theme.amber, width: 2.6 }]}
+              curves={[{ db: craftDb, color: toneColors.cab, width: 2.6 }]}
               width={graphW}
               height={170}
               dbTop={18}

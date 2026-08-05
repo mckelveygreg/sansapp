@@ -13,20 +13,16 @@ import { driveResponse } from "../dsp/drive";
 import { logGrid } from "../dsp/ir";
 import type { ParamId } from "../protocol/params";
 import { IrGraph } from "./IrGraph";
-import { radius, theme } from "./theme";
+import { mixHex, radius, theme, toneColors } from "./theme";
 
 const GRID = logGrid(30, 18000, 150);
 const ZERO = GRID.map(() => 0); // the 0 dB baseline the fill shades to
 const H = 160;
 const PAD = 8;
 
-/** Warm amber (low Presence) → hot near-white (high Presence): keeps the amp page's colour cue. */
+/** Warm amber (low Presence) → hot near-white (high Presence): the shared drive-domain gradient. */
 function presenceColor(p: number): string {
-  const t = Math.max(0, Math.min(1, p / 127));
-  const r = Math.round(208 + (255 - 208) * t);
-  const g = Math.round(160 + (252 - 160) * t);
-  const b = Math.round(58 + (235 - 58) * t);
-  return `rgb(${r},${g},${b})`;
+  return mixHex(toneColors.drive.from, toneColors.drive.to, p / 127);
 }
 
 export function AmpVoicePrint({ values }: { values: Readonly<Partial<Record<ParamId, number>>> }) {
