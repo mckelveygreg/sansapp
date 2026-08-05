@@ -308,9 +308,11 @@ export default function Amp() {
         </Text>
         <AmpVoicePrint values={values} />
         <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
-          An artistic read of the drive character — not measured Hz. Pre-Amp = height, Drive squares
-          the peaks, Buzz = fizz, Presence = colour; Punch = line weight, Punch Freq = oscillation
-          spacing, Punch Q = fill.
+          The drive character&apos;s real frequency response: Buzz&apos;s 200 Hz shelf, Punch&apos;s
+          swept bell, and Crunch (the Presence knob) at 2500 Hz, summed exactly as the pedal builds
+          them. A centred Buzz is a slight cut — its unity point is up near ¾ — and Crunch only ever
+          lifts. Pre-Amp and Drive set level and saturation, not tone, so they don&apos;t move the
+          curve.
         </Text>
         <View
           style={{
