@@ -88,6 +88,7 @@ export default function ParametricEq() {
           height={170}
           dbTop={15}
           dbBot={-15}
+          fitData
         />
       </GraphCard>
 
