@@ -3,10 +3,12 @@
  *
  * `decode` NEVER throws — unrecognized input returns `{ kind: "unknown" }`.
  *
- * All messages share the frame `F0 00 51 21  05 <sub> 0A  <args…>  F7` (`0x05` = "data"
- * command, `0x0A` = fixed marker). Big payloads (presets and data blocks) carry a
- * 256-byte body plus a 2-byte 14-bit checksum. Everything below is CONFIRMED from live
- * capture unless noted.
+ * All messages share the frame `F0 00 51 21  05 <sub> <ver>  <args…>  F7` (`0x05` = "data"
+ * command). `<ver>` is the **firmware version × 10** — `0x0A` on firmware 1.0, `0x0B` on 1.1 — not
+ * the fixed marker earlier notes assumed; see {@link DEFAULT_PROTOCOL_VERSION}. Both ends must
+ * agree on it, so `decode` accepts any supported version and `encode` takes the one to send. Big
+ * payloads (presets and data blocks) carry a 256-byte body plus a 2-byte 14-bit checksum.
+ * Everything below is CONFIRMED from live capture unless noted (`0A` shown for firmware 1.0).
  *
  *   app → pedal                         pedal → app (reply / notify)
  *   05 5F 0A            hello           —
@@ -19,6 +21,7 @@
  *   05 20 0A <slot> <256> <ck>  write preset    05 21 F7                  writeAck
  *   05 52 0A <i> <256> <ck>  WRITE data block    05 53 F7                  blockAck
  *   05 6B 0A <i> <256> <ck>  WRITE config block  05 53 F7                  blockAck
+ *   05 56 0A <mode>     factory reset   05 57 F7                  resetAck
  *   —                                   05 51 0A <p> <v>          paramNotify (physical knob)
  *
  * blockAck (05 53 F7, 2-byte no marker) pairs 1:1 with each app block write, exactly like
@@ -35,7 +38,16 @@
  * Framework-free: no React/React Native imports.
  */
 
-import { MANUFACTURER_ID, PRESET_SIZE, SYSEX_END, SYSEX_PREFIX, SYSEX_START } from "./constants";
+import {
+  DEFAULT_PROTOCOL_VERSION,
+  MANUFACTURER_ID,
+  MAX_PROTOCOL_VERSION,
+  MIN_PROTOCOL_VERSION,
+  PRESET_SIZE,
+  SYSEX_END,
+  SYSEX_PREFIX,
+  SYSEX_START,
+} from "./constants";
 
 // sub-command bytes (body[1])
 const SET_PARAM = 0x50;
@@ -52,8 +64,7 @@ const HELLO = 0x5f;
 const CONTROL_5B = 0x5b;
 const IR_UPLOAD_BEGIN_ACK = 0x63; // 05 63 00 F7 — pedal's ack of an IR-upload begin (05 60)
 
-const MARKER = 0x0a;
-const BLOCK_BODY_LEN = 4 + PRESET_SIZE + 2; // sub,marker-pos,index + 256 + 2 checksum
+const BLOCK_BODY_LEN = 4 + PRESET_SIZE + 2; // sub,version,index + 256 + 2 checksum
 
 export type PedalMessage =
   // app → pedal
@@ -91,6 +102,22 @@ export function isPedalSysEx(data: Uint8Array): boolean {
   );
 }
 
+/** True if `v` is a protocol version we can talk (byte 6 = firmware version × 10). */
+export function isSupportedVersion(v: number): boolean {
+  return v >= MIN_PROTOCOL_VERSION && v <= MAX_PROTOCOL_VERSION;
+}
+
+/**
+ * The firmware version byte carried by a framed message, or null if it has none (the short
+ * marker-less acks) or isn't ours. DeviceSession latches this so it replies in the pedal's own
+ * version — the pedal is the authority, whichever version we opened with.
+ */
+export function sysexVersion(data: Uint8Array): number | null {
+  if (!isPedalSysEx(data) || data.length < 8) return null;
+  const v = data[6]!;
+  return isSupportedVersion(v) ? v : null;
+}
+
 export function decode(data: Uint8Array): PedalMessage {
   if (!isPedalSysEx(data)) return { kind: "unknown", data: data.slice() };
   const body = data.subarray(4, data.length - 1); // 05 <sub> [0A <args…>]
@@ -103,7 +130,9 @@ export function decode(data: Uint8Array): PedalMessage {
   if (len === 2) return sub === HELLO ? { kind: "hello" } : { kind: "writeAck", code: sub };
   // IR-upload begin ack is 05 63 00 F7 (a zero arg, not the 0x0A marker) — treat as an ack too.
   if (len === 3 && sub === IR_UPLOAD_BEGIN_ACK) return { kind: "writeAck", code: sub };
-  if (body[2] !== MARKER) return { kind: "unknown", data: data.slice() };
+  // Accept ANY supported version here, not just the one we send: after a firmware update the pedal
+  // switches version (1.0 → 0x0A, 1.1 → 0x0B) and pinning this byte would drop every reply.
+  if (!isSupportedVersion(body[2]!)) return { kind: "unknown", data: data.slice() };
   if (len === 5 && sub === SET_PARAM) return { kind: "setParam", param: body[3]!, value: body[4]! };
   if (len === 5 && sub === PARAM_NOTIFY)
     return { kind: "paramNotify", param: body[3]!, value: body[4]! };
@@ -131,35 +160,43 @@ export function decode(data: Uint8Array): PedalMessage {
   return { kind: "unknown", data: data.slice() };
 }
 
-export function encode(msg: Exclude<PedalMessage, { kind: "unknown" }>): Uint8Array {
+/**
+ * Build the wire bytes for `msg`. `version` is byte 6 — the firmware version the pedal expects
+ * (see {@link DEFAULT_PROTOCOL_VERSION}); DeviceSession passes the version it negotiated.
+ */
+export function encode(
+  msg: Exclude<PedalMessage, { kind: "unknown" }>,
+  version: number = DEFAULT_PROTOCOL_VERSION,
+): Uint8Array {
+  const ver = version & 0x7f;
   switch (msg.kind) {
     case "hello":
-      return frame([0x05, HELLO, MARKER]);
+      return frame([0x05, HELLO, ver]);
     case "control":
-      return frame([0x05, msg.code & 0x7f, MARKER]);
+      return frame([0x05, msg.code & 0x7f, ver]);
     case "writeAck":
       return frame([0x05, msg.code & 0x7f]);
     case "setParam":
-      return frame([0x05, SET_PARAM, MARKER, msg.param & 0x7f, msg.value & 0x7f]);
+      return frame([0x05, SET_PARAM, ver, msg.param & 0x7f, msg.value & 0x7f]);
     case "paramNotify":
-      return frame([0x05, PARAM_NOTIFY, MARKER, msg.param & 0x7f, msg.value & 0x7f]);
+      return frame([0x05, PARAM_NOTIFY, ver, msg.param & 0x7f, msg.value & 0x7f]);
     case "recallPreset":
-      return frame([0x05, RECALL_PRESET, MARKER, msg.slot & 0x7f]);
+      return frame([0x05, RECALL_PRESET, ver, msg.slot & 0x7f]);
     case "requestPreset":
-      return frame([0x05, READ_PRESET, MARKER, msg.slot & 0x7f]);
+      return frame([0x05, READ_PRESET, ver, msg.slot & 0x7f]);
     case "requestBlock":
-      return frame([0x05, msg.reqCode & 0x7f, MARKER, msg.index & 0x7f]);
+      return frame([0x05, msg.reqCode & 0x7f, ver, msg.index & 0x7f]);
     case "presetDump": {
       const [hi, lo] = checksum14(msg.blob);
-      return frame([0x05, PRESET_DUMP, MARKER, msg.slot & 0x7f, ...msg.blob, hi, lo]);
+      return frame([0x05, PRESET_DUMP, ver, msg.slot & 0x7f, ...msg.blob, hi, lo]);
     }
     case "writePreset": {
       const [hi, lo] = checksum14(msg.blob);
-      return frame([0x05, WRITE_PRESET, MARKER, msg.slot & 0x7f, ...msg.blob, hi, lo]);
+      return frame([0x05, WRITE_PRESET, ver, msg.slot & 0x7f, ...msg.blob, hi, lo]);
     }
     case "block": {
       const [hi, lo] = checksum14(msg.data);
-      return frame([0x05, msg.blockCode & 0x7f, MARKER, msg.index & 0x7f, ...msg.data, hi, lo]);
+      return frame([0x05, msg.blockCode & 0x7f, ver, msg.index & 0x7f, ...msg.data, hi, lo]);
     }
   }
 }

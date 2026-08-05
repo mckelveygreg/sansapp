@@ -15,6 +15,9 @@ import { sendParam } from "../src/midi/liveParam";
 import { pedalStore } from "../src/midi/pedal";
 import { CHORUS_PARAMS, type ParamId } from "../src/protocol/params";
 
+/** LEVEL that Mod Depth auto-lifts to when the chorus is at Bypass — EliteControl 1.1 uses 64. */
+const CHORUS_LEVEL_AUTO = 64;
+
 const pct = (v: number) => `${Math.round((v / 127) * 100)}%`;
 const bipolarPct = (v: number) => {
   const n = Math.round((v / 127) * 200 - 100);
@@ -54,6 +57,12 @@ export default function Chorus() {
   const set = (storeId: ParamId, param: number) => (val: number) => {
     sendParam(param, val);
     pedalStore.getState().setValueLocal(storeId, val);
+    // Parity with EliteControl 1.1: moving Mod Depth while LEVEL is 0 (Bypass) is inaudible, so it
+    // lifts LEVEL to half. Same behaviour, same value — see PROTOCOL-MAP §8.2.
+    if (storeId === "chorusModDepth" && (pedalStore.getState().values.chorus ?? 0) === 0) {
+      sendParam(CHORUS_PARAMS.level, CHORUS_LEVEL_AUTO);
+      pedalStore.getState().setValueLocal("chorus", CHORUS_LEVEL_AUTO);
+    }
   };
   const toggleOn = (on: boolean) => {
     sendParam(CHORUS_PARAMS.on, on ? 1 : 0);

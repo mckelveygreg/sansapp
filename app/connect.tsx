@@ -6,9 +6,14 @@ import { useStore } from "zustand";
 import { ConnectionPill } from "../src/components/ConnectionPill";
 import { radius, theme } from "../src/components/theme";
 import { connectPedal, disconnectPedal, loadDemoState, pedalStore } from "../src/midi/pedal";
+import { DEFAULT_PROTOCOL_VERSION } from "../src/protocol/constants";
+
+/** Newest firmware we know of — below this the pedal gets an (advisory, non-blocking) update notice. */
+const LATEST_FIRMWARE = DEFAULT_PROTOCOL_VERSION / 10;
 
 export default function Connect() {
   const connection = useStore(pedalStore, (s) => s.connection);
+  const firmware = useStore(pedalStore, (s) => s.firmware);
   const [error, setError] = useState<string | null>(null);
   // sansapp://connect?auto=1 connects on open — a Shortcuts-friendly quick-connect, and what
   // tools/screenshots.ts uses to drive the app. ?demo=1 loads synthetic state (no hardware) so the
@@ -79,6 +84,34 @@ export default function Connect() {
         >
           <Text style={{ color: theme.textDim }}>Disconnect</Text>
         </Pressable>
+      ) : null}
+
+      {connection === "ready" && firmware !== null ? (
+        <View
+          style={{
+            backgroundColor: theme.panel,
+            borderColor: firmware < LATEST_FIRMWARE ? theme.accent : theme.panelEdge,
+            borderWidth: 1,
+            borderRadius: radius,
+            padding: 14,
+            gap: 8,
+          }}
+        >
+          <Text style={{ color: theme.text, fontWeight: "600" }}>
+            Pedal firmware {firmware.toFixed(1)}
+            {firmware < LATEST_FIRMWARE ? "  —  update available" : "  —  up to date"}
+          </Text>
+          {firmware < LATEST_FIRMWARE ? (
+            <Text style={{ color: theme.textDim, lineHeight: 20 }}>
+              SansApp works on {firmware.toFixed(1)}, so you don't have to update — but firmware{" "}
+              {LATEST_FIRMWARE.toFixed(1)} adds Bypass in Studio mode (engage the tuner, then press
+              the button again) and is what Tech 21's own editor now requires.{"\n"}To update: back
+              up your presets first (Backup tab → Export), then run Tech 21's ELITE Control desktop
+              editor over USB and use its firmware update. Reconnect here afterwards — SansApp
+              detects the new version automatically.
+            </Text>
+          ) : null}
+        </View>
       ) : null}
 
       <View

@@ -6,8 +6,9 @@
 
 import { PARAM_IDS, PARAMS, liveSetId } from "../protocol/params";
 import type { ParamId } from "../protocol/params";
-import { decode, encode } from "../protocol/messages";
+import { decode, encode, sysexVersion } from "../protocol/messages";
 import type { PedalMessage } from "../protocol/messages";
+import { DEFAULT_PROTOCOL_VERSION, PROTOCOL_VERSIONS } from "../protocol/constants";
 import { decodePreset } from "../protocol/preset";
 import type { Preset } from "../protocol/preset";
 import { SysExReassembler } from "./transport";
@@ -111,6 +112,12 @@ export class DeviceSession {
   private readonly liveParams = new Map<number, LiveParam>();
   /** True while a withExclusive block owns the link — the heartbeat probe suspends for its duration. */
   private exclusive = false;
+  /** Byte 6 we put on the wire: the pedal's firmware version × 10. Starts at the newest firmware,
+   * gets corrected by the connect probe and by whatever the pedal actually replies with. */
+  private version: number = DEFAULT_PROTOCOL_VERSION;
+  /** The version the pedal itself sent, once we've heard a version-bearing message from it. */
+  private observedVersion: number | null = null;
+  private readonly versionCbs = new Set<(firmware: number) => void>();
 
   constructor(
     private readonly io: MidiIO,
@@ -121,7 +128,43 @@ export class DeviceSession {
      * app sets ~150 for Bluetooth, tests/USB tools leave it 0). */
     private readonly sendGapMs = 0,
   ) {
-    this.unsub = io.onMessage((raw) => this.reasm.push(raw, (m) => this.handleIncoming(decode(m))));
+    this.unsub = io.onMessage((raw) =>
+      this.reasm.push(raw, (m) => {
+        this.adoptVersion(sysexVersion(m));
+        this.handleIncoming(decode(m));
+      }),
+    );
+  }
+
+  /**
+   * The pedal's firmware version as a number (1.0, 1.1, …), or null until it has told us. Byte 6 of
+   * every framed message is that version × 10 — see {@link DEFAULT_PROTOCOL_VERSION}.
+   */
+  get firmwareVersion(): number | null {
+    return this.observedVersion === null ? null : this.observedVersion / 10;
+  }
+
+  /** The raw protocol version byte currently used for outbound messages (byte 6). */
+  get protocolVersion(): number {
+    return this.version;
+  }
+
+  /** Fires when the pedal's firmware version becomes known or changes (argument: 1.0, 1.1, …). */
+  onFirmwareVersion(cb: (firmware: number) => void): () => void {
+    this.versionCbs.add(cb);
+    if (this.observedVersion !== null) cb(this.observedVersion / 10);
+    return () => this.versionCbs.delete(cb);
+  }
+
+  /**
+   * Latch the version the PEDAL used. It is the authority: whatever we opened the conversation with,
+   * we answer in its version from here on, so a firmware update mid-life doesn't strand the session.
+   */
+  private adoptVersion(v: number | null): void {
+    if (v === null || v === this.observedVersion) return;
+    this.observedVersion = v;
+    this.version = v;
+    for (const cb of this.versionCbs) cb(v / 10);
   }
 
   onState(cb: (s: ConnectionState) => void): () => void {
@@ -154,16 +197,7 @@ export class DeviceSession {
   async connect(): Promise<void> {
     this.setState("connecting");
     try {
-      this.send({ kind: "hello" });
-      // Pace the handshake for BLE. Over the WIDI/Bluetooth link the pedal drops a read that arrives
-      // in the same connection interval as the hello (verified 2026-07-14: back-to-back hello+read
-      // timed out, the same read with a gap replied instantly). Fire-and-forget sends need this gap;
-      // the awaited block reads below are naturally paced by their round-trips.
-      await this.delay(this.sendGapMs);
-      await this.request(
-        { kind: "requestBlock", reqCode: 0x6a, index: 0 },
-        (m) => m.kind === "block" && m.blockCode === 0x6b,
-      );
+      await this.helloWithVersionProbe();
       for (const index of [0x0f, 0x03, 0x00]) {
         await this.delay(this.sendGapMs);
         await this.request(
@@ -182,6 +216,41 @@ export class DeviceSession {
       this.setState("disconnected");
       throw e;
     }
+  }
+
+  /**
+   * hello + the first config-block read, retried once per candidate protocol version.
+   *
+   * Byte 6 of every message is the firmware version and the pedal only answers its own (firmware 1.0
+   * = 0x0A, 1.1 = 0x0B), so the version has to be settled before anything else can round-trip. We
+   * try the newest first; a timeout means "wrong version", not "no pedal", so we fall back and retry
+   * rather than failing the connect. Once a reply lands, adoptVersion() latches the pedal's own byte.
+   */
+  private async helloWithVersionProbe(): Promise<void> {
+    const candidates =
+      this.observedVersion === null
+        ? PROTOCOL_VERSIONS
+        : [this.observedVersion, ...PROTOCOL_VERSIONS];
+    let lastError: unknown;
+    for (const version of new Set(candidates)) {
+      this.version = version;
+      try {
+        this.send({ kind: "hello" });
+        // Pace the handshake for BLE. Over the WIDI/Bluetooth link the pedal drops a read that arrives
+        // in the same connection interval as the hello (verified 2026-07-14: back-to-back hello+read
+        // timed out, the same read with a gap replied instantly). Fire-and-forget sends need this gap;
+        // the awaited block reads below are naturally paced by their round-trips.
+        await this.delay(this.sendGapMs);
+        await this.request(
+          { kind: "requestBlock", reqCode: 0x6a, index: 0 },
+          (m) => m.kind === "block" && m.blockCode === 0x6b,
+        );
+        return;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("connect handshake failed");
   }
 
   /** Read a stored preset (or slot 0x7F = program 127, which doesn't track live edits) without
@@ -525,7 +594,7 @@ export class DeviceSession {
   }
 
   private send(m: Exclude<PedalMessage, { kind: "unknown" }>): void {
-    this.rawSend(encode(m));
+    this.rawSend(encode(m, this.version));
   }
 
   /**

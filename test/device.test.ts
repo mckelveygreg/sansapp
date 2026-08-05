@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { decode, encode } from "../src/protocol/messages";
+import { decode, encode, sysexVersion } from "../src/protocol/messages";
+import { PROTOCOL_V1_0, PROTOCOL_V1_1 } from "../src/protocol/constants";
 import { readAllPresets } from "../src/device/library";
 import { PedalModel } from "../src/device/pedalModel";
 import { DeviceSession } from "../src/device/session";
@@ -185,6 +186,65 @@ describe("DeviceSession ↔ PedalModel", () => {
     for (let i = 1; i < seen.length; i++) {
       expect(seen[i]!.t - seen[i - 1]!.t).toBeGreaterThanOrEqual(GAP - 10);
     }
+  });
+});
+
+// ── Firmware-version negotiation (byte 6) ───────────────────────────────────────────────────────
+// Firmware 1.1 changed byte 6 from 0x0A to 0x0B and the pedal answers only its own version, so a
+// build pinned to one version goes silent against the other. These prove one SansApp build talks to
+// both: it probes, then mirrors whatever version the pedal replies in.
+
+/** Wire a model that IGNORES any message not in `version` — how the real pedal behaves. */
+function wireModelAtVersion(io: MidiIO, model: PedalModel, version: number): void {
+  io.onMessage((bytes) => {
+    if (sysexVersion(bytes) !== version) return; // wrong firmware version: pedal stays silent
+    for (const reply of model.handle(decode(bytes))) io.send(encode(reply, version));
+  });
+}
+
+describe("protocol version negotiation", () => {
+  it("connects to a firmware 1.1 pedal and reports 1.1", async () => {
+    const [appIO, devIO] = createLoopback();
+    wireModelAtVersion(devIO, new PedalModel(makePresets()), PROTOCOL_V1_1);
+    const session = new DeviceSession(appIO, 300);
+
+    await session.connect();
+    expect(session.state).toBe("ready");
+    expect(session.firmwareVersion).toBe(1.1);
+    expect(session.protocolVersion).toBe(PROTOCOL_V1_1);
+  });
+
+  it("falls back and connects to a firmware 1.0 pedal, then speaks 1.0", async () => {
+    const [appIO, devIO] = createLoopback();
+    wireModelAtVersion(devIO, new PedalModel(makePresets()), PROTOCOL_V1_0);
+    const session = new DeviceSession(appIO, 300);
+    const seen: number[] = [];
+    session.onFirmwareVersion((v) => seen.push(v));
+
+    await session.connect();
+    expect(session.state).toBe("ready");
+    expect(session.firmwareVersion).toBe(1.0);
+    expect(session.protocolVersion).toBe(PROTOCOL_V1_0);
+    expect(seen).toEqual([1.0]);
+
+    // and everything AFTER the handshake keeps using 1.0 — a read must still round-trip
+    const p5 = await session.readPreset(5);
+    expect(p5.raw[0x27]).toBe(5);
+  });
+
+  it("outbound sends carry the negotiated version byte", async () => {
+    const [appIO, devIO] = createLoopback();
+    wireModelAtVersion(devIO, new PedalModel(makePresets()), PROTOCOL_V1_0);
+    const sent: Uint8Array[] = [];
+    devIO.onMessage((b) => sent.push(b.slice()));
+    const session = new DeviceSession(appIO, 300);
+    await session.connect();
+
+    session.setLiveParam(0x05, 0x28);
+    await new Promise((r) => setTimeout(r, 80));
+    const setParams = sent.filter((b) => b[5] === 0x50);
+    expect(setParams.length).toBeGreaterThan(0);
+    expect(setParams.every((b) => b[6] === PROTOCOL_V1_0)).toBe(true);
   });
 });
 

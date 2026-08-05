@@ -56,12 +56,13 @@ async function main(): Promise<void> {
   await session.connect();
   console.log("handshake ok — requesting blocks…\n");
 
+  const version = session.protocolVersion; // negotiated by connect() — 0x0A on fw 1.0, 0x0B on 1.1
   for (let i = 0; i <= 3; i++) {
-    io.send(encodeRequest(0x6a, i));
+    io.send(encodeRequest(0x6a, i, version));
     await sleep(120);
   }
   for (let i = 0; i <= 16; i++) {
-    io.send(encodeRequest(0x55, i));
+    io.send(encodeRequest(0x55, i, version));
     await sleep(120);
   }
   await sleep(300);
@@ -83,8 +84,8 @@ async function main(): Promise<void> {
   session.disconnect();
 }
 
-function encodeRequest(reqCode: number, index: number): Uint8Array {
-  return Uint8Array.of(0xf0, 0x00, 0x51, 0x21, 0x05, reqCode, 0x0a, index & 0x7f, 0xf7);
+function encodeRequest(reqCode: number, index: number, version: number): Uint8Array {
+  return Uint8Array.of(0xf0, 0x00, 0x51, 0x21, 0x05, reqCode, version & 0x7f, index & 0x7f, 0xf7);
 }
 
 main().catch((e) => {
