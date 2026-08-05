@@ -20,7 +20,7 @@ import { IrGraph } from "../src/components/IrGraph";
 import type { IrCurve } from "../src/components/IrGraph";
 import { Knob } from "../src/components/Knob";
 import { FootNote, GraphCard, IntroNote } from "../src/components/panels";
-import { radius, theme } from "../src/components/theme";
+import { radius, theme, toneColors } from "../src/components/theme";
 import { generateIr } from "../src/dsp/generators";
 import { frequencyResponse, logGrid } from "../src/dsp/ir";
 import { PARAMS, type ParamId } from "../src/protocol/params";
@@ -64,7 +64,13 @@ export default function AutoFilter() {
   );
   const curves: IrCurve[] = [
     { db: resting, color: theme.textDim, width: 1.6, opacity: 0.7 },
-    { db: swept, color: theme.amber, width: 2.6, fillFrom: resting, fillColor: theme.amber },
+    {
+      db: swept,
+      color: toneColors.autoFilter,
+      width: 2.6,
+      fillFrom: resting,
+      fillColor: toneColors.autoFilter,
+    },
   ];
 
   // Store-backed: send the live edit (index → liveSetId inside sendParam) + record it for read-back.

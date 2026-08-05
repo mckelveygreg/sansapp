@@ -12,7 +12,7 @@ import { useStore } from "zustand";
 import { IrGraph } from "../src/components/IrGraph";
 import { Knob } from "../src/components/Knob";
 import { FootNote, GraphCard, IntroNote } from "../src/components/panels";
-import { radius, theme } from "../src/components/theme";
+import { radius, theme, toneColors } from "../src/components/theme";
 import { designEliteFilter } from "../src/dsp/eliteFilters";
 import { eqResponse } from "../src/dsp/eq";
 import { logGrid } from "../src/dsp/ir";
@@ -83,7 +83,7 @@ export default function ParametricEq() {
       <GraphCard>
         <IrGraph
           grid={GRID}
-          curves={[{ db, color: theme.amber, width: 2.4 }]}
+          curves={[{ db, color: toneColors.eq, width: 2.4 }]}
           width={width - 32 - 18}
           height={170}
           dbTop={15}
