@@ -132,9 +132,10 @@ export default function ParametricEq() {
       ))}
 
       <FootNote>
-        Live over MIDI when connected. All bands reflect the loaded preset and are calibrated to
-        EliteControl&apos;s read-outs. The curve is a representative model (Low/High as shelves, Mid
-        as a bell) — the exact filter shapes aren&apos;t measured.
+        Live over MIDI when connected. All bands reflect the loaded preset; read-outs follow the
+        pedal&apos;s own tapers (exactly 0 dB, 500 Hz and Q 1.0 at the noon detents). The curve is a
+        representative model (Low/High as shelves, Mid as a bell) — the exact filter shapes arrive
+        with the tone-chart rework.
       </FootNote>
     </KnobScroll>
   );
