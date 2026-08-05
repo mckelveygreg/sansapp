@@ -1,0 +1,23 @@
+# Auto-approve the maintainer's own PRs so `gh pr merge --auto` can land them once CI is
+# green. The `protect main` ruleset still requires 1 approving review; this workflow's
+# approval satisfies it ONLY for PRs authored by @mckelveygreg — anyone else's PR still
+# waits for a real review. Runs from the base branch (pull_request_target) and checks
+# nothing out, so PR code never executes here.
+name: Auto-approve maintainer PRs
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  approve:
+    if: github.event.pull_request.user.login == 'mckelveygreg' && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh pr review "$PR_URL" --approve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
