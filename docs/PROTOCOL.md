@@ -126,15 +126,23 @@ indices; the +4 rule reconciles the two.)
 **3-band parametric EQ (deep pages)** ✅: Low/Mid/High each have Gain/Freq/Q. Gain = the main
 LOW/MID/HIGH knob; Freq/Q are deep params. `PARAMETRIC_EQ` in `params.ts`.
 
-| Band | Gain   | Freq   | Q      | Freq range (taper) | Q range |
-| ---- | ------ | ------ | ------ | ------------------ | ------- |
-| Low  | `0x06` | `0x48` | `0x30` | 40–200 Hz (linear) | 0.5–2.0 |
-| Mid  | `0x0C` | `0x0D` | `0x2F` | 200–2000 Hz (log)  | 0.5–2.0 |
-| High | `0x07` | `0x49` | `0x31` | 1–8 kHz (linear)   | 0.1–1.4 |
+| Band | Gain   | Freq   | Q      | Freq range (taper)                    | Q range (taper)             |
+| ---- | ------ | ------ | ------ | ------------------------------------- | --------------------------- |
+| Low  | `0x06` | `0x48` | `0x30` | 40–199 Hz (linear)                    | 0.5–2.0 (exponential)       |
+| Mid  | `0x0C` | `0x0D` | `0x2F` | 200–1977 Hz (bipolar, 500 Hz at noon) | 0.25–3.9 (exponential)      |
+| High | `0x07` | `0x49` | `0x31` | 1000–7945 Hz (linear)                 | exponential, gain-dependent |
 
-Gain is **±12 dB** on all three. The app models the EQ as Low shelf · Mid bell · High shelf (classic
-SansAmp topology); shelf-vs-bell isn't confirmed from a curve. Modelled in `src/dsp/eq.ts`; live on
-the **Parametric EQ** screen (`app/eq.tsx`). Note **High Freq (index `0x49`) is set on `0x4D`** (the
+Every taper normalises the wire value as x = value/128, so the noon detent (64) sits exactly on
+centre; gain is 24x − 12 dB on all three (−12 … +11.8, exactly 0 at 64). The filter shapes are not
+fixed: **Low and High switch shape on the sign of the gain** — a cut is a shelf, a boost is a
+peaking bell — and High runs its section twice, trimming what it hands the designer (gain ×0.75 and
+Q ×0.6 on boost, Q ×0.7 on cut). Mid is always a peaking bell; its centre sweep is deliberately
+asymmetric (300 Hz of travel below the 500 Hz detent, 1500 above) so the knob feels centred. The
+front-panel **Presence** knob is a fourth tone filter: a peaking bell fixed at 2500 Hz, cascaded ×2,
+and **boost-only** (gain 12x, 0 … +11.9 dB — value 0 is flat; it cannot cut). All of this is the
+hardware-verified model in `src/dsp/eliteFilters.ts` (golden-tested against the pedal); the tone
+charts build on it in `src/dsp/eq.ts`, live on the **Parametric EQ** screen (`app/eq.tsx`).
+Note **High Freq (index `0x49`) is set on `0x4D`** (the
 +4 rule) — and `0x4D` is also the red-shift footswitch's notify id. Since High Freq has no physical
 knob, a _notify_ of `0x4D` is unambiguously the footswitch, never High Freq.
 

@@ -1,7 +1,8 @@
 /**
- * EqCurve — a live tone-stack graph driven by the current EQ knob values. Reuses IrGraph;
- * the curve updates as Low/Mid/High/Freq/Q change. (Presence is a preamp voicing control, not a
- * measured EQ shelf, so it's not drawn here — it lives on the Amp page.) Sizes to its actual
+ * EqCurve — a live tone-stack graph driven by the current EQ knob values, drawn from the pedal's
+ * own filter model (src/dsp/eq.ts → eliteFilters.ts), including each band's deep Freq/Q params.
+ * (Presence is a preamp voicing control, not one of the 3 bands, so it's not drawn here — it lives
+ * on the Amp page.) Sizes to its actual
  * container via onLayout (it lives inside a padded Section, so a window-width guess overflowed).
  */
 import { useState } from "react";
@@ -25,6 +26,10 @@ export function EqCurve({ values }: { values: Readonly<Partial<Record<ParamId, n
       high: v("high"),
       freq: v("freq"),
       q: v("q"),
+      lowFreq: v("lowFreq"),
+      lowQ: v("lowQ"),
+      highFreq: v("highFreq"),
+      highQ: v("highQ"),
     },
     GRID,
   );

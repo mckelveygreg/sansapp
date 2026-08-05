@@ -1,10 +1,10 @@
 /**
  * Parametric EQ — the Elite's 3-band Low/Mid/High EQ, each with Gain/Freq/Q, LIVE over MIDI.
  * Gain = the main LOW/MID/HIGH knob (0x06/0x0C/0x07); Freq/Q are the deep params: low 0x48/0x30, mid
- * 0x0D/0x2f, high 0x49/0x31. The graph is the combined tone response; ranges/tapers are the
- * hardware-calibrated values in src/protocol/units.ts. All bands read live from the store (so they
- * reflect the loaded preset and match the editor's tone chart); adjusting a control sends it to the
- * pedal. RN app surface.
+ * 0x0D/0x2f, high 0x49/0x31. The graph is the combined tone response and the Freq/Q read-outs are
+ * the designer's own values, both from the pedal's filter model (src/dsp/eliteFilters.ts). All
+ * bands read live from the store (so they reflect the loaded preset and match the editor's tone
+ * chart); adjusting a control sends it to the pedal. RN app surface.
  */
 import { Text, useWindowDimensions, View } from "react-native";
 import { KnobScroll } from "../src/components/KnobScroll";
@@ -13,19 +13,20 @@ import { IrGraph } from "../src/components/IrGraph";
 import { Knob } from "../src/components/Knob";
 import { FootNote, GraphCard, IntroNote } from "../src/components/panels";
 import { radius, theme } from "../src/components/theme";
+import { designEliteFilter } from "../src/dsp/eliteFilters";
 import { eqResponse } from "../src/dsp/eq";
 import { logGrid } from "../src/dsp/ir";
 import { PARAMETRIC_EQ, type ParamId } from "../src/protocol/params";
-import { EQ_BANDS, eqGainDb, fmtHz } from "../src/protocol/units";
+import { eqGainDb, fmtHz } from "../src/protocol/units";
 import { sendParam } from "../src/midi/liveParam";
 import { pedalStore } from "../src/midi/pedal";
 
 const GRID = logGrid(30, 18000, 150);
 
 const BANDS = [
-  { key: "low", label: "LOW", ids: PARAMETRIC_EQ.low, band: EQ_BANDS.low },
-  { key: "mid", label: "MID", ids: PARAMETRIC_EQ.mid, band: EQ_BANDS.mid },
-  { key: "high", label: "HIGH", ids: PARAMETRIC_EQ.high, band: EQ_BANDS.high },
+  { key: "low", label: "LOW", ids: PARAMETRIC_EQ.low },
+  { key: "mid", label: "MID", ids: PARAMETRIC_EQ.mid },
+  { key: "high", label: "HIGH", ids: PARAMETRIC_EQ.high },
 ] as const;
 
 // Every EQ control maps to a preset-synced store ParamId (blob offsets recovered 2026-07-07).
@@ -90,52 +91,63 @@ export default function ParametricEq() {
         />
       </GraphCard>
 
-      {BANDS.map((b) => (
-        <View
-          key={b.key}
-          style={{
-            backgroundColor: theme.panel,
-            borderColor: theme.panelEdge,
-            borderWidth: 1,
-            borderRadius: radius,
-            padding: 16,
-            gap: 14,
-          }}
-        >
-          <Text style={{ color: theme.accent, fontWeight: "700", letterSpacing: 1 }}>
-            {b.label}
-          </Text>
-          <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
-            <Knob
-              label="Gain"
-              value={read(`${b.key}Gain`)}
-              ghost={ghostOf(`${b.key}Gain`)}
-              display={`${eqGainDb(read(`${b.key}Gain`)).toFixed(0)}dB`}
-              onChange={set(`${b.key}Gain`, b.ids.gain)}
-            />
-            <Knob
-              label="Freq"
-              value={read(`${b.key}Freq`)}
-              ghost={ghostOf(`${b.key}Freq`)}
-              display={fmtHz(b.band.freq(read(`${b.key}Freq`)))}
-              onChange={set(`${b.key}Freq`, b.ids.freq)}
-            />
-            <Knob
-              label="Q"
-              value={read(`${b.key}Q`)}
-              ghost={ghostOf(`${b.key}Q`)}
-              display={b.band.q(read(`${b.key}Q`)).toFixed(1)}
-              onChange={set(`${b.key}Q`, b.ids.q)}
-            />
+      {BANDS.map((b) => {
+        // The pedal's designer supplies the read-outs: freq in Hz and the actual filter Q,
+        // per-band trims included. High needs the gain too — its Q law switches on the gain sign.
+        const design = designEliteFilter(
+          b.key,
+          read(`${b.key}Gain`),
+          read(`${b.key}Freq`),
+          read(`${b.key}Q`),
+        );
+        return (
+          <View
+            key={b.key}
+            style={{
+              backgroundColor: theme.panel,
+              borderColor: theme.panelEdge,
+              borderWidth: 1,
+              borderRadius: radius,
+              padding: 16,
+              gap: 14,
+            }}
+          >
+            <Text style={{ color: theme.accent, fontWeight: "700", letterSpacing: 1 }}>
+              {b.label}
+            </Text>
+            <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
+              <Knob
+                label="Gain"
+                value={read(`${b.key}Gain`)}
+                ghost={ghostOf(`${b.key}Gain`)}
+                display={`${eqGainDb(read(`${b.key}Gain`)).toFixed(0)}dB`}
+                onChange={set(`${b.key}Gain`, b.ids.gain)}
+              />
+              <Knob
+                label="Freq"
+                value={read(`${b.key}Freq`)}
+                ghost={ghostOf(`${b.key}Freq`)}
+                display={fmtHz(design.freqHz)}
+                onChange={set(`${b.key}Freq`, b.ids.freq)}
+              />
+              <Knob
+                label="Q"
+                value={read(`${b.key}Q`)}
+                ghost={ghostOf(`${b.key}Q`)}
+                display={design.q.toFixed(1)}
+                onChange={set(`${b.key}Q`, b.ids.q)}
+              />
+            </View>
           </View>
-        </View>
-      ))}
+        );
+      })}
 
       <FootNote>
-        Live over MIDI when connected. All bands reflect the loaded preset; read-outs follow the
-        pedal&apos;s own tapers (exactly 0 dB, 500 Hz and Q 1.0 at the noon detents). The curve is a
-        representative model (Low/High as shelves, Mid as a bell) — the exact filter shapes arrive
-        with the tone-chart rework.
+        Live over MIDI when connected. All bands reflect the loaded preset; the curve and read-outs
+        are the pedal&apos;s own filter model (exactly 0 dB and 500 Hz at the noon detents). Boosts
+        are peaking bells and Low/High cuts become shelves, so the shape changes as Gain crosses
+        noon; High runs its filter twice, and its Q read-out includes the pedal&apos;s boost/cut
+        trims.
       </FootNote>
     </KnobScroll>
   );

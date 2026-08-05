@@ -3,10 +3,12 @@
  *
  * Two calibration sources, and the denominator differs between them — don't unify it:
  *
- *  - **Hardware-model tapers** (the 3-band parametric EQ) follow the pedal's own filter maths
- *    (src/dsp/eliteFilters.ts, golden-tested against the pedal). The pedal normalises a wire value
- *    as x = value/128, so the noon detent (64) sits exactly on centre — 0.00 dB, 500 Hz, Q 1.0 —
- *    and the top of travel (127) stops just shy of the nominal maximum.
+ *  - **Hardware-model tapers** (EQ gain, the Punch/Mid frequency sweep) follow the pedal's own
+ *    filter maths (src/dsp/eliteFilters.ts, golden-tested against the pedal). The pedal normalises
+ *    a wire value as x = value/128, so the noon detent (64) sits exactly on centre — 0.00 dB,
+ *    500 Hz — and the top of travel (127) stops just shy of the nominal maximum. Every OTHER EQ
+ *    taper (band freq/Q, the boost/cut shape switching) lives in eliteFilters.ts itself: derive
+ *    read-outs from designEliteFilter, so each law has exactly one home.
  *
  *  - **Screenshot-calibrated tapers** (compressor, gate, auto-filter) were read off EliteControl's
  *    own displays at each control's extremes on 2026-07-05 (plus a noon point where the taper is
@@ -59,11 +61,9 @@ export const filterLevelLabel = (r: number): string =>
 export const filterTimePct = (r: number): number => Math.round(lin(r, 0, 100)); // attack & release
 
 /* ── 3-band parametric EQ ────────────────────────────────────────────────────── */
-// Hardware-model tapers, matching src/dsp/eliteFilters.ts: gain is 24x − 12 on every band
-// (−12 … +11.8 dB, exactly 0 at 64); Low/High freq are linear in x; Low/Mid Q are exponential
-// (exactly 1.0 at 64). Only High's Q display is still screenshot-calibrated — the hardware law
-// switches taper on the sign of the *gain* knob (a different param), which a one-knob display
-// can't express; it joins the shared filter model when the tone chart moves onto it.
+// Hardware-model tapers shared with src/dsp/eliteFilters.ts. Only the two laws that other code
+// needs directly live here; every band freq/Q taper is in eliteFilters.ts (designEliteFilter).
+// Gain is 24x − 12 on every band: −12 … +11.8 dB, exactly 0 at 64.
 export const eqGainDb = (r: number): number => lin128(r, -12, 12);
 
 /** Punch and Mid's shared centre-frequency sweep — deliberately asymmetric (300 Hz of travel below
@@ -72,12 +72,6 @@ export const sweepFreqHz = (r: number): number => {
   const xp = bipolar(r);
   return 500 + xp * (xp < 0 ? 300 : 1500);
 };
-
-export const EQ_BANDS = {
-  low: { freq: (r: number) => lin128(r, 40, 200), q: (r: number) => 2 ** bipolar(r) },
-  mid: { freq: sweepFreqHz, q: (r: number) => 2 ** (2 * bipolar(r)) },
-  high: { freq: (r: number) => lin128(r, 1000, 8000), q: (r: number) => lin(r, 0.1, 1.4) },
-} as const;
 
 /** Format a frequency the way EliteControl does: "200", "500", "2.0k", "8.0k". */
 export const fmtHz = (hz: number): string =>
