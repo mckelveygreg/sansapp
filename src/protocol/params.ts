@@ -285,6 +285,21 @@ export const PARAMETRIC_EQ = {
 export const KNOB_LAYER_NOTIFY_PARAM = 0x4d;
 
 /**
+ * Firmware 1.1 made the red footswitch an effects toggle, not just a knob-layer shift: engaging it
+ * turns the Red Zone effects ON and disengaging turns them OFF, by force-setting exactly these two
+ * params — Auto Filter enable (0x3c) and Chorus enable (0x41) — to 1/0 on the pedal. (The audible
+ * reverb/ambience drop rides the same toggle inside the DSP; there is no separate reverb-enable
+ * param.) The pedal does NOT notify 0x3c/0x41 individually — the ONLY wire traffic is the 0x4d
+ * notify above — so on firmware ≥ 1.1 the app must mirror both flags itself when it sees one, or
+ * its toggles go stale and the next save-from-state writes the pre-toggle flags back to the pedal.
+ * On firmware 1.0 the switch did not touch these params, so the mirror must be version-gated.
+ */
+export const RED_ZONE_TOGGLE_PARAMS: readonly ParamId[] = ["autoFilterOn", "chorusOn"];
+
+/** First firmware version whose red footswitch force-sets {@link RED_ZONE_TOGGLE_PARAMS}. */
+export const RED_ZONE_TOGGLE_MIN_FIRMWARE = 1.1;
+
+/**
  * Per-USER-IR makeup gain scaling. The gain params themselves are the store-backed `irGain7`/`irGain8`
  * registry entries above (slot 7 = idx 0x2a, slot 8 = idx 0x2b); this is the wire↔dB conversion the IR
  * page uses. Range 0–127 maps **linearly to ±{@link USER_IR_GAIN_DB_RANGE} dB**: `dB = value/127·24 −
