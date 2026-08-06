@@ -29,6 +29,9 @@ export const toneColors = {
   cab: "#2ba59a",
   /** Auto-filter sweep — its own violet, distinct from the EQ's amber. */
   autoFilter: "#8d7ce6",
+  /** Soft Clip's level-gated HF smoother — a dark magenta: warm like the "hot signal" that engages
+   * it, but well clear of the accent red (an interaction/status color, never a curve). */
+  softClip: "#993f94",
 } as const;
 
 /** Linear mix of two #rrggbb colors, t in 0..1 (e.g. the drive gradient's Presence tint). */

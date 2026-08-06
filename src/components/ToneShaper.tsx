@@ -1,17 +1,18 @@
 /**
- * ToneShaper — the combined tone view: drive + EQ + cab on one log-frequency axis, replacing the
- * editor's old EQ-only glance graph. The master line is the summed drive + EQ response from the
- * pedal's own filter model (src/dsp/tone.ts) — exact, absolute dB; each stage is a toggleable
- * overlay in its shared tone color (theme.toneColors). The cab overlays the active pulled IR's
- * shape but is never summed into the master: its curve is relative dB on a nominal rate, unlike
- * the exact model curves. Editing stays on the per-effect pages — this is the glance/compare
- * view. Deliberately NOT the whole signal path: the auto-filter is envelope-driven and Comp/Gate
- * are dynamics, so a static curve can't represent them. RN app surface.
+ * ToneShaper — the combined tone view: every filter in the pedal's tone path on one log-frequency
+ * axis, replacing the editor's old EQ-only glance graph. The master line is the summed drive + EQ
+ * response from the pedal's own filter model (src/dsp/tone.ts) — exact, absolute dB; each stage is
+ * a toggleable overlay in its shared tone color (theme.toneColors). Two stages overlay without
+ * being summed, each for its own reason: the cab's curve is relative dB on a nominal rate (unlike
+ * the exact model curves), and Soft Clip's HF smoother is level-gated — in the path only while you
+ * play — so it draws dashed, and only when Soft Clip is on. Editing stays on the per-effect pages —
+ * this is the glance/compare view. The envelope-driven auto-filter and the Comp/Gate dynamics
+ * aren't tone filters and aren't drawn. RN app surface.
  */
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { logGrid } from "../dsp/ir";
-import { cabCurveDb, cabResponseAt, toneResponse } from "../dsp/tone";
+import { cabCurveDb, cabResponseAt, softClipShelfDb, toneResponse } from "../dsp/tone";
 import { loadIrCache } from "../midi/irCache";
 import type { ParamId } from "../protocol/params";
 import { fitDbWindow } from "../ui/graphWindow";
@@ -21,6 +22,8 @@ import { mixHex, radius, theme, toneColors } from "./theme";
 
 const GRID = logGrid(30, 18000, 140);
 const FLAT_DB: readonly number[] = GRID.map(() => 0);
+// Soft Clip's shelf is a fixed filter — no knob moves it, so it's computed once.
+const CLIP_SHELF_DB: readonly number[] = softClipShelfDb(GRID);
 const PAD = 8;
 
 function LegendChip({
@@ -58,7 +61,7 @@ function LegendChip({
 
 export function ToneShaper({ values }: { values: Readonly<Partial<Record<ParamId, number>>> }) {
   const [boxW, setBoxW] = useState(0);
-  const [show, setShow] = useState({ eq: true, drive: true, cab: true });
+  const [show, setShow] = useState({ eq: true, drive: true, cab: true, clip: true });
   const [cabDb, setCabDb] = useState<Record<number, number[]>>({});
 
   // The cab curves come from the IR page's persisted pull cache — nothing is read off the pedal
@@ -113,20 +116,29 @@ export function ToneShaper({ values }: { values: Readonly<Partial<Record<ParamId
     return cabResponseAt(morph, dbAt, FLAT_DB);
   }, [morph, cabDb, values.irMode7, values.irMode8]);
 
-  // The dB window fits the exact model curves only. The cab overlay is excluded on purpose — its
-  // HF rolloff dives past any useful scale (it clamps at the floor, like on the IR page).
+  // Soft Clip's HF smoother is in the path only while the level gate holds it in — and only when
+  // Soft Clip is on at all, so with it off (or unknown) the stage isn't drawn or listed.
+  const clipOn = (values.softClip ?? 0) > 0;
+
+  // The dB window fits the exact model curves only. The cab and Soft Clip overlays are excluded
+  // on purpose — a cab's HF rolloff and the shelf's −24 dB floor would blow out any useful scale
+  // (they clamp at the floor, like on the IR page).
   const { dbTop, dbBot } = fitDbWindow([master, eq, drive], 15, -15);
 
   const driveColor = mixHex(toneColors.drive.from, toneColors.drive.to, v("presence") / 127);
   const curves: IrCurve[] = [
     ...(show.cab && cab ? [{ db: cab, color: toneColors.cab, width: 1.6, opacity: 0.7 }] : []),
+    ...(clipOn && show.clip
+      ? [{ db: CLIP_SHELF_DB, color: toneColors.softClip, width: 1.6, opacity: 0.8, dash: "6 4" }]
+      : []),
     ...(show.eq ? [{ db: eq, color: toneColors.eq, width: 1.6, opacity: 0.7 }] : []),
     ...(show.drive ? [{ db: drive, color: driveColor, width: 1.6, opacity: 0.7 }] : []),
     { db: master, color: theme.text, width: 2.6 },
   ];
 
   const cabUnknown = morph > 0 && !cab;
-  const toggle = (key: "eq" | "drive" | "cab") => () => setShow((s) => ({ ...s, [key]: !s[key] }));
+  const toggle = (key: "eq" | "drive" | "cab" | "clip") => () =>
+    setShow((s) => ({ ...s, [key]: !s[key] }));
 
   return (
     <View style={{ gap: 10 }}>
@@ -156,14 +168,25 @@ export function ToneShaper({ values }: { values: Readonly<Partial<Record<ParamId
         <LegendChip label="EQ" color={toneColors.eq} on={show.eq} onPress={toggle("eq")} />
         <LegendChip label="Drive" color={driveColor} on={show.drive} onPress={toggle("drive")} />
         <LegendChip label="Cab" color={toneColors.cab} on={show.cab} onPress={toggle("cab")} />
+        {clipOn ? (
+          <LegendChip
+            label="Soft Clip"
+            color={toneColors.softClip}
+            on={show.clip}
+            onPress={toggle("clip")}
+          />
+        ) : null}
       </View>
       <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
         {cabUnknown
           ? "The active cab's curve isn't pulled yet — open the IR Studio and Pull from pedal to see its shape here. "
           : ""}
         Master sums the drive voicing + EQ — the pedal's static tone stages, from its own filter
-        model. The cab overlays its own relative shape (not summed), and the envelope-driven filter
-        and dynamics aren&apos;t static curves, so they aren&apos;t drawn.
+        model. The cab overlays its own relative shape (not summed).
+        {clipOn
+          ? " Soft Clip's dashed shelf smooths the top octave only while you play — it lifts off in silence, so it overlays rather than sums."
+          : ""}{" "}
+        The envelope-driven filter and dynamics aren&apos;t tone filters, so they aren&apos;t drawn.
       </Text>
     </View>
   );
