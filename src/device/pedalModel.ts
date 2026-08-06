@@ -14,9 +14,19 @@ import type { PedalMessage } from "../protocol/messages";
 
 const EDIT_BUFFER_SLOT = 0x7f;
 
+// Per-preset user-IR fields (PROTOCOL.md): the flat 14-bit IR record pair (MSB, LSB) at blob bytes
+// 0x57/0x58 (slot 7) and 0x59/0x5A (slot 8), the per-slot enable at 0x4A/0x4B, and each slot's
+// private-record bank (record = bank·128 + program).
+const IR_SLOTS = [
+  { pairMsb: 0x57, pairLsb: 0x58, mode: 0x4a, bank: 0x00 },
+  { pairMsb: 0x59, pairLsb: 0x5a, mode: 0x4b, bank: 0x01 },
+] as const;
+
 export class PedalModel {
   readonly presets: Uint8Array[];
   editBuffer: Uint8Array;
+  /** The program the pedal is sitting on (recall sets it; a save parks on its target). */
+  currentSlot = 0;
   /** Config/data blocks the app has written (keyed `blockCode:index`), for read-back. */
   private readonly blocks = new Map<string, Uint8Array>();
   /** A read (05 40) only succeeds once the connect handshake has run. */
@@ -67,7 +77,10 @@ export class PedalModel {
       case "recallPreset": {
         if (!this.connected) return []; // reads ignored before handshake
         const blob = this.blobFor(msg.slot);
-        if (msg.kind === "recallPreset") this.editBuffer = blob.slice();
+        if (msg.kind === "recallPreset") {
+          this.editBuffer = blob.slice();
+          this.currentSlot = msg.slot;
+        }
         return [{ kind: "presetDump", slot: msg.slot, blob: blob.slice(), checksumOk: true }];
       }
       case "writePreset": {
@@ -81,10 +94,25 @@ export class PedalModel {
       case "setParam": {
         // 0x12 = <slot> is the SAVE-to-slot command (a reserved command id, NOT a param): the pedal
         // persists the staged slot and echoes a 05 41 <slot> dump (confirmed via captures/elite-save.
-        // jsonl). 0x12 = 0x7F models the map's "save to program 128" — echo the program-128 (slot 0x7F)
-        // dump. (EliteControl's IR import also sends 0x12 = 0x7F; the real-hardware semantics of that
-        // overload are pending an on-device check.) Every other setParam is live-only: no reply.
+        // jsonl). 0x12 = 0x7F is the same command aimed at program 127 (INIT) — EliteControl's IR
+        // import sends it while sitting there, making it a no-op re-save; we echo the
+        // program-127 dump. Every other setParam is live-only: no reply.
         if (msg.param === 0x12) {
+          // Saving to a DIFFERENT program repoints each ENABLED user-IR slot with a private record
+          // pointer (pair MSB ≤ 1) at the target's own record — the copy-on-save-as that hands a
+          // per-preset IR over (derived from the factory bank's 10/10 record==program correlation +
+          // EliteControl's captured import; on-device verification pending). Record CONTENTS aren't
+          // modeled — only the pointer rewrite the app verifies from the save echo.
+          const saved = msg.value < 0x7e ? this.presets[msg.value] : undefined;
+          if (saved && this.currentSlot !== msg.value) {
+            for (const s of IR_SLOTS) {
+              if (saved[s.pairMsb]! <= 0x01 && saved[s.mode] !== 0) {
+                saved[s.pairMsb] = s.bank;
+                saved[s.pairLsb] = msg.value & 0x7f;
+              }
+            }
+          }
+          this.currentSlot = msg.value; // the save parks the pedal on its target program
           const blob = this.blobFor(msg.value);
           return [{ kind: "presetDump", slot: msg.value, blob: blob.slice(), checksumOk: true }];
         }

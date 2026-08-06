@@ -6,7 +6,7 @@
  */
 import type { DeviceSession } from "../device/session";
 import { SYSEX_PREFIX } from "../protocol/constants";
-import { type DecodedIr, decodeIrStream } from "../protocol/irEncode";
+import { type DecodedIr, decodeIrStream, irStreamToDat } from "../protocol/irEncode";
 
 /**
  * `(a, b)` selector for each IR slot (1-indexed). Hardware-confirmed 2026-07-15: the pedal has 8 IR
@@ -30,17 +30,19 @@ export const IR_READ_AB: Record<number, [number, number]> = {
 export const USER_IR_SLOTS = [7, 8] as const;
 
 /**
- * Send `05 69 0A a b` and decode the IR the pedal streams back. Resolves null on timeout/failure.
- * The reply is an 11-frame `05 60/65/66` stream (~2.7 kB); over BLE (WIDI) it takes ~3 s+, so the
- * timeout is generous — 4000 ms was cutting the stream off before its `05 66` end (false-empty reads,
- * confirmed by a read-only hardware probe 2026-07-17).
+ * Send `05 69 0A a b` and collect the packed IR stream the pedal sends back (the concatenated
+ * `05 60/65/66` bodies, WITH the 5-byte header). Resolves null on timeout/failure. The reply is an
+ * 11-frame stream (~2.7 kB); over BLE (WIDI) it takes ~3 s+, so the timeout is generous — 4000 ms
+ * was cutting the stream off before its `05 66` end (false-empty reads, confirmed by a read-only
+ * hardware probe 2026-07-17). `(a, b)` is the flat 14-bit IR record selector (MSB, LSB) — the same
+ * addressing as an upload header: the library slots are bank `a=0x02` ({@link IR_READ_AB}).
  */
-export function readIr(
+function readIrPacked(
   session: DeviceSession,
   a: number,
   b: number,
   timeoutMs = 6000,
-): Promise<DecodedIr | null> {
+): Promise<Uint8Array | null> {
   // Run inside an exclusive window: the read is a raw send + onMessage tap that bypasses the request
   // queue, so a heartbeat block-read (or any queued request) firing INTO this passive multi-second
   // receive stream would garble it — false-empty slots / a false disconnect mid-pull.
@@ -49,7 +51,7 @@ export function readIr(
       new Promise((resolve) => {
         const packed: number[] = [];
         let started = false;
-        const finish = (v: DecodedIr | null) => {
+        const finish = (v: Uint8Array | null) => {
           clearTimeout(timer);
           off();
           resolve(v);
@@ -67,7 +69,7 @@ export function readIr(
             packed.push(...d.subarray(7, -1));
           } else if (started && sub === 0x66) {
             packed.push(...d.subarray(7, -1));
-            finish(decodeIrStream(Uint8Array.from(packed)));
+            finish(Uint8Array.from(packed));
           }
         });
         session.sendRaw(
@@ -83,6 +85,31 @@ export function readIr(
         );
       }),
   );
+}
+
+/** Read + decode the IR at record `(a, b)` (see {@link readIrPacked}). Null on timeout/failure. */
+export async function readIr(
+  session: DeviceSession,
+  a: number,
+  b: number,
+  timeoutMs = 6000,
+): Promise<DecodedIr | null> {
+  const packed = await readIrPacked(session, a, b, timeoutMs);
+  return packed ? decodeIrStream(packed) : null;
+}
+
+/**
+ * Read the RAW 2436-byte `.dat` at record `(a, b)` — for a byte-faithful re-upload (the decoded form
+ * loses the stored makeup-gain field on re-encode). Null on timeout or an invalid stream.
+ */
+export async function readIrDat(
+  session: DeviceSession,
+  a: number,
+  b: number,
+  timeoutMs = 6000,
+): Promise<Uint8Array | null> {
+  const packed = await readIrPacked(session, a, b, timeoutMs);
+  return packed ? irStreamToDat(packed) : null;
 }
 
 /** Read the IR in slot 1..8 using {@link IR_READ_AB} (null for an out-of-range slot). */
