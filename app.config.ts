@@ -12,7 +12,7 @@ const config: ExpoConfig = {
   name: "SansApp",
   slug: "sansapp",
   scheme: "sansapp",
-  version: "1.0.0",
+  version: "1.1.0",
   orientation: "portrait",
   userInterfaceStyle: "dark",
   icon: "./assets/icon.png",
