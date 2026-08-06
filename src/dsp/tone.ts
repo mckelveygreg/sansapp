@@ -11,8 +11,10 @@
  * instead, and the helpers here (cabCurveDb, cabResponseAt) give every page the one display
  * convention. Framework-free.
  */
+import { cascadeResponseDb } from "./biquad";
 import type { DriveKnobs } from "./drive";
 import { driveResponse } from "./drive";
+import { ELITE_SAMPLE_RATE, eliteFilterBiquad } from "./eliteFilters";
 import type { EqKnobs } from "./eq";
 import { eqResponse } from "./eq";
 import { frequencyResponse } from "./ir";
@@ -50,6 +52,22 @@ export function toneResponse(k: ToneKnobs, grid: readonly number[]): ToneRespons
   );
   const drive = driveResponse(k, grid);
   return { eq, drive, master: eq.map((v, i) => v + drive[i]!) };
+}
+
+/**
+ * Soft Clip's tone side, from the same hardware-verified filter model: with Soft Clip on, the
+ * pedal smooths the clip's fizz by shelving the top octave down — a −24 dB high shelf at 8 kHz
+ * (Q 0.5, the same designer as every other band) that engages while you play (program level above
+ * ≈ −49 dBFS) and relaxes to flat in silence. Level-gated, so it can't be summed into the static
+ * master curve — draw it as its own annotated overlay, like the cab. With Soft Clip off the
+ * stage is exactly flat (not in the path at all).
+ */
+export function softClipShelfDb(grid: readonly number[]): number[] {
+  return cascadeResponseDb(
+    [eliteFilterBiquad({ shape: "highShelf", gainDb: -24, freqHz: 8000, q: 0.5, cascade: 1 })],
+    grid,
+    ELITE_SAMPLE_RATE,
+  );
 }
 
 // The pedal plays its 2400-sample IRs at a fixed rate we haven't pinned exactly (calibration

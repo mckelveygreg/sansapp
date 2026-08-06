@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { driveResponse } from "../src/dsp/drive";
 import { eqResponse } from "../src/dsp/eq";
 import { logGrid } from "../src/dsp/ir";
-import { blendDb, cabCurveDb, cabResponseAt, toneResponse } from "../src/dsp/tone";
+import { blendDb, cabCurveDb, cabResponseAt, softClipShelfDb, toneResponse } from "../src/dsp/tone";
 
 const grid = logGrid(30, 18000, 140);
 const at = (db: readonly number[], f: number): number => {
@@ -40,6 +40,29 @@ describe("toneResponse (master = drive + EQ)", () => {
     const { eq, drive, master } = toneResponse(NOON, grid);
     for (const v of eq) expect(Math.abs(v)).toBeLessThan(1e-6); // all-64 EQ is exactly flat
     master.forEach((v, i) => expect(v).toBeCloseTo(drive[i]!, 9));
+  });
+});
+
+describe("softClipShelfDb (the level-gated HF smoother)", () => {
+  const shelf = softClipShelfDb(grid);
+
+  it("is a high shelf: flat in the lows, its full −24 dB depth up top", () => {
+    expect(Math.abs(at(shelf, 100))).toBeLessThan(0.1);
+    expect(at(shelf, 18000)).toBeLessThan(-18);
+    expect(at(shelf, 18000)).toBeGreaterThan(-24.5); // the shelf floor, not a low-pass
+  });
+
+  it("passes −12 dB (half its gain) at the 8 kHz corner — the designer's shelf midpoint", () => {
+    expect(at(shelf, 8000)).toBeCloseTo(-12, 0);
+  });
+
+  it("only ever cuts, monotonically — a Q 0.5 shelf has no overshoot to ring the graph", () => {
+    // Level-gated, so it's an overlay: toneResponse never sums it (the sum-identity test above
+    // pins master ≡ eq + drive, with no shelf term).
+    for (let i = 1; i < shelf.length; i++) {
+      expect(shelf[i]!).toBeLessThanOrEqual(shelf[i - 1]! + 1e-9);
+      expect(shelf[i]!).toBeLessThanOrEqual(1e-9);
+    }
   });
 });
 

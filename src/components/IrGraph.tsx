@@ -13,6 +13,8 @@ export interface IrCurve {
   color: string;
   width?: number;
   opacity?: number;
+  /** SVG dash pattern (e.g. "6 4") — a conditional/level-gated stage, vs the solid static ones. */
+  dash?: string;
   /** When set, shade the area between this curve and `db` (e.g. the removed low end). */
   fillFrom?: readonly number[];
   fillColor?: string;
@@ -159,6 +161,7 @@ export function IrGraph({
           stroke={c.color}
           strokeWidth={c.width ?? 2}
           strokeOpacity={c.opacity ?? 1}
+          strokeDasharray={c.dash}
           strokeLinejoin="round"
           strokeLinecap="round"
         />

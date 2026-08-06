@@ -152,6 +152,8 @@ export const PARAMS = {
   filterRelease: knob("filterRelease", "Filter Release", "redzone", 0x61, 0x3f, true),
   // Dynamics extras (2026-07-15): output soft-clip (0x21) + the gate's own attack (0x26, completes
   // gate timing alongside gateRelease 0x27). Ranges uncalibrated on the pedal — shown as raw %.
+  // Soft Clip also has a tone side: when on, the pedal smooths the clip's fizz with a level-gated
+  // −24 dB / 8 kHz high shelf (dsp/tone.ts softClipShelfDb — drawn in the Tone Shaper).
   softClip: knob("softClip", "Soft Clip", "dynamics", 0x43, 0x21, true),
   gateAttack: knob("gateAttack", "Gate Attack", "dynamics", 0x48, 0x26, true),
 } as const satisfies Record<string, ParamDef>;
