@@ -7,7 +7,14 @@
 import { createStore } from "zustand/vanilla";
 import type { ConnectionState, DeviceSession } from "../device/session";
 import { AMBIENCE_BUNDLES, AMBIENCE_PROFILE_WIRES, detectAmbienceType } from "../protocol/ambience";
-import { KNOB_LAYER_NOTIFY_PARAM, PARAM_IDS, PARAMS, type ParamId } from "../protocol/params";
+import {
+  KNOB_LAYER_NOTIFY_PARAM,
+  PARAM_IDS,
+  PARAMS,
+  RED_ZONE_TOGGLE_MIN_FIRMWARE,
+  RED_ZONE_TOGGLE_PARAMS,
+  type ParamId,
+} from "../protocol/params";
 import type { Preset } from "../protocol/preset";
 import { ambienceStore } from "./ambience";
 
@@ -206,8 +213,21 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
         store.getState().noteExternal(e.paramId, e.value);
       }
       if (e.param === KNOB_LAYER_NOTIFY_PARAM) {
-        store.getState().setLayer(e.value ? "red" : "primary");
-        store.getState().pushLog(`🔴 knob layer → ${e.value ? "Red Zone" : "primary"}`);
+        const on = e.value ? 1 : 0;
+        store.getState().setLayer(on ? "red" : "primary");
+        // Firmware ≥ 1.1: this footswitch also toggles the Red Zone effects — the pedal force-sets
+        // Auto Filter + Chorus enable to 1/0 WITHOUT notifying them (see RED_ZONE_TOGGLE_PARAMS).
+        // Mirror them or the app's toggles go stale and the next save writes the old flags back.
+        // The firmware version is known here: it's byte 6 of this very notify, latched before decode.
+        const fw = store.getState().firmware;
+        if (fw !== null && fw >= RED_ZONE_TOGGLE_MIN_FIRMWARE) {
+          for (const id of RED_ZONE_TOGGLE_PARAMS) store.getState().noteExternal(id, on);
+          store
+            .getState()
+            .pushLog(`🔴 Red Zone ${on ? "ON" : "OFF"} → chorus + filter ${on ? "on" : "off"}`);
+        } else {
+          store.getState().pushLog(`🔴 knob layer → ${on ? "Red Zone" : "primary"}`);
+        }
       } else {
         store.getState().pushLog(`↩ param ${e.param.toString(16)} = ${e.value}`);
       }

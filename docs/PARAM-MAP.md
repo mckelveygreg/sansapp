@@ -10,6 +10,11 @@ and by watching the pedal's own notifications). A control's **live-set id differ
 across the deep range**: indices `0x10`–`0x4D` are _set_ on wire id + 4 (see `liveSetId` in
 `params.ts`), while the table below lists the notify/read ids. `0x4D` as a _notify_ is the pedal's
 red-SHIFT footswitch — but it is also **High Freq's live-set id** (High Freq's own wire id is `0x49`).
+On **firmware 1.1** that footswitch is an effects toggle (the owner's manual: "it engages your
+pre-programmed effect"): engaging/disengaging it sets **Auto Filter enable (`0x3c`) and Chorus enable
+(`0x41`) to 1/0 on the pedal** — with the ambience/reverb block following the same toggle audibly —
+but the only message sent is the `0x4D <1|0>` notify itself, so SansApp mirrors both enables off that
+notify (`RED_ZONE_TOGGLE_PARAMS` in `params.ts`). Firmware 1.0's switch only shifted the knob layer.
 `*` = ambience time/decay are engine-specific (captured on Echo / Echo Verb); other engines reuse
 those indices for different controls.
 
@@ -92,7 +97,7 @@ those indices for different controls.
 |      0x4a | — (unused)                     | —                                                                                                                                                                   |
 |      0x4b | — (unused)                     | —                                                                                                                                                                   |
 |      0x4c | — (unused)                     | —                                                                                                                                                                   |
-|      0x4d | — (see note)                   | red-SHIFT footswitch notify; also High Freq's live-set id                                                                                                           |
+|      0x4d | — (see note)                   | red-SHIFT footswitch notify (fw 1.1: toggles `autoFilterOn` + `chorusOn`, see header note); also High Freq's live-set id                                            |
 |      0x4e | Compression                    | — (global, observed min 64)                                                                                                                                         |
 |      0x4f | Scroll                         | — (observed max 109)                                                                                                                                                |
 |      0x50 | — (unused)                     | —                                                                                                                                                                   |

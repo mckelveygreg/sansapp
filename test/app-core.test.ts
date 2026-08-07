@@ -4,13 +4,14 @@ import { PedalModel } from "../src/device/pedalModel";
 import { DeviceSession } from "../src/device/session";
 import { createLoopback, type MidiIO } from "../src/device/transport";
 import { AMBIENCE_BUNDLES } from "../src/protocol/ambience";
+import { PROTOCOL_V1_0 } from "../src/protocol/constants";
 import { ambienceStore } from "../src/state/ambience";
 import { applyAmbienceType, bindSession, createPedalStore } from "../src/state/store";
 import { angleToValue, dragToValue, toDisplay, valueToAngle } from "../src/ui/knobMath";
 
-function wireModel(io: MidiIO, model: PedalModel): void {
+function wireModel(io: MidiIO, model: PedalModel, version?: number): void {
   io.onMessage((bytes) => {
-    for (const reply of model.handle(decode(bytes))) io.send(encode(reply));
+    for (const reply of model.handle(decode(bytes))) io.send(encode(reply, version));
   });
 }
 
@@ -120,6 +121,51 @@ describe("pedal store + controller", () => {
     devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 })); // back to primary
     await new Promise((r) => setTimeout(r, 10));
     expect(store.getState().layer).toBe("primary");
+    ctl.dispose();
+  });
+
+  it("firmware 1.1 red footswitch toggle mirrors the Red Zone effect enables (chorus + filter)", async () => {
+    // Firmware 1.1 turned the red footswitch into an effects toggle: the pedal force-sets Auto
+    // Filter enable (0x3c) and Chorus enable (0x41) to 1/0 but notifies ONLY `05 51 0B 4D <1|0>`.
+    // The app must mirror both flags off that one notify or its toggles (and the next save-from-
+    // state) keep the pre-toggle values.
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel());
+    const session = new DeviceSession(appIO, 500);
+    await session.connect(); // loopback model replies with the fw 1.1 version byte → firmware = 1.1
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+    expect(store.getState().firmware).toBe(1.1);
+
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 1 })); // Red Zone engaged
+    await new Promise((r) => setTimeout(r, 10));
+    expect(store.getState().values.chorusOn).toBe(1);
+    expect(store.getState().values.autoFilterOn).toBe(1);
+    expect(store.getState().dirty).toBe(false); // pedal-initiated, not a local edit
+
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 })); // Red Zone off
+    await new Promise((r) => setTimeout(r, 10));
+    expect(store.getState().values.chorusOn).toBe(0);
+    expect(store.getState().values.autoFilterOn).toBe(0);
+    ctl.dispose();
+  });
+
+  it("firmware 1.0 red footswitch notify does NOT touch the effect enables (layer shift only)", async () => {
+    // On firmware 1.0 the red switch never force-set 0x3c/0x41, so a 1.0-versioned 0x4d notify must
+    // leave the effect toggles alone — mirroring there would corrupt state on old pedals.
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel(), PROTOCOL_V1_0);
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+    expect(store.getState().firmware).toBe(1.0);
+
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 1 }, PROTOCOL_V1_0));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(store.getState().layer).toBe("red"); // the layer still tracks
+    expect(store.getState().values.chorusOn).toBeUndefined();
+    expect(store.getState().values.autoFilterOn).toBeUndefined();
     ctl.dispose();
   });
 });
