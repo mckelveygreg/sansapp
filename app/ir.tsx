@@ -639,7 +639,7 @@ export default function IrStudio() {
     }
     try {
       setStatus(`Uploading IR to slot ${uploadSlot} of preset ${program + 1}…`);
-      // The upload IS a save of the current preset (the pedal hands a per-preset IR over via its
+      // The upload is a save of the current preset (the pedal hands a per-preset IR over via its
       // save-as — see irImport.ts), so the saved blob is the current sound exactly like the Save
       // button: current values over the loaded base, plus the uploaded slot enabled and the IR
       // select pointed at it so the preset comes back playing the new IR.
