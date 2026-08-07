@@ -141,14 +141,23 @@ export function decodeIrDat(dat: Uint8Array): DecodedIr {
 }
 
 /**
- * Reassemble + decode a captured/read IR upload stream (the concatenated `05 60`/`05 65`/`05 66`
- * packed bodies, WITH the 5-byte header — `00 00 00 15 61` for a write, `<a> <b> 00 15 61` for a
- * `05 69` read reply). Returns the IR, or null if it doesn't unpack to a valid `01 00` `.dat`.
+ * Reassemble a captured/read IR upload stream (the concatenated `05 60`/`05 65`/`05 66` packed
+ * bodies, WITH the 5-byte header — `00 00 00 15 61` for a write, `<a> <b> 00 15 61` for a `05 69`
+ * read reply) back into its raw 2436-byte `.dat`, or null if it doesn't unpack to a valid `01 00`
+ * `.dat`. The raw form matters when an IR must be re-uploaded byte-faithfully ({@link
+ * buildIrUploadFromDat}): round-tripping through {@link decodeIrDat} + {@link encodeIrDat} would
+ * re-derive the makeup-gain field and re-quantize, changing the stored bytes.
  */
-export function decodeIrStream(packedWithHeader: Uint8Array): DecodedIr | null {
+export function irStreamToDat(packedWithHeader: Uint8Array): Uint8Array | null {
   const dat = unpackIrStream(packedWithHeader.subarray(5)); // skip the 5-byte upload header
   if (dat.length < IR_DAT_SIZE || dat[0] !== 0x01 || dat[1] !== 0x00) return null;
-  return decodeIrDat(dat.subarray(0, IR_DAT_SIZE));
+  return dat.slice(0, IR_DAT_SIZE);
+}
+
+/** Reassemble + decode a captured/read IR upload stream (see {@link irStreamToDat}). */
+export function decodeIrStream(packedWithHeader: Uint8Array): DecodedIr | null {
+  const dat = irStreamToDat(packedWithHeader);
+  return dat ? decodeIrDat(dat) : null;
 }
 
 const sysex = (sub: number, body: Uint8Array, version: number): Uint8Array =>
@@ -183,7 +192,23 @@ export function buildIrUpload(
 ): Uint8Array[] {
   // Peak-normalize first so a quiet source reaches full int8 range and the makeup gain (irGain, called
   // by encodeIrDat) can hit factory loudness — see FACTORY_IR_LOUDNESS.
-  const dat = encodeIrDat(toInt8Samples(peakNormalize(samples)), name);
+  return buildIrUploadFromDat(
+    encodeIrDat(toInt8Samples(peakNormalize(samples)), name),
+    target,
+    version,
+  );
+}
+
+/**
+ * Frame an EXISTING raw `.dat` (e.g. one read back off the pedal via `05 69` + {@link irStreamToDat})
+ * for upload, byte-faithful — the stored makeup-gain field, name, and samples are preserved exactly.
+ * Same wire shape as {@link buildIrUpload}.
+ */
+export function buildIrUploadFromDat(
+  dat: Uint8Array,
+  target: readonly [number, number],
+  version: number = DEFAULT_PROTOCOL_VERSION,
+): Uint8Array[] {
   const packed = pack7Stream(dat);
   const header = [target[0] & 0x7f, target[1] & 0x7f, 0x00, 0x15, 0x61];
   const stream = new Uint8Array([...header, ...packed, ...irWireTrailer(packed)]);

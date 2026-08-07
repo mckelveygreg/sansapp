@@ -54,6 +54,11 @@ async function main() {
   await session.connect();
   console.log(`connected — state ${session.state}`);
 
+  // Recall program 127 (INIT) first — the save below (`0x12 = 0x7F`) targets program 127 and is only
+  // a safe no-op there; from any other program the pedal's save-time IR copy would overwrite the
+  // just-uploaded record 127 (see src/midi/irImport.ts).
+  await session.recallPreset(0x7f);
+
   await uploadIr(session, frames, {
     presetAddress: null, // the captured frames are self-contained; don't inject address bytes
     save: true, // persist to non-volatile (EliteControl's SAVE)

@@ -205,16 +205,20 @@ cross-preset variance analysis.
 | `0x00` | 2   | Header/version        | constant `01 00` ✅                                                                           |
 | `0x02` | 32  | Preset name           | space-padded ASCII (names live app-side; pedal shows only the slot number) ✅                 |
 | `0x22` | ~   | Parameter block       | 7-bit bytes (all ≤ `0x7F`); active/varying `0x22`–`0x6B` ✅. Per-param offsets ✅ (see below) |
-| `0x57` | 4   | IR pointer pairs      | two `(bank, index)` pairs — the per-preset IR7 / IR8 pointers; default `[64, 64]` ✅          |
+| `0x57` | 4   | IR pointer pairs      | two `(MSB, LSB)` record pointers — the per-preset IR7 / IR8 pointers; default `[64, 64]` ✅   |
 | `0x6C` | 84  | Reserved              | `00` in every factory preset ✅                                                               |
 | `0xC0` | 32  | User-IR name field    | space-padded ASCII, e.g. `VT_SPKR`, `PARA_SPKR`, `Limey5`; empty when unused ✅               |
 | `0xE0` | 32  | IR data / levels tail | present only for IR-using presets ✅                                                          |
 
-The **IR pointer pairs at `0x57`–`0x5A`** (observed in preset dumps): two `(bank, index)` pairs. The
-per-preset IR **Mode** toggle chooses whether a preset uses bank 0/1 (its own per-preset IR7/IR8) or
-bank 2 (the shared library); the factory bundle defaults both to `[64, 64]`. These are the read-back
-positions of the "User IR 7/8 Preset (MSB/LSB)" params (indices `0x35`–`0x38`, blob offset = index +
-`0x22`).
+The **IR pointer pairs at `0x57`–`0x5A`** (observed in preset dumps): two `(MSB, LSB)` pairs, each a
+**flat 14-bit IR record number** `(MSB << 7) | LSB` — the same addressing an upload header or a
+`05 69` read uses. MSB `2` points into the **shared library** (records 256–263 = the 8 slots at read
+bank `a = 0x02`); MSB `0`/`1` points at a **private per-preset record**, `record = MSB·128 +
+program` with MSB 0 for slot 7 and MSB 1 for slot 8. The factory bundle pins the private scheme:
+ten factory presets carry a private pointer, and in 10/10 the record equals the program number
+(e.g. "SVT style", program 4, slot 8 → `(1, 4)` = record 132). The factory default is `[64, 64]`
+(inactive). These are the read-back positions of the "User IR 7/8 Preset (MSB/LSB)" params (indices
+`0x35`–`0x38`, blob offset = index + `0x22`).
 
 ### Reads, edits & save semantics ✅/🤔
 
@@ -232,9 +236,17 @@ Probed directly against the pedal:
   with **`05 50 0A 12 <slot>`** (`0x12` is a reserved SAVE-to-slot command id, `<value>` = the
   destination slot) → the pedal echoes a `05 41 <slot>` dump as confirmation (the app awaits it and
   re-sends the commit if it drops over BLE). `writePreset()` in `src/device/session.ts` rejects
-  slots above `0x7D` — never save to `0x7E`/`0x7F`, because `0x12 = 0x7F` jumps the pedal to program 128. (The one observed exception is EliteControl's **captured IR import**, which does send
-  `05 50 0A 12 7F` to commit an edit-buffer IR; its on-device semantics there are still being
-  clarified — see [IR handling](#ir-handling-).)
+  slots above `0x7D` — never save to `0x7E`/`0x7F` as a numbered-slot write: `0x12 = 0x7F` is a save
+  to **program 127**, the `INIT` scratch preset (the pedal parks on the save target). EliteControl's
+  captured IR import sends exactly that — while already **on** program 127 — which is what makes it
+  safe (see [IR handling](#ir-handling-)).
+- **Saving carries a per-preset IR with it (copy-on-save-as).** When a save's target differs from
+  the program the pedal is on, each user-IR slot that is **enabled** (IR Mode on) with a **private**
+  pointer (MSB ≤ 1) gets the current program's private record **copied into the target's own record**
+  and the saved pointer **repointed** at it (`(bank, target)`). Saving to the program you are already
+  on skips the copy. Derived from the factory bank's 10/10 record == program correlation plus
+  EliteControl's captured import; the app verifies the repoint from the save's `05 41` echo
+  (`src/midi/irImport.ts`) — **on-device verification pending**.
 
 **Blob offsets** ✅ were mapped by correlating each `paramId` in the captured `05 50` stream against
 the byte that changed in EliteControl's saved `.dat`. The rule is uniform: **`blobOffset == index +
@@ -331,30 +343,47 @@ The pedal has **8 cab (IR) slots**, read off the pedal at bank `a = 0x02`, `b = 
   flip IR Mode back to hear the factory cab again.
 
 The IR library is a **global** store (a marker written to a slot survived a preset change); each
-preset just points at a slot and carries its own IR-Mode/gain. Saving a preset (`05 20`) does not
-carry sample data.
+preset just points at an IR **record** ([pointer pairs](#preset-blob-format-)) and carries its own
+IR-Mode/gain. Saving a preset (`05 20`) does not carry sample data — but see the copy-on-save-as
+under [save semantics](#reads-edits--save-semantics-).
 
 **User-IR upload transport** — a chunked, 7-bit-packed SysEx sequence, byte-faithful to
-EliteControl's own **Import** (`src/midi/irUpload.ts`):
+EliteControl's own **Import** (`src/midi/irUpload.ts`, orchestrated by `src/midi/irImport.ts`):
 
 ```
-1. set the User-IR address FIRST   05 50 0A 39 <bank>   05 50 0A 3A <index>   (slot 7)
-2. upload the edit-buffer IR        05 60 0A 00 7F 00 15 61 <packed…>   begin   → ack 05 63 00 F7
-                                    05 65 0A <256 packed> ×9            chunks
-                                    05 66 0A <remainder>                end     → ack 05 61 F7
-3. persist                          05 50 0A 12 7F                      SAVE    → pedal echoes 05 41
+0. recall program 127 FIRST        05 23 0A 7F  (be ON the INIT scratch preset — see below)
+1. set the User-IR address         05 50 0A 39 00   05 50 0A 3A 7F        (slot 7 → record 127)
+2. upload into record 127          05 60 0A 00 7F 00 15 61 <packed…>   begin   → ack 05 63 00 F7
+                                   05 65 0A <256 packed> ×9            chunks
+                                   05 66 0A <remainder>                end     → ack 05 61 F7
+3. persist                         05 50 0A 12 7F                      SAVE    → pedal echoes 05 41
 ```
 
-The upload targets the **edit-buffer IR** via the header `[0x00, 0x7F]` (bank 0, index 0x7F), and the
-**address set-ids are `0x39`/`0x3A` for slot 7** and **`0x3B`/`0x3C` for slot 8** (slot 8 follows the
-+4 rule and is **inferred — pending a hardware capture**). The persist step `05 50 0A 12 7F` is the
-one observed use of `0x12 = 0x7F` (see [save semantics](#reads-edits--save-semantics-)); on device it
-commits the imported IR. The app confirm-retries this SAVE (a silently-dropped commit over BLE would
-lose the IR while the UI says "saved").
+The upload header `[0x00, 0x7F]` is the flat 14-bit record number **127 — program 127's own private
+slot-7 record** (not a special edit buffer); the SAVE is a plain save to program 127. The **address
+set-ids are `0x39`/`0x3A` for slot 7** and **`0x3B`/`0x3C` for slot 8**; a slot-8 import targets
+record **255** (`[0x01, 0x7F]`, bank 1). Slot 8 follows the +4 rule and the confirmed record scheme
+but is **inferred — pending a hardware capture**. The app confirm-retries the SAVE (a
+silently-dropped commit over BLE would lose the IR while the UI says "saved").
+
+> ⚠ **Recall program 127 before importing.** EliteControl's captured import runs with the pedal
+> already sitting on program 127, so its SAVE (target == current) skips the save-time IR copy. From
+> any OTHER program that same SAVE copies the current program's private record **over record 127 —
+> the IR just uploaded**. An earlier app version uploaded without the recall; the fix and the
+> ordering live in `src/midi/irImport.ts`.
+
+**Per-preset hand-off** (`src/midi/irImport.ts`): the import above only fills program 127's scratch
+record — the copy-on-save-as is what gives a real preset its own copy. After the import, the app
+enables the slot and **saves the destination preset while still on program 127**: the pedal copies
+record 127 into the preset's own record (`bank·128 + program`) and repoints its pointer pair. The
+save echo shows the repointed pair, which the app checks. If the destination preset's OTHER user
+slot is enabled on a private record, that record is first read back (`05 69`) and re-uploaded into
+program 127's record for that slot, so the save-time copy re-writes the preset's own IR instead of
+replacing it with stale scratch data.
 
 > ⚠ **Do not write the raw IR-library bank directly** (`05 60` header `[0x02, slot-1]`). An earlier
 > version did, and it could leave the pedal unable to finish the next connect handshake — a brick
-> that persisted across a power-cycle and needed a factory reset (issue #37). The edit-buffer import
+> that persisted across a power-cycle and needed a factory reset (issue #37). The program-127 import
 > above is the safe, proven path.
 
 The payload is the **time-domain `.dat`, 7-bit packed**, with a 5-byte header (target slot) and a

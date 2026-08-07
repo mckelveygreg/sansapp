@@ -31,12 +31,13 @@ import { radius, theme, toneColors } from "../src/components/theme";
 import { blendIr, cascadeIr, generateIr, type IrGenKind } from "../src/dsp/generators";
 import { frequencyResponse, logGrid } from "../src/dsp/ir";
 import { PEDAL_IR_RATE, cabCurveDb, cabResponseAt } from "../src/dsp/tone";
-import { uploadCustomIr } from "../src/midi/bundleIo";
 import { pickFileBytes, saveAndShare } from "../src/midi/exportFile";
 import { loadIrCache, saveIrCache } from "../src/midi/irCache";
+import { uploadCustomIr } from "../src/midi/irImport";
 import { USER_IR_SLOTS, readIrSlot } from "../src/midi/irRead";
 import { sendParam } from "../src/midi/liveParam";
 import { getController, getSession, pedalStore } from "../src/midi/pedal";
+import { buildPresetBlob } from "../src/protocol/buildPreset";
 import {
   PARAMS,
   USER_IR_GAIN_DB_RANGE,
@@ -44,6 +45,7 @@ import {
   valueToGainDb,
   type ParamId,
 } from "../src/protocol/params";
+import { ambienceStore } from "../src/state/ambience";
 import { uiStore } from "../src/state/ui";
 import { decodeWav, encodeWav, floatToPcm } from "../src/protocol/wav";
 
@@ -629,13 +631,33 @@ export default function IrStudio() {
       setStatus("Connect to the pedal first.");
       return;
     }
+    const st = pedalStore.getState();
+    const program = st.slot;
+    if (program == null || !st.raw) {
+      setStatus("Recall a preset first — the IR is uploaded into the current preset.");
+      return;
+    }
     try {
-      setStatus(`Uploading IR to slot ${uploadSlot}…`);
-      await uploadCustomIr(session, craft, irName().slice(0, 32), { slot: uploadSlot, save: true });
+      setStatus(`Uploading IR to slot ${uploadSlot} of preset ${program + 1}…`);
+      // The upload is a save of the current preset (the pedal hands a per-preset IR over via its
+      // save-as — see irImport.ts), so the saved blob is the current sound exactly like the Save
+      // button: current values over the loaded base, plus the uploaded slot enabled and the IR
+      // select pointed at it so the preset comes back playing the new IR.
+      const amb = ambienceStore.getState();
+      const values = {
+        ...st.values,
+        [IR_MODE_ID[uploadSlot]]: 1,
+        irBlend: slotToValue(uploadSlot),
+      };
+      const blob = buildPresetBlob(st.raw, values, st.name ?? "", amb.typeDirty ? amb.type : null);
+      const { pointerConfirmed } = await uploadCustomIr(session, craft, irName().slice(0, 32), {
+        slot: uploadSlot,
+        program,
+        blob,
+      });
       // Reflect the just-uploaded IR into the stack directly from the crafted samples. We do NOT
-      // read the slot back over MIDI here: the import writes the edit-buffer IR (EliteControl's
-      // path — see uploadCustomIr), so a slot read wouldn't reflect it, and a heavy read burst right
-      // after the upload is exactly the kind of BLE traffic that's flaky. Show what we sent.
+      // read the slot back over MIDI here: a heavy read burst right after the upload is exactly the
+      // kind of BLE traffic that's flaky. Show what we sent.
       const samples = Float64Array.from(craft);
       setPulled((p) => {
         const merged = {
@@ -649,23 +671,18 @@ export default function IrStudio() {
         persist(merged); // keep the cache in sync with the newly-uploaded IR
         return merged;
       });
-      // The SAVE (0x12=0x7F) leaves the pedal parked on program 128 — EliteControl never recalls, but
-      // it stays on the scratch program; we're on a real preset, so bring the pedal back to it.
-      const workingSlot = pedalStore.getState().slot;
-      if (workingSlot != null) {
-        try {
-          await getController()?.recall(workingSlot);
-        } catch {
-          /* recall is best-effort — if it drops, the IR is still saved; the user can recall manually */
-        }
+      // The save-as parks the pedal on the destination program; recall it so the app state reloads
+      // from the SAVED preset (slot enabled, IR selected, pointer repointed) and nothing reads dirty.
+      try {
+        await getController()?.recall(program);
+      } catch {
+        /* recall is best-effort — if it drops, the preset is already saved; recall manually */
       }
-      // Make the freshly-uploaded IR audible NOW: IR Mode defaults to "factory", so without this the
-      // upload is silent until the switch is flipped. Enable the slot's user IR and select it (both are
-      // local edits → the preset goes dirty; a SAVE keeps them, a recall discards them).
-      setMode(uploadSlot, true);
-      setBlendValue(slotToValue(uploadSlot));
       setStatus(
-        `Uploaded "${irName()}" → slot ${uploadSlot}, now playing at factory level. Save the preset to keep it.`,
+        pointerConfirmed
+          ? `Uploaded "${irName()}" → slot ${uploadSlot} and saved with preset ${program + 1}.`
+          : `Uploaded "${irName()}" → slot ${uploadSlot} of preset ${program + 1} — saved, but the ` +
+              `pedal didn't confirm the preset's own IR record; a later upload may replace it.`,
       );
     } catch (e) {
       setStatus(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -979,9 +996,10 @@ export default function IrStudio() {
               ))}
             </View>
             <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
-              Uploads at factory level and switches slot {uploadSlot} on automatically, so you hear
-              it right away — then Save the preset to keep it. Use the slot {uploadSlot} switch and
-              dB up in the list to toggle factory vs. your cab and trim its level.
+              Uploads into the current preset and saves it — slot {uploadSlot} switches on and the
+              IR is selected, so the preset comes back playing your cab at factory level. Any other
+              edits you have going are saved with it. Use the slot {uploadSlot} switch and dB up in
+              the list to toggle factory vs. your cab and trim its level.
             </Text>
             <View style={{ flexDirection: "row", gap: 10 }}>
               <Pressable

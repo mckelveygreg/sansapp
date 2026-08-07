@@ -355,9 +355,11 @@ export class DeviceSession {
   /**
    * Write a full preset blob to a numbered slot, then persist with the save command
    * `05 50 0A 12 <slot>` and await the pedal's `05 41` echo. Never 0x7F — the pedal treats
-   * `0x12=0x7F` as save-to-program-128.
+   * `0x12=0x7F` as save-to-program-128. Returns the echoed blob — the pedal's own view of what was
+   * saved, which can differ from `blob` where the save rewrites bytes (the per-preset user-IR
+   * pointer is repointed at save time — see midi/irImport.ts).
    */
-  async writePreset(slot: number, blob: Uint8Array): Promise<void> {
+  async writePreset(slot: number, blob: Uint8Array): Promise<Uint8Array> {
     // Reject the special/edit-buffer slots (0x7E/0x7F): a `05 20` stage to 0x7F is discarded, and the
     // save `05 50 0A 12 7F` jumps to program 128. Guards a captured edit-buffer dump (`05 41 7F …`) in
     // a .p3b from walking through restorePlan into a save-to-128.
@@ -381,11 +383,14 @@ export class DeviceSession {
     // the slot unchanged, since an uncommitted write is discarded — if the pedal never confirms.
     for (let attempt = 0; attempt < COMMIT_ATTEMPTS; attempt++) {
       try {
-        await this.request(
+        // Require checksumOk (like readPreset): a garbled echo must not confirm the save — the retry
+        // re-sends the commit, which is idempotent.
+        const reply = await this.request(
           { kind: "setParam", param: 0x12, value: s },
-          (m) => m.kind === "presetDump" && m.slot === s,
+          (m) => m.kind === "presetDump" && m.slot === s && m.checksumOk,
         );
-        return;
+        if (reply.kind !== "presetDump") throw new Error("unexpected reply");
+        return reply.blob;
       } catch {
         // No echo — the commit likely dropped over BLE; re-send it (committing twice is idempotent).
       }

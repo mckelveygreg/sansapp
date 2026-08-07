@@ -5,7 +5,8 @@
  * (`05 61`). EliteControl wraps that with:
  *
  *   1. set the User-IR preset address FIRST: `05 50 0A 39 00`, `05 50 0A 3A 7F` (before the upload),
- *   2. the `05 60/65/66` stream targeting the EDIT-BUFFER IR (header `[0x00,0x7F] 00 15 61`),
+ *   2. the `05 60/65/66` stream targeting program 127's private IR record (header `[0x00,0x7F] 00 15
+ *      61` — the flat 14-bit record number, NOT a special edit buffer),
  *   3. persist: `05 50 0A 12 7F` (its SAVE; the pedal echoes a `05 41` preset dump).
  *
  * ⚠ WHY THIS EXACT ORDER/TARGET MATTERS (issue #37): the previous code wrote directly to the raw
@@ -15,6 +16,12 @@
  * persisting across a power-cycle — a brick that needed a factory reset. Matching EliteControl's
  * proven sequence avoids it. Do NOT reintroduce the direct-bank write without a fresh capture proving
  * the pedal reconnects afterwards.
+ *
+ * ⚠ PROGRAM 127 FIRST: with `save`, the pedal MUST already be sitting on program 127
+ * (`session.recallPreset(0x7f)`) — EliteControl's captured import runs entirely there. `0x12 = 0x7F`
+ * is a save to program 127; saving from any OTHER program triggers the pedal's save-time IR copy,
+ * which overwrites record 127 (the IR just uploaded) with the current program's private record.
+ * See midi/irImport.ts, which owns that ordering (and the per-preset hand-off built on it).
  *
  * `frames` are the verbatim SysEx sequence to send — from {@link buildIrUpload} (a generated custom
  * IR, header `[0x00,0x7F]`) or a captured upload (.p3b). Framework-free; used by the app and tools.
@@ -27,9 +34,9 @@ const END_ACK = 0x61; //   pedal acks 05 66 end   with 05 61 F7
 const IR_ADDR_MSB = 0x39; // User-IR preset address MSB — EliteControl sets this before the upload
 const IR_ADDR_LSB = 0x3a; // User-IR preset address LSB
 // SAVE = EliteControl's IR-import commit, byte-faithful to a captured import: setParam 0x12 = 0x7F,
-// after which the pedal echoes a preset dump. This conflicts with the numbered-slot path, where
-// PROTOCOL-MAP §1 says 0x12=0x7F saves-to-program-128 (writePreset rejects it); the IR-import use
-// appears to be an exception. On-device check pending.
+// after which the pedal echoes a preset dump. Not an exception to the save-to-slot rule after all:
+// it saves to program 127 (the INIT scratch preset the import runs on), which is why writePreset
+// still rejects 0x7F for NUMBERED-slot writes — see the header's PROGRAM-127-FIRST note.
 const SAVE_COMMIT = 0x12;
 const SAVE_VALUE = 0x7f;
 // Re-send the SAVE this many times, each awaiting the `05 41` echo, before giving up — mirrors
