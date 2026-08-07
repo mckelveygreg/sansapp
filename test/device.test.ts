@@ -293,6 +293,29 @@ describe("DeviceSession hardening (batch 3)", () => {
     await session.writePreset(0x7d, buildBlob(0x42));
   });
 
+  it("writePreset returns the save echo — the pedal's view, incl. a repointed user-IR pair", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    wireModel(devIO, model);
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    // Save-as from another program (recall 9, save to 3) with slot 7 enabled on a private record:
+    // the model repoints the pair at the target's own record (bank 0 → (0, slot)), like the pedal's
+    // copy-on-save-as (see pedalModel.ts — derived semantics, on-device verification pending).
+    await session.recallPreset(9);
+    const blob = buildBlob(0x42);
+    blob[0x57] = 0x00; // pair7 MSB — private
+    blob[0x58] = 0x7f; // pair7 LSB — program 127's scratch record
+    blob[0x4a] = 1; //   slot 7 enabled
+    const echo = await session.writePreset(3, blob);
+    expect([echo[0x57], echo[0x58]]).toEqual([0x00, 0x03]); // repointed at its own record
+    expect(model.presets[3]![0x58]).toBe(0x03); // and persisted that way
+    // Saving to the program the pedal is ON skips the repoint (the no-op save path).
+    await session.recallPreset(4);
+    const echo2 = await session.writePreset(4, blob.slice());
+    expect([echo2[0x57], echo2[0x58]]).toEqual([0x00, 0x7f]);
+  });
+
   // ── item 3a: reply integrity (checksum required) ──
   it("a corrupt preset dump does NOT resolve the read (checksum required)", async () => {
     const [appIO, devIO] = createLoopback();
