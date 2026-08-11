@@ -68,3 +68,20 @@ mapping, update `params.ts`, update `docs/PARAM-MAP.md` to match, and add/adjust
 Small, focused PRs. Sign commits `-s` (DCO). The highest-value contribution is a **protocol
 observation** from your own Elite — see [CONTRIBUTING.md](CONTRIBUTING.md). Licensing terms are there
 too (GPL-3.0 out, Apache-2.0 in).
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (mckelveygreg/sansapp) — reserved for user-facing bugs/features and
+hardware-verification asks. Internal RE/protocol-analysis tracking happens in the private
+`sansapp-lab` repo, not here. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`,
+`wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — root `CONTEXT.md` + `docs/adr/` (not yet created). See `docs/agents/domain.md`.
