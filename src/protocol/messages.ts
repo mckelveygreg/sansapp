@@ -124,9 +124,12 @@ export function decode(data: Uint8Array): PedalMessage {
   const sub = body[1]!;
   const len = body.length;
 
-  // A 2-byte body `05 <sub> F7` (no marker): `05 5F F7` is the marker-less HELLO the real pedal sends
-  // (its dominant hello form in captures; the app's own hello is the 3-byte `05 5F 0A`). Every other
-  // 2-byte body is an ack — 05 21 (preset write), 05 53 (block write), etc.
+  // A 2-byte body `05 <sub> F7` (no marker): `05 5F F7` is actually the pedal's ack for a user-IR
+  // address MSB write (`05 50 <ver> 39 <msb>` for slot 7, `3B` for slot 8) — it's the dominant form
+  // of this shape in captures only because EliteControl sends that write before every IR import.
+  // Decoding it as `hello` is harmless today (nothing awaits it; the session only latches a flag),
+  // but it is the wrong shape if anything ever needs to await this specific ack. Every other 2-byte
+  // body is an ordinary ack — 05 21 (preset write), 05 53 (block write), etc.
   if (len === 2) return sub === HELLO ? { kind: "hello" } : { kind: "writeAck", code: sub };
   // IR-upload begin ack is 05 63 00 F7 (a zero arg, not the 0x0A marker) — treat as an ack too.
   if (len === 3 && sub === IR_UPLOAD_BEGIN_ACK) return { kind: "writeAck", code: sub };

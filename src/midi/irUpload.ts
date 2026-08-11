@@ -61,8 +61,8 @@ export interface IrUploadOptions {
   presetAddress?: readonly [number, number] | null;
   /**
    * The `05 50` SET-IDs used to send that preset address (MSB, LSB). Slot 7 = `[0x39, 0x3A]`
-   * (byte-faithful to an EliteControl capture). Slot 8 = `[0x3B, 0x3C]` — a `+4`-rule inference from
-   * the User-IR7/8 Preset indices 0x35–0x38 (§3), NOT yet hardware-verified. Default slot 7.
+   * (byte-faithful to an EliteControl capture). Slot 8 = `[0x3B, 0x3C]`, read by the IR loader under
+   * `param[0x29]` (IR Mode 8), exactly parallel to slot 7. Default slot 7.
    */
   addrSetIds?: readonly [number, number];
   /**
@@ -75,8 +75,8 @@ export interface IrUploadOptions {
 
 /**
  * The `05 50` preset-address SET-IDs (MSB, LSB) that address a User-IR slot before an upload. Slot 7 =
- * `[0x39, 0x3A]` — byte-faithful to an EliteControl capture. Slot 8 = `[0x3B, 0x3C]` — a `+4`-rule
- * inference from the User-IR7/8 Preset indices 0x35–0x38 (PROTOCOL-MAP §3), NOT yet hardware-verified.
+ * `[0x39, 0x3A]` — byte-faithful to an EliteControl capture. Slot 8 = `[0x3B, 0x3C]`, read by the IR
+ * loader under `param[0x29]` (IR Mode 8), exactly parallel to slot 7.
  */
 export const irAddrSetIds = (slot: 7 | 8): readonly [number, number] =>
   slot === 8 ? [0x3b, 0x3c] : [IR_ADDR_MSB, IR_ADDR_LSB];
