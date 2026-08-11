@@ -5,6 +5,7 @@ import { readAllPresets } from "../src/device/library";
 import { PedalModel } from "../src/device/pedalModel";
 import { DeviceSession } from "../src/device/session";
 import { createLoopback, type MidiIO } from "../src/device/transport";
+import { PARAMS } from "../src/protocol/params";
 import { PC_MAP_BLOCK, SETTINGS_BLOCK, withPcMap, withSetting } from "../src/protocol/settings";
 
 /** Wire a pure PedalModel to the device side of a loopback pair. */
@@ -251,6 +252,9 @@ describe("protocol version negotiation", () => {
 // ── FIX BATCH 3: session/BLE lifecycle hardening ────────────────────────────────────────────────
 
 /** A 256-byte preset blob with a distinctive Drive byte. */
+/** Blob offset of the Level param — the byte the pedal zeroes when saving with the tuner engaged. */
+const LEVEL = PARAMS.level.blobOffset;
+
 function buildBlob(mark: number): Uint8Array {
   const b = new Uint8Array(256);
   b[0] = 0x01;
@@ -314,6 +318,45 @@ describe("DeviceSession hardening (batch 3)", () => {
     await session.recallPreset(4);
     const echo2 = await session.writePreset(4, blob.slice());
     expect([echo2[0x57], echo2[0x58]]).toEqual([0x00, 0x7f]);
+  });
+
+  it("writePreset throws when the save echo comes back at Level 0 (saved with the tuner engaged)", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    // Emulate the pedal's save handler with the tuner ON: it forces the live Level param to 0 before
+    // writing the array to flash, so the echo — its view of what it saved — comes back silent.
+    devIO.onMessage((bytes) => {
+      for (const reply of model.handle(decode(bytes))) {
+        if (reply.kind === "presetDump") {
+          const zeroed = reply.blob.slice();
+          zeroed[LEVEL] = 0;
+          devIO.send(encode({ ...reply, blob: zeroed }));
+        } else {
+          devIO.send(encode(reply));
+        }
+      }
+    });
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const blob = buildBlob(0x42);
+    blob[LEVEL] = 100;
+    await expect(session.writePreset(3, blob)).rejects.toThrow(/level 0[\s\S]*tuner/i);
+  });
+
+  it("the Level-zero guard doesn't fire on an honest save", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    wireModel(devIO, model);
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    // Level echoed back unchanged — the ordinary case.
+    const loud = buildBlob(0x42);
+    loud[LEVEL] = 100;
+    expect((await session.writePreset(3, loud))[LEVEL]).toBe(100);
+    // And a preset the user deliberately saved at Level 0 is not a hazard — nothing was zeroed.
+    const silent = buildBlob(0x43);
+    silent[LEVEL] = 0;
+    await session.writePreset(4, silent);
   });
 
   // ── item 3a: reply integrity (checksum required) ──

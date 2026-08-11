@@ -86,6 +86,32 @@ interface LiveParam {
   timer?: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * Catch the save-with-the-tuner-on hazard, which persists the preset SILENT.
+ *
+ * The pedal's save handler reads the live Tuner param (index 0x34) and, when it is non-zero (Mute or
+ * Bypass), forces the live Level param to 0 *before* writing the array to flash. Engage the tuner —
+ * today only possible from the footswitch — then save, and that slot comes back at Level 0.
+ *
+ * We can't check first: the tuner has no notify and no read (a preset dump is sourced from flash, so
+ * blob[0x56] is the STORED tuner byte, never the live one), so the app cannot know the pedal's tuner
+ * state. Instead detect it after the fact from the save echo — the pedal's own view of what it wrote.
+ * Asking for a non-zero Level and getting 0 back has no other known cause.
+ *
+ * Throws rather than repairing: the slot is already written, and the app has no verified way to turn
+ * the tuner off (see sansapp-lab#43), so the user has to do it. Surface that instead of silently
+ * handing back a dead preset.
+ */
+function assertTunerDidNotZeroLevel(slot: number, sent: Uint8Array, echoed: Uint8Array): void {
+  const off = PARAMS.level.blobOffset;
+  if (sent[off] !== 0 && echoed[off] === 0) {
+    throw new Error(
+      `preset ${slot + 1} saved at Level 0 — the pedal zeroes Level when a preset is saved with the ` +
+        `tuner engaged. Turn the tuner off at the pedal and save again.`,
+    );
+  }
+}
+
 export class DeviceSession {
   state: ConnectionState = "disconnected";
 
@@ -382,6 +408,7 @@ export class DeviceSession {
     // leaving the write staged but never persisted (the copy/save-didn't-stick bug). Throws — leaving
     // the slot unchanged, since an uncommitted write is discarded — if the pedal never confirms.
     for (let attempt = 0; attempt < COMMIT_ATTEMPTS; attempt++) {
+      let echoed: Uint8Array;
       try {
         // Require checksumOk (like readPreset): a garbled echo must not confirm the save — the retry
         // re-sends the commit, which is idempotent.
@@ -390,10 +417,15 @@ export class DeviceSession {
           (m) => m.kind === "presetDump" && m.slot === s && m.checksumOk,
         );
         if (reply.kind !== "presetDump") throw new Error("unexpected reply");
-        return reply.blob;
+        echoed = reply.blob;
       } catch {
         // No echo — the commit likely dropped over BLE; re-send it (committing twice is idempotent).
+        continue;
       }
+      // The save landed. It may still have been corrupted by the tuner — check before returning, and
+      // OUTSIDE the try, so this throw isn't mistaken for a dropped commit and retried.
+      assertTunerDidNotZeroLevel(s, blob, echoed);
+      return echoed;
     }
     throw new Error(`preset ${s + 1} save not confirmed by the pedal`);
   }
