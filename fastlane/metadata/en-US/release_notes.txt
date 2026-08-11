@@ -1,1 +1,1 @@
-First release. Full live editor, cab/IR design + direct upload, and 128-preset backup & restore over Bluetooth or USB MIDI.
+Adds support for pedal firmware 1.1, including the red footswitch's new effects toggle. The editor gains a Tone Shaper graph showing EQ, drive, and cab response together, plus more accurate EQ and amp curves modeled directly from the pedal's own filters. Also fixes a bug where a custom IR could be silently overwritten when saving a preset.

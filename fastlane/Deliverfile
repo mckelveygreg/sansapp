@@ -6,3 +6,8 @@ submit_for_review(false)
 automatic_release(false)
 force(true) # skip the interactive HTML preview
 precheck_include_in_app_purchases(false)
+# App Store Connect's screenshot API is eventually-consistent: deliver's post-upload verification
+# (checksum lookup) can read stale state and retry an upload that actually succeeded, leaving
+# duplicates. overwrite_screenshots clears the existing set before every upload, so a rerun always
+# converges on exactly the local fastlane/screenshots/en-US/ files instead of accumulating copies.
+overwrite_screenshots(true)
