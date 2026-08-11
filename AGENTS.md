@@ -61,7 +61,7 @@ mapping, update `params.ts`, update `docs/PARAM-MAP.md` to match, and add/adjust
   `test/preset.test.ts`'s local-only block probes the desktop editor's sandboxed app-container path
   (see #46). If you're on a checkout that predates that fix, either pull `vitest.config.ts` or run
   `npx vitest run --pool=threads` directly. A killed run can also leave an orphaned worker that
-  makes *later* runs hang too — clear it with `pkill -f "vitest/dist/workers"`.
+  makes _later_ runs hang too — clear it with `pkill -f "vitest/dist/workers"`.
 
 ## Contributing flow
 
