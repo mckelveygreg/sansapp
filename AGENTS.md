@@ -54,6 +54,15 @@ mapping, update `params.ts`, update `docs/PARAM-MAP.md` to match, and add/adjust
 - With a real Elite: `npm run probe` (read-only validation), `npm run capture` (log MIDI for a
   protocol-observation issue — see `docs/CAPTURE-PLAYBOOK.md`).
 
+## Troubleshooting
+
+- **`npm test` hangs with no output on macOS, on an older checkout.** `vitest.config.ts` pins
+  `pool: "threads"` because the default forked-process pool blocks on macOS TCC when
+  `test/preset.test.ts`'s local-only block probes the desktop editor's sandboxed app-container path
+  (see #46). If you're on a checkout that predates that fix, either pull `vitest.config.ts` or run
+  `npx vitest run --pool=threads` directly. A killed run can also leave an orphaned worker that
+  makes _later_ runs hang too — clear it with `pkill -f "vitest/dist/workers"`.
+
 ## Contributing flow
 
 Small, focused PRs. Sign commits `-s` (DCO). The highest-value contribution is a **protocol
