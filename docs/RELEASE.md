@@ -51,6 +51,23 @@ works unattended. No Xcode signing setup is needed: `expo prebuild` regenerates 
 team or profile, so the `sync_signing` lane re-applies manual signing (team, `Apple Distribution`,
 the match profile) to the fresh project on every build.
 
+## Cutting a release, step by step
+
+1. Bump `version` (and `ios.buildNumber`/`android.versionCode` if needed) in `app.config.ts`.
+2. Write the changelog: edit `fastlane/metadata/en-US/release_notes.txt` to describe what's new
+   since the last version — this is what ships to `fastlane ios metadata` / `release` below.
+3. If the UI changed, regenerate screenshots: `fastlane ios screenshots` (see below).
+4. `fastlane ios beta` — builds and uploads to TestFlight.
+5. `fastlane ios metadata` and `fastlane ios screenshots_upload` — push the changelog + screenshots
+   to the App Store Connect version you're preparing (safe to re-run; see Gotchas for why
+   `overwrite_screenshots` matters here).
+6. In App Store Connect: attach the TestFlight build from step 4 to the version, then press
+   **Submit for Review** yourself. Nothing in this repo's fastlane setup submits automatically.
+7. Once Apple approves it, **you must still act while it's in a pre-live state** — see the
+   "screenshots are frozen once live" gotcha below. There is no fixing metadata/screenshots after
+   the version reaches `READY_FOR_SALE`; if you spot a problem, fix it before then, or plan on a
+   follow-up version.
+
 ## Screenshots
 
 App Store requires one **6.9"** iPhone screenshot set (1320×2868; iPhone-only app, so no iPad set).
@@ -131,6 +148,24 @@ create the initial release); after that the lanes run unattended. Bump `android.
 
 ## Gotchas
 
+- **Screenshots (and other version metadata) freeze once the version goes live.** `deliver` can only
+  edit a version while App Store Connect reports it as `PREPARE_FOR_SUBMISSION`,
+  `*_REJECTED`, or `WAITING_FOR_REVIEW` (that's the exact filter `get_edit_app_store_version` uses).
+  Once Apple moves it to `IN_REVIEW` or later — including after release, `READY_FOR_SALE` — every
+  `deliver` lane fails with "Could not find a version to edit", and there's no override: even
+  `edit_live` (meant for tweaking a live version) explicitly disables screenshot upload. **The only
+  fix is a new version** — bump `version`/build number and go through steps 1–6 above again, even
+  for a screenshot-only correction.
+- **Screenshot uploads can silently duplicate.** `deliver` uploads, waits for App Store Connect to
+  finish processing, then re-verifies by re-reading each screenshot's checksum from ASC. That read
+  can lag behind ASC's own processing state — so `deliver` sees "missing" for screenshots that
+  actually succeeded, and retries. The retry doesn't detect the earlier batch as already present
+  (same lagging checksum lookup), so both batches land, doubling every screenshot. Mitigated by
+  `overwrite_screenshots(true)` in `Deliverfile` (added 2026-08-11): it clears the existing
+  screenshot set before every upload, so a rerun converges on exactly the local
+  `fastlane/screenshots/en-US/` files instead of accumulating copies. This does mean
+  `screenshots_upload` is destructive to whatever's already on ASC for that locale/device — that's
+  intentional here since the local files are always the source of truth.
 - **App Review needs the hardware.** SansApp's editing needs the physical pedal + a MIDI adapter,
   which the reviewer won't have. `fastlane/metadata/review_information/notes.txt` explains that every
   screen is browsable without a pedal and no account/data is involved — keep that note current.
