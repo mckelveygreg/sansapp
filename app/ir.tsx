@@ -14,6 +14,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AppState,
   PanResponder,
   Platform,
   Pressable,
@@ -627,8 +628,16 @@ export default function IrStudio() {
 
   async function onUpload() {
     const session = getSession();
-    if (!session) {
+    // An IR upload is a flash write on the pedal, not just a live param — starting one we can't
+    // finish (a drop mid-transfer) leaves the pedal's transfer-busy flag set and its SysEx parser
+    // wedged until the next hello clears it. Refuse to start unless the link is actually up and the
+    // app is in the foreground to see it through.
+    if (!session || !ready) {
       setStatus("Connect to the pedal first.");
+      return;
+    }
+    if (AppState.currentState !== "active") {
+      setStatus("Bring the app to the foreground before uploading an IR.");
       return;
     }
     const st = pedalStore.getState();
@@ -685,7 +694,19 @@ export default function IrStudio() {
               `pedal didn't confirm the preset's own IR record; a later upload may replace it.`,
       );
     } catch (e) {
-      setStatus(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      // A failed upload can leave the pedal's transfer-busy flag set, which wedges its SysEx parser
+      // until the next hello clears it — a straight retry would send a second begin frame into that
+      // and just wedge it again. Re-run the handshake before handing control back, so a manual retry
+      // starts clean instead of blind.
+      try {
+        await session.connect();
+        setStatus(`Upload failed (${msg}) — reconnected, safe to retry.`);
+      } catch {
+        setStatus(
+          `Upload failed (${msg}) — lost the connection recovering; reconnect and try again.`,
+        );
+      }
     }
   }
 
@@ -1004,12 +1025,14 @@ export default function IrStudio() {
             <View style={{ flexDirection: "row", gap: 10 }}>
               <Pressable
                 onPress={onUpload}
+                disabled={!ready}
                 style={{
                   flex: 1,
                   backgroundColor: theme.accent,
                   padding: 14,
                   borderRadius: radius,
                   alignItems: "center",
+                  opacity: ready ? 1 : 0.5,
                 }}
               >
                 <Text style={{ color: "#fff", fontWeight: "700" }}>Upload ▸ slot {uploadSlot}</Text>
