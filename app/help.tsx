@@ -14,7 +14,7 @@ interface Section {
 
 // In-progress, personal feature gated off in the public app (same flag the Recipes route uses).
 const RECIPES_SECTION: Section = {
-  title: "5 · Recipes",
+  title: "6 · Recipes",
   lines: [
     "The Recipes page has curated starting points for specific songs and sounds, mapped to this pedal's controls. Tap Apply to load one into the live edit buffer, then tune by ear and Save it if you like it.",
   ],
@@ -54,6 +54,17 @@ const GUIDE: Section[] = [
     lines: [
       "The Presets tab browses all 128 presets — rename, copy, or swap them, and save the current sound into any slot.",
       "Backup & Restore exports every preset to a single file you can keep or share with another player; restoring writes them back to the pedal.",
+    ],
+  },
+  {
+    title: "5 · Mute & Bypass",
+    lines: [
+      "The slim bar under the header engages the pedal's tuner switch from your phone. MUTE silences the output; BYPASS passes your dry signal through with the amp, drive and cab out of circuit — handy for hearing exactly what the pedal is adding. Tap the lit button again to go back to normal.",
+      "Both modes also put the pedal's tuner on, so the played note shows on the pedal's own display. The pedal doesn't send the pitch over MIDI, so the app can't show it here.",
+      "- The display reads “-” when it can't hear a note — that's no signal, not a frozen tuner.",
+      "- The buttons show what the app last asked for. If you engage the tuner with the pedal's own footswitch, the app can't tell (the pedal sends nothing), so they can read Off while the pedal is muted — changing preset clears it either way.",
+      "- Saving a preset while the tuner is engaged makes the pedal store it silent. If that happens, SansApp turns the tuner off and saves again, and says so in the MIDI log.",
+      "- The buttons grey out during an IR upload: the pedal ignores a tuner change while it's writing IR data.",
     ],
   },
   ...(FEATURES.recipes ? [RECIPES_SECTION] : []),

@@ -72,7 +72,7 @@ those indices for different controls.
 |      0x31 | High Q                         | `highQ` / eq.high.q                                                                                                                                                 |
 |      0x32 | Auto Gain                      | comp.autoGain                                                                                                                                                       |
 |      0x33 | Lookahead                      | comp.lookahead                                                                                                                                                      |
-|      0x34 | Tuner                          | —                                                                                                                                                                   |
+|      0x34 | Tuner                          | MUTE / BYPASS bar — `setTunerMode` (0 Off/1 Mute/2 Bypass; live-only, never in the blob)                                                                            |
 |      0x35 | User IR7 Preset MSB            | — (IR-upload address)                                                                                                                                               |
 |      0x36 | User IR7 Preset LSB            | — (IR-upload address)                                                                                                                                               |
 |      0x37 | User IR8 Preset MSB            | — (IR-upload address)                                                                                                                                               |

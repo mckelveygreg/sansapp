@@ -271,9 +271,34 @@ export const PARAMETRIC_EQ = {
  * - 0x13 is "Reverb Extension Factor" (2–5).
  * - 0x35–0x38 are the "User IR 7/8 Preset" addressing params for the writable IR slots.
  * - The deep reverb-engine params beyond Level/Decay/Time (0x12–0x18, 0x39–0x3b), the Expander block
- *   (0x1e–0x20), AnalogSim / Anti-aliasing / Clean Input, and the Tuner (0x34) are real params
- *   SansApp doesn't expose yet (roadmap). Full table + names in docs/PARAM-MAP.md.
+ *   (0x1e–0x20), and AnalogSim / Anti-aliasing / Clean Input are real params SansApp doesn't expose
+ *   yet (roadmap). Full table + names in docs/PARAM-MAP.md.
  */
+
+/**
+ * The Tuner param (index 0x34, live-set id 0x38 via {@link liveSetId}) — the pedal's tuner/mute
+ * switch, which the app can drive: 0 = Off, 1 = Mute (silent, tuner on), 2 = Bypass (dry signal, amp
+ * / drive / cab out of circuit, tuner still on). Both non-zero modes show the played note on the
+ * PEDAL's own display (`-` when it hears nothing); the pitch is never transmitted, so the app can't
+ * show it.
+ *
+ * Deliberately NOT a {@link PARAMS} entry, even though the preset blob carries it at 0x56:
+ *
+ * - It is transient performance state, not part of a saved sound. Registering it would put it in the
+ *   modeled-params set, and every save-from-state would then write blob[0x56] — baking "muted" into
+ *   the user's presets. Unmodeled bytes are copied from the base blob instead (see store.ts), which
+ *   is exactly what's wanted.
+ * - There is no read-back: a preset dump comes from flash, so blob[0x56] is the STORED byte, never
+ *   the pedal's live tuner state, and the pedal emits no tuner notify. So it has no place in
+ *   `values`, whose whole contract is "what the pedal is doing right now".
+ *
+ * See `DeviceSession.setTunerMode` for the write path (the write alone does nothing — it needs a
+ * nudge) and docs/PROTOCOL.md.
+ */
+export const TUNER_PARAM = 0x34;
+
+/** Tuner param values: Off / Mute / Bypass. See {@link TUNER_PARAM}. */
+export type TunerMode = 0 | 1 | 2;
 
 /**
  * The pedal's red "shift" footswitch — it flips the physical knobs between their primary and

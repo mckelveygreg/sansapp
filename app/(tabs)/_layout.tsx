@@ -1,9 +1,10 @@
 /** Bottom tab bar. RN app surface (tsconfig.json). */
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
-import type { ColorValue } from "react-native";
+import { View, type ColorValue } from "react-native";
 import { HeaderConnection, TransportTitle } from "../../src/components/AppHeader";
 import { theme } from "../../src/components/theme";
+import { TunerBar } from "../../src/components/TunerBar";
 
 type IoniconName = keyof typeof Ionicons.glyphMap;
 
@@ -16,6 +17,15 @@ const icon =
 export default function TabsLayout() {
   return (
     <Tabs
+      // The MUTE/BYPASS bar, pinned between the header and the screen on EVERY tab: screenLayout wraps
+      // each tab's scene, and the navigator renders that scene below the header. Both of the bar's uses
+      // are cross-tab (bypass while editing, mute while browsing presets) and the header is already full.
+      screenLayout={({ children }) => (
+        <View style={{ flex: 1 }}>
+          <TunerBar />
+          {children}
+        </View>
+      )}
       screenOptions={{
         headerStyle: { backgroundColor: theme.panel },
         headerTintColor: theme.text,

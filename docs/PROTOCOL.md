@@ -278,6 +278,38 @@ predicted offset).
 The compressor block, gate/expander, Auto-Filter Attack/Release, Ambience Decay/Time, IR Mode/Gain
 toggles, and Preset Level are all mapped the same way — see `docs/PARAM-MAP.md` and `params.ts`.
 
+### The Tuner param needs a nudge ✅ (index `0x34`, set-id `0x38`)
+
+The tuner/mute switch is a writable live param — `0`, `1` (Mute), `2` (Bypass) — and it is the one
+control whose write is **not self-sufficient**:
+
+```
+F0 00 51 21 05 50 <ver> 38 <00|01|02> F7   ; Off / Mute / Bypass -- records the value, does nothing
+F0 00 51 21 05 40 <ver> <active slot> F7   ; the nudge: any dump-producing command applies it
+```
+
+Observed on hardware (all four points):
+
+1. **The write alone changes nothing.** The value is recorded, but the pedal only acts on it while
+   draining a staged SysEx reply — of which the 267-byte preset dump is the only safe one. So the app
+   pairs every tuner write with a **read of the active slot** and discards the dump (a read doesn't
+   change the active preset; the dump's bytes come from flash, so they are stored state, not live).
+2. **An unpaired write is a landmine**, not a no-op: the next unrelated dump — a background read, even
+   a reconnect handshake — applies it, cutting the signal minutes later with nothing to explain it.
+3. **Nothing comes back.** No notify, no readback (a dump's `blob[0x56]` is the _stored_ byte), and no
+   pitch: the note appears on the **pedal's own display** (`-` = no signal detected), in Mute and in
+   Bypass alike. The app can only track what it asked for. A footswitch engage is completely silent,
+   but a footswitch _disengage_ pushes an unsolicited `05 41` dump, and a recall reloads the tuner byte
+   from the preset — so **any preset change clears both the pedal and the mirror**.
+4. **Two hazards.** Saving while the tuner is engaged makes the pedal zero the live Level param before
+   writing to flash, persisting the preset **silent** — `writePreset` detects that from the save echo,
+   clears the tuner and saves again. And the applier is skipped entirely while an IR transfer is in
+   progress, so the app disables the control for the duration instead of writing into the gap.
+
+Mode 2 is a genuine channel bypass (dry signal, amp/drive/cab out of circuit) _and_ a tuner at the
+same time; there is no separate bypass param — the footswitch bypass handlers have no MIDI path.
+`setTunerMode()` in `src/device/session.ts`; the UI is `src/components/TunerBar.tsx`.
+
 ## Config / data blocks ✅ (read live, 2026-07-03)
 
 Read straight off the pedal via `tools/dump-blocks.ts` (config `05 6A`→`6B`, data `05 55`→`52`):
@@ -421,7 +453,8 @@ Codec + `restorePlan()` in `src/protocol/bundle.ts`.
   committing (`05 50 0A 12 <slot>`), which persists regardless of pedal mode.
 - Red/Tuner footswitch: in **Performance** mode it toggles the preset's built-in chorus/filter; in
   **Studio** mode it engages the **Red Zone** editing layer (our `05 51 0A 4D` notify); hold in
-  either mode = tuner (tuner emits nothing over MIDI).
+  either mode = tuner. The tuner itself emits nothing over MIDI, but it can be **driven** from the app
+  — see [the Tuner param](#the-tuner-param-needs-a-nudge--index-0x34-set-id-0x38).
 - A `1–128` vs `0–127` offset option and optional PC→preset mapping table exist. 🤔 encoding.
 
 ## Selector encoding: amp model / ambience type / IR ✅
@@ -457,7 +490,7 @@ Handshake + checksum; `setParam`/`recall`/`read`/`write` (`0x20`) commands; the 
 framing; **all 15 knob param ids** (8 main + 7 Red Zone) and the read-vs-write (+4) rule; blob
 offsets for every mapped param (`= index + 0x22`); the **settings write** command (`05 52` block
 write, ack `05 53`); amp/ambience selection = live-set param bundles; IR select = param `0x0E`;
-user-IR upload transport + payload.
+user-IR upload transport + payload; the **Tuner** param `0x34` and its write-plus-nudge requirement.
 
 ## Open questions ❓
 
