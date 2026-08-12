@@ -11,14 +11,18 @@
 
 import { PRESET_SIZE, PRESET_SLOT_COUNT } from "../protocol/constants";
 import type { PedalMessage } from "../protocol/messages";
-import { PARAMS, TUNER_PARAM, type TunerMode, liveSetId } from "../protocol/params";
+import {
+  PARAMS,
+  TUNER_BLOB_OFFSET,
+  TUNER_PARAM,
+  type TunerMode,
+  liveSetId,
+} from "../protocol/params";
 
 const EDIT_BUFFER_SLOT = 0x7f;
 
 /** Live-set wire id of the Tuner param (index 0x34 → set-id 0x38). */
 const TUNER_SET_ID = liveSetId(TUNER_PARAM);
-/** Where a preset stores its own tuner byte — the value a recall reloads over the live one. */
-const TUNER_BLOB_OFFSET = TUNER_PARAM + 0x22;
 /** The byte the save path zeroes when the tuner is engaged (the silent-preset hazard). */
 const LEVEL_BLOB_OFFSET = PARAMS.level.blobOffset;
 
@@ -134,6 +138,11 @@ export class PedalModel {
         // accept the frame, change nothing for the special slots, and ack like hardware.
         if (msg.slot < 0x7e && msg.slot < this.presets.length)
           this.presets[msg.slot] = msg.blob.slice();
+        // The stage REFRESHES the live param array from the blob, tuner byte included — proved on
+        // hardware: staging a blob whose 0x56 said Mute made the following save zero Level even with
+        // the pedal's own tuner off, and staging one that said Off protected the save from a tuner that
+        // WAS engaged. So the staged blob, not the footswitch, decides the save's behaviour.
+        if (msg.slot < 0x7e) this.tunerWritten = clampTuner(msg.blob[TUNER_BLOB_OFFSET]);
         return [{ kind: "writeAck", code: 0x21 }];
       }
       case "setParam": {

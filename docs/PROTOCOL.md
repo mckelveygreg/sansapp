@@ -301,10 +301,32 @@ Observed on hardware (all four points):
    Bypass alike. The app can only track what it asked for. A footswitch engage is completely silent,
    but a footswitch _disengage_ pushes an unsolicited `05 41` dump, and a recall reloads the tuner byte
    from the preset — so **any preset change clears both the pedal and the mirror**.
-4. **Two hazards.** Saving while the tuner is engaged makes the pedal zero the live Level param before
-   writing to flash, persisting the preset **silent** — `writePreset` detects that from the save echo,
-   clears the tuner and saves again. And the applier is skipped entirely while an IR transfer is in
-   progress, so the app disables the control for the duration instead of writing into the gap.
+4. **The applier is skipped entirely while an IR transfer is in progress**, so the app disables the
+   control for the duration instead of writing into the gap.
+
+### The silent-save hazard, and the one byte that prevents it ✅ (hardware, 2026-08-12)
+
+The pedal's save handler forces the live Level param to 0 when the live tuner is engaged, then writes
+the array to flash — so a save with the tuner on persists the preset **silent**, with no error. Three
+experiments pinned when that actually fires:
+
+| what was sent                                      | result         | what it shows                                    |
+| -------------------------------------------------- | -------------- | ------------------------------------------------ |
+| bare commit (`0x12`), tuner engaged, no `05 20`    | Level **0**    | the hazard is real                               |
+| `05 20` + commit, tuner engaged, blob's `0x56` = 0 | Level **kept** | the stage refreshes the live array from the blob |
+| `05 20` + commit, tuner **off**, blob's `0x56` = 1 | Level **0**    | the _blob's_ tuner byte is what arms it          |
+
+So **the staged blob decides, not the footswitch**, and the defence is one byte: `writePreset` forces
+`blob[0x56]` to 0, which makes the silent save unreachable. That also de-corrupts a preset that arrived
+that way — a preset saved at the pedal with the tuner engaged stores a non-zero byte, and since a
+recall reloads the live tuner from it, **selecting that preset mutes the rig**. Storing transient tuner
+state in a preset has no upside, so the app never does.
+
+⚠️ A save is therefore **not** byte-faithful in one other place: the pedal overwrites the 16-byte cab
+name at `0xC0`–`0xCF` with its own live cab name. Observed by writing a blob back unchanged and reading
+it again; it is genuinely per-preset (two presets sharing IR pointer `[2,4]` report different names),
+so the pedal sources it from its working state at save time. Display only — pointer, IR Mode and blend
+all survive.
 
 Mode 2 is a genuine channel bypass (dry signal, amp/drive/cab out of circuit) _and_ a tuner at the
 same time; there is no separate bypass param — the footswitch bypass handlers have no MIDI path.

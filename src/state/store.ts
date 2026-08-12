@@ -13,6 +13,8 @@ import {
   PARAMS,
   RED_ZONE_TOGGLE_MIN_FIRMWARE,
   RED_ZONE_TOGGLE_PARAMS,
+  TUNER_BLOB_OFFSET,
+  asTunerMode,
   type ParamId,
   type TunerMode,
 } from "../protocol/params";
@@ -34,7 +36,8 @@ export interface PedalState {
    * state. **Optimistic**, and deliberately not part of `values`: the tuner has no notify and no
    * read-back, so there is nothing to reconcile against, and modelling it would make every save write
    * blob[0x56] (baking "muted" into the user's presets — see TUNER_PARAM). Set from the session's own
-   * wire writes, and reset to Off on a preset change, which the pedal really does clear it on.
+   * wire writes, and re-sourced from the preset's own tuner byte on every preset change — which is what
+   * the pedal itself reloads from (see syncTunerFromPreset).
    */
   tuner: TunerMode;
   /**
@@ -171,7 +174,7 @@ export function applyAmbienceType(store: PedalStoreApi, index: number): void {
 }
 
 /**
- * A preset change happened, so the pedal's tuner is Off again — clear the app's mirror.
+ * A preset change happened — adopt ITS tuner byte as the mirror.
  *
  * This is the resync for the one direction that matters: the app believing the signal is muted/bypassed
  * when it is actually live. The pedal reloads its whole live param array from the preset on every
@@ -179,14 +182,20 @@ export function applyAmbienceType(store: PedalStoreApi, index: number): void {
  * mute), and disengaging the tuner with the channel footswitch pushes an unsolicited preset dump — so
  * the preset-change hooks fire on exactly the transition that clears it.
  *
+ * Reading the byte rather than assuming 0 is what makes this firmware-exact instead of merely usual.
+ * Presets store 0 in practice — but one saved AT THE PEDAL with the tuner engaged stores 1 or 2, and
+ * recalling it genuinely engages the tuner. Assuming Off there would put the mirror wrong in the
+ * dangerous direction, on the one preset where it matters.
+ *
  * The other direction stays optimistic: a footswitch engaging the tuner is completely silent on the
  * wire, so nothing can tell the app about it. (The 0x4d notify is NOT that signal — a long-hold passes
  * through the Red Zone engage on its way to the tuner and emits a `4d=1` byte-identical to an ordinary
  * press, about a second BEFORE the tuner comes on. Clearing the mirror on 0x4d would clear it at the
  * exact moment the pedal is heading into Mute.)
  */
-function resetTunerMirror(store: PedalStoreApi): void {
-  if (store.getState().tuner !== 0) store.getState().setTuner(0);
+function syncTunerFromPreset(store: PedalStoreApi, raw: Uint8Array | null): void {
+  const mode = asTunerMode(raw?.[TUNER_BLOB_OFFSET]);
+  if (store.getState().tuner !== mode) store.getState().setTuner(mode);
 }
 
 /** Wire a DeviceSession's events into the store and return UI-facing actions. */
@@ -219,6 +228,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     const name = preset.name?.trim() || null;
     store.getState().loadPreset(slot, preset.values, name, preset.raw);
     syncAmbienceType(preset);
+    syncTunerFromPreset(store, preset.raw); // the backstop path follows a real preset change
     store.getState().pushLog(`● loaded current preset${slot != null ? ` (${slot + 1})` : ""}`);
     return preset;
   };
@@ -242,13 +252,12 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     session.onPushedPreset((slot, preset) => {
       store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null, preset.raw);
       syncAmbienceType(preset);
-      resetTunerMirror(store); // the recall behind this push cleared the pedal's tuner
+      syncTunerFromPreset(store, preset.raw); // the recall behind this push reloaded its tuner byte
       store.getState().pushLog(`⤺ pedal → preset ${slot + 1}: ${preset.name.trim()}`);
     }),
     session.onSlotChange((slot) => {
       if (slot === store.getState().slot || reloading) return;
       reloading = true; // dropped push? re-read the now-current preset
-      resetTunerMirror(store); // the preset changed on the pedal, so its tuner is Off
       void loadCurrent().finally(() => {
         reloading = false;
       });
@@ -256,7 +265,6 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     // The only tuner state the app can have is what it asked for — the pedal never reports the param.
     session.onTunerMode((mode) => store.getState().setTuner(mode)),
     session.onLinkBusy((busy) => store.getState().setLinkBusy(busy)),
-    session.onNotice((line) => store.getState().pushLog(`⚠ ${line}`)),
     session.onParamNotify((e) => {
       // The red "shift" footswitch reports as a 0x4d notify. 0x4d is High Freq's live-set id, never
       // its notify id (High Freq notifies on 0x49), so a 0x4d notify is always the footswitch — never
@@ -295,7 +303,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
       const preset = await session.recallPreset(slot);
       store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null, preset.raw);
       syncAmbienceType(preset); // highlighted engine, from this preset's blob
-      resetTunerMirror(store); // the pedal clears its tuner on every recall, ours included
+      syncTunerFromPreset(store, preset.raw); // every recall reloads the tuner from the preset
       store.getState().pushLog(`▶ recalled ${slot}: ${preset.name}`);
       return preset;
     },

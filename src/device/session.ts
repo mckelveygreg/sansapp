@@ -4,7 +4,7 @@
  * notifications. Pure and framework-free so it runs on the phone, in Node, and in tests.
  */
 
-import { PARAM_IDS, PARAMS, TUNER_PARAM, liveSetId } from "../protocol/params";
+import { PARAM_IDS, PARAMS, TUNER_BLOB_OFFSET, TUNER_PARAM, liveSetId } from "../protocol/params";
 import type { ParamId, TunerMode } from "../protocol/params";
 import { decode, encode, sysexVersion } from "../protocol/messages";
 import type { PedalMessage } from "../protocol/messages";
@@ -90,23 +90,29 @@ interface LiveParam {
 }
 
 /**
- * Did the save-with-the-tuner-on hazard just fire? It persists the preset SILENT.
+ * Make a blob safe to save: never persist a non-zero tuner byte.
  *
- * The pedal's save handler reads the live Tuner param (index 0x34) and, when it is non-zero (Mute or
- * Bypass), forces the live Level param to 0 *before* writing the array to flash. Engage the tuner —
- * from the footswitch, or from the app's own MUTE/BYPASS bar — then save, and that slot comes back at
- * Level 0.
+ * The pedal's save handler forces the live Level param to 0 when the live tuner is engaged, which
+ * writes the preset SILENT. Three hardware experiments (2026-08-12) pinned exactly when that fires:
  *
- * We can't check first: the tuner has no notify and no read (a preset dump is sourced from flash, so
- * blob[0x56] is the STORED tuner byte, never the live one), so the app cannot know the pedal's tuner
- * state. Instead detect it after the fact from the save echo — the pedal's own view of what it wrote.
- * Asking for a non-zero Level and getting 0 back has no other known cause.
+ * 1. A **bare commit** with the tuner engaged (no `05 20` first) persisted Level 0 — the hazard is
+ *    real, as the disassembly said.
+ * 2. A **staged** save with the tuner engaged and a blob whose own tuner byte was 0 persisted the full
+ *    Level. The stage refreshes the live param array from the blob, so the save reads the blob's tuner
+ *    byte, not whatever the footswitch did.
+ * 3. A staged save with the tuner **off** and a blob claiming Mute persisted Level 0 — proving it is
+ *    the blob's byte that arms it, and that a preset saved at the pedal with the tuner on would
+ *    re-silence itself every time the app touched it.
  *
- * writePreset acts on this by clearing the tuner and saving again (see setTunerMode).
+ * So the whole defence is this one byte, and it is a prevention: with it zeroed, the pedal cannot
+ * silence the save. (It also de-corrupts a preset that arrived that way, and stops a recall of it from
+ * muting the rig — see {@link TUNER_BLOB_OFFSET}.) Returns a copy; the caller's array is never touched.
  */
-function tunerZeroedLevel(sent: Uint8Array, echoed: Uint8Array): boolean {
-  const off = PARAMS.level.blobOffset;
-  return sent[off] !== 0 && echoed[off] === 0;
+function withTunerCleared(blob: Uint8Array): Uint8Array {
+  if (blob[TUNER_BLOB_OFFSET] === 0) return blob;
+  const safe = blob.slice();
+  safe[TUNER_BLOB_OFFSET] = 0;
+  return safe;
 }
 
 export class DeviceSession {
@@ -122,7 +128,6 @@ export class DeviceSession {
   private readonly pushedPresetCbs = new Set<(slot: number, preset: Preset) => void>();
   private readonly tunerCbs = new Set<(mode: TunerMode) => void>();
   private readonly busyCbs = new Set<(busy: boolean) => void>();
-  private readonly noticeCbs = new Set<(line: string) => void>();
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private hbFails = 0;
   /** Wall-clock ms of the last outbound send — the heartbeat treats recent traffic as "link alive". */
@@ -186,10 +191,6 @@ export class DeviceSession {
     for (const cb of this.busyCbs) cb(busy);
   }
 
-  private notice(line: string): void {
-    for (const cb of this.noticeCbs) cb(line);
-  }
-
   /** Fires when the pedal's firmware version becomes known or changes (argument: 1.0, 1.1, …). */
   onFirmwareVersion(cb: (firmware: number) => void): () => void {
     this.versionCbs.add(cb);
@@ -249,15 +250,6 @@ export class DeviceSession {
   onLinkBusy(cb: (busy: boolean) => void): () => void {
     this.busyCbs.add(cb);
     return () => this.busyCbs.delete(cb);
-  }
-  /**
-   * A one-line, user-facing notice about something the session did on its own initiative (currently:
-   * clearing the pedal's tuner to rescue a save). The app routes these into its MIDI log — a silent
-   * state change to the pedal is delightful until it isn't.
-   */
-  onNotice(cb: (line: string) => void): () => void {
-    this.noticeCbs.add(cb);
-    return () => this.noticeCbs.delete(cb);
   }
 
   /** Run the connect handshake: hello → config/data blocks → control(5B). */
@@ -460,9 +452,8 @@ export class DeviceSession {
    * saved, which can differ from `blob` where the save rewrites bytes (the per-preset user-IR
    * pointer is repointed at save time — see midi/irImport.ts).
    *
-   * Self-heals the tuner hazard: if the echo shows the pedal silenced the preset (see
-   * {@link tunerZeroedLevel}), it clears the tuner and saves again, and emits an {@link onNotice} line
-   * saying so — the app changed the pedal's state on the user's behalf, so it has to admit it.
+   * The blob's tuner byte is forced to 0 first — see {@link withTunerCleared}: that is what stops the
+   * pedal from persisting the preset silent, and it is why this needs no after-the-fact repair.
    */
   async writePreset(slot: number, blob: Uint8Array): Promise<Uint8Array> {
     // Reject the special/edit-buffer slots (0x7E/0x7F): a `05 20` stage to 0x7F is discarded, and the
@@ -474,30 +465,7 @@ export class DeviceSession {
       );
     }
     const s = slot & 0x7f;
-    const echoed = await this.stageAndCommit(s, blob);
-    // The save landed, but it may have been silenced by the tuner. This check (and the repair) sit
-    // OUTSIDE stageAndCommit's retry loop on purpose: a throw from in there would be swallowed as a
-    // dropped commit and retried 3×.
-    if (!tunerZeroedLevel(blob, echoed)) return echoed;
-    // Clear the tuner and save again. The user can't be expected to know that the pedal quietly
-    // zeroes Level on a save while the tuner is engaged, and the app CAN turn it off — so do that
-    // instead of handing back a preset that recalls silent.
-    await this.setTunerMode(0, s);
-    // Say it here, not after the retry: the pedal's state has ALREADY been changed on the user's
-    // behalf, so that has to be reported even if the second save then fails for its own reasons.
-    this.notice(
-      `preset ${s + 1} came back silent (saved with the tuner engaged) — turning the tuner off and saving again`,
-    );
-    const retried = await this.stageAndCommit(s, blob);
-    if (tunerZeroedLevel(blob, retried)) {
-      // The tuner write didn't take, so we're out of moves — say what was tried and hand it over.
-      throw new Error(
-        `preset ${s + 1} saved at Level 0 — the pedal zeroes Level when a preset is saved with the ` +
-          `tuner engaged, and turning the tuner off from here didn't take. Turn it off at the pedal ` +
-          `and save again.`,
-      );
-    }
-    return retried;
+    return this.stageAndCommit(s, withTunerCleared(blob));
   }
 
   /**

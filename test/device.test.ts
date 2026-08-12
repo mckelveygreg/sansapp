@@ -5,7 +5,7 @@ import { readAllPresets } from "../src/device/library";
 import { PedalModel } from "../src/device/pedalModel";
 import { DeviceSession } from "../src/device/session";
 import { createLoopback, type MidiIO } from "../src/device/transport";
-import { PARAMS, TUNER_PARAM, liveSetId } from "../src/protocol/params";
+import { PARAMS, TUNER_BLOB_OFFSET, TUNER_PARAM, liveSetId } from "../src/protocol/params";
 import { PC_MAP_BLOCK, SETTINGS_BLOCK, withPcMap, withSetting } from "../src/protocol/settings";
 
 /** Wire a pure PedalModel to the device side of a loopback pair. */
@@ -322,46 +322,66 @@ describe("DeviceSession hardening (batch 3)", () => {
     expect([echo2[0x57], echo2[0x58]]).toEqual([0x00, 0x7f]);
   });
 
-  it("writePreset throws when the save echo comes back at Level 0 (saved with the tuner engaged)", async () => {
-    const [appIO, devIO] = createLoopback();
-    const model = new PedalModel(makePresets());
-    // Emulate the pedal's save handler with the tuner ON: it forces the live Level param to 0 before
-    // writing the array to flash, so the echo — its view of what it saved — comes back silent.
-    devIO.onMessage((bytes) => {
-      for (const reply of model.handle(decode(bytes))) {
-        if (reply.kind === "presetDump") {
-          const zeroed = reply.blob.slice();
-          zeroed[LEVEL] = 0;
-          devIO.send(encode({ ...reply, blob: zeroed }));
-        } else {
-          devIO.send(encode(reply));
-        }
-      }
-    });
-    const session = new DeviceSession(appIO, 500);
-    await session.connect();
-    const blob = buildBlob(0x42);
-    blob[LEVEL] = 100;
-    await expect(session.writePreset(3, blob)).rejects.toThrow(/level 0[\s\S]*tuner/i);
-  });
-
-  it("the Level-zero guard doesn't fire on an honest save", async () => {
+  it("writePreset never stages a non-zero tuner byte, so the pedal can't silence the save", async () => {
+    // Hardware, 2026-08-12: the `05 20` stage refreshes the pedal's live param array from the blob, and
+    // the save handler then forces Level to 0 if that array's tuner byte is set. A blob claiming Mute
+    // therefore silences the very preset that stores it — and would re-silence it on every later save.
+    // One byte prevents the whole thing.
     const [appIO, devIO] = createLoopback();
     const model = new PedalModel(makePresets());
     wireModel(devIO, model);
     const session = new DeviceSession(appIO, 500);
     await session.connect();
-    // Level echoed back unchanged — the ordinary case.
+
+    const blob = buildBlob(0x42);
+    blob[LEVEL] = 100;
+    blob[TUNER_BLOB_OFFSET] = 1; // a preset saved AT THE PEDAL with the tuner engaged
+    const echo = await session.writePreset(3, blob);
+
+    expect(echo[LEVEL]).toBe(100); // Level survived — the hazard never armed
+    expect(model.presets[3]![TUNER_BLOB_OFFSET]).toBe(0); // and the preset is de-corrupted in flash
+    expect(blob[TUNER_BLOB_OFFSET]).toBe(1); // the CALLER's array is untouched
+  });
+
+  it("the pedal's own engaged tuner can't silence a staged save either", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    wireModel(devIO, model);
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    model.tunerWritten = 1; // the user engaged the tuner at the pedal
+    model.tuner = 1;
+
+    // The stage refreshes the live tuner from the blob (which says Off), so the save is safe.
     const loud = buildBlob(0x42);
     loud[LEVEL] = 100;
     expect((await session.writePreset(3, loud))[LEVEL]).toBe(100);
-    // And a preset the user deliberately saved at Level 0 is not a hazard — nothing was zeroed.
+    expect(model.presets[3]![LEVEL]).toBe(100);
+    // And a preset the user deliberately saved at Level 0 is still just that — nothing was zeroed.
     const silent = buildBlob(0x43);
     silent[LEVEL] = 0;
     await session.writePreset(4, silent);
   });
 
-  // ── the tuner (MUTE / BYPASS): write + nudge, and the save self-heal ──
+  it("a BARE commit with the tuner engaged DOES silence the preset (the hazard is real)", async () => {
+    // The counter-example that keeps the test above from being vacuous: with no stage to refresh it,
+    // the live array's forced-zero Level is what reaches flash. Reproduced on hardware first.
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    wireModel(devIO, model);
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const loud = buildBlob(0x42);
+    loud[LEVEL] = 100;
+    await session.writePreset(3, loud); // stage + commit → lands at Level 100
+    model.tunerWritten = 1; // now engage the tuner and commit WITHOUT staging anything
+    model.tuner = 1;
+    appIO.send(encode({ kind: "setParam", param: 0x12, value: 3 })); // app → pedal, bypassing session
+    await new Promise((r) => setTimeout(r, 10));
+    expect(model.presets[3]![LEVEL]).toBe(0);
+  });
+
+  // ── the tuner (MUTE / BYPASS): write + nudge ──
   it("setTunerMode writes the tuner param and nudges it with a read of the active slot", async () => {
     const [appIO, devIO] = createLoopback();
     const model = new PedalModel(makePresets());
@@ -406,54 +426,6 @@ describe("DeviceSession hardening (batch 3)", () => {
     await session.setTunerMode(2, 0);
     await session.setTunerMode(0, 0);
     expect(modes).toEqual([2, 0]);
-  });
-
-  it("writePreset self-heals a save the tuner silenced: clears the tuner, saves again, says so", async () => {
-    const [appIO, devIO] = createLoopback();
-    const model = new PedalModel(makePresets());
-    wireModel(devIO, model);
-    const session = new DeviceSession(appIO, 500);
-    await session.connect();
-    // The user engaged the tuner at the pedal (footswitch), so the save path will zero Level.
-    model.tunerWritten = 1;
-    model.tuner = 1;
-
-    const notices: string[] = [];
-    session.onNotice((line) => notices.push(line));
-    const blob = buildBlob(0x42);
-    blob[LEVEL] = 100;
-    const echo = await session.writePreset(3, blob);
-
-    expect(echo[LEVEL]).toBe(100); // the RE-save landed at full Level
-    expect(model.presets[3]![LEVEL]).toBe(100); // …and that's what's in flash
-    expect(model.tuner).toBe(0); // the tuner really was cleared on the pedal
-    expect(notices).toHaveLength(1);
-    expect(notices[0]).toMatch(/tuner/i);
-  });
-
-  it("writePreset still throws if clearing the tuner doesn't fix the silent save", async () => {
-    const [appIO, devIO] = createLoopback();
-    const model = new PedalModel(makePresets());
-    // A pedal that ignores the tuner write: every save echo comes back at Level 0. The self-heal has
-    // nothing left to try, so the user has to be told — silently handing back a dead preset is worse.
-    devIO.onMessage((bytes) => {
-      const m = decode(bytes);
-      if (m.kind === "setParam" && m.param === TUNER_SET_ID) return; // swallowed
-      for (const reply of model.handle(m)) {
-        if (reply.kind === "presetDump") {
-          const zeroed = reply.blob.slice();
-          zeroed[LEVEL] = 0;
-          devIO.send(encode({ ...reply, blob: zeroed }));
-        } else {
-          devIO.send(encode(reply));
-        }
-      }
-    });
-    const session = new DeviceSession(appIO, 500);
-    await session.connect();
-    const blob = buildBlob(0x42);
-    blob[LEVEL] = 100;
-    await expect(session.writePreset(3, blob)).rejects.toThrow(/level 0[\s\S]*tuner/i);
   });
 
   it("reports an exclusive (IR transfer) window so the UI can disable the tuner bar", async () => {

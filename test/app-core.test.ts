@@ -5,7 +5,7 @@ import { DeviceSession } from "../src/device/session";
 import { createLoopback, type MidiIO } from "../src/device/transport";
 import { AMBIENCE_BUNDLES } from "../src/protocol/ambience";
 import { PROTOCOL_V1_0 } from "../src/protocol/constants";
-import { PARAMS } from "../src/protocol/params";
+import { TUNER_BLOB_OFFSET } from "../src/protocol/params";
 import { ambienceStore } from "../src/state/ambience";
 import { applyAmbienceType, bindSession, createPedalStore } from "../src/state/store";
 import { angleToValue, dragToValue, toDisplay, valueToAngle } from "../src/ui/knobMath";
@@ -244,22 +244,27 @@ describe("tuner mirror (MUTE / BYPASS)", () => {
     ctl.dispose();
   });
 
-  it("routes a session notice into the MIDI log (the save self-heal tells the user)", async () => {
+  it("adopts a preset's OWN tuner byte on recall, not a hopeful zero", async () => {
+    // A preset saved AT THE PEDAL with the tuner engaged stores 1 or 2, and recalling it genuinely
+    // engages the tuner — the pedal reloads its live tuner from that byte. Assuming Off would put the
+    // mirror wrong in the dangerous direction, on the one preset where it matters.
     const [appIO, devIO] = createLoopback();
-    const model = new PedalModel();
-    wireModel(devIO, model);
+    const presets = Array.from({ length: 128 }, () => {
+      const b = new Uint8Array(256);
+      b[0] = 0x01;
+      return b;
+    });
+    presets[9]![TUNER_BLOB_OFFSET] = 1; // slot 10 recalls muted
+    wireModel(devIO, new PedalModel(presets));
     const session = new DeviceSession(appIO, 500);
     await session.connect();
     const store = createPedalStore();
     const ctl = bindSession(session, store);
 
-    model.tunerWritten = 1; // the user engaged the tuner at the pedal
-    model.tuner = 1;
-    const blob = new Uint8Array(256);
-    blob[0] = 0x01;
-    blob[PARAMS.level.blobOffset] = 90;
-    await session.writePreset(6, blob);
-    expect(store.getState().log.join("\n")).toMatch(/tuner/i);
+    await ctl.recall(9);
+    expect(store.getState().tuner).toBe(1);
+    await ctl.recall(8); // an ordinary preset clears it again
+    expect(store.getState().tuner).toBe(0);
     ctl.dispose();
   });
 });

@@ -297,8 +297,28 @@ export const PARAMETRIC_EQ = {
  */
 export const TUNER_PARAM = 0x34;
 
+/**
+ * Where a preset stores its own tuner byte (`TUNER_PARAM + 0x22`, the usual rule).
+ *
+ * It matters more than a transient param's stored copy should, because the pedal treats it as live
+ * state twice over — both confirmed on hardware 2026-08-12:
+ *
+ * - **A recall reloads the live tuner from it**, so a preset holding a non-zero byte ENGAGES the tuner
+ *   when you select it: the preset mutes your rig.
+ * - **Staging a preset (`05 20`) refreshes the live param array from it**, and the save handler then
+ *   reads that array to decide whether to force Level to 0. So a blob carrying a non-zero tuner byte
+ *   makes the pedal silence the very save that persists it — the corruption propagates itself.
+ *
+ * Hence {@link DeviceSession.writePreset} forces this byte to 0 on every save. That is the whole
+ * defence against the silent-save hazard, and it is a prevention rather than a detection.
+ */
+export const TUNER_BLOB_OFFSET = TUNER_PARAM + 0x22;
+
 /** Tuner param values: Off / Mute / Bypass. See {@link TUNER_PARAM}. */
 export type TunerMode = 0 | 1 | 2;
+
+/** Coerce a stored/wire byte to a tuner mode; anything out of range reads as Off. */
+export const asTunerMode = (v: number | undefined): TunerMode => (v === 1 || v === 2 ? v : 0);
 
 /**
  * The pedal's red "shift" footswitch — it flips the physical knobs between their primary and
