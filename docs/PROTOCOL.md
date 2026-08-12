@@ -322,11 +322,13 @@ that way — a preset saved at the pedal with the tuner engaged stores a non-zer
 recall reloads the live tuner from it, **selecting that preset mutes the rig**. Storing transient tuner
 state in a preset has no upside, so the app never does.
 
-⚠️ A save is therefore **not** byte-faithful in one other place: the pedal overwrites the 16-byte cab
-name at `0xC0`–`0xCF` with its own live cab name. Observed by writing a blob back unchanged and reading
-it again; it is genuinely per-preset (two presets sharing IR pointer `[2,4]` report different names),
-so the pedal sources it from its working state at save time. Display only — pointer, IR Mode and blend
-all survive.
+⚠️ A save is therefore **not** byte-faithful in one other place: the pedal rewrites the 16-byte cab
+name at `0xC0`–`0xCF` from **the IR record the saved preset points at**. Observed by writing a blob back
+unchanged: a preset whose slot-7 pointer is `[2,4]` came back naming that record (`Concert 2x15`) in
+place of the `VT_SPKR` label the factory build had left there — while the pedal itself was parked on an
+unrelated preset, so it is the target's pointer that decides, not live state. The factory presets carry
+Tech 21's internal labels here, and re-saving one replaces them with the real record name. Display only:
+pointer, IR Mode and blend all survive.
 
 Mode 2 is a genuine channel bypass (dry signal, amp/drive/cab out of circuit) _and_ a tuner at the
 same time; there is no separate bypass param — the footswitch bypass handlers have no MIDI path.

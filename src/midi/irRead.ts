@@ -10,11 +10,20 @@ import { type DecodedIr, decodeIrStream, irStreamToDat } from "../protocol/irEnc
 
 /**
  * `(a, b)` selector for each IR slot (1-indexed). Hardware-confirmed 2026-07-15: the pedal has 8 IR
- * slots at bank `a=0x02`, `b=0..7`. Slots 1–6 are FACTORY cabs; 7–8 are the USER-pair slots (each
- * pairs a factory cab with a user IR, selected per-preset by the IR Mode toggle). The slots are a
- * GLOBAL library (a marker written to slot 3 survived a preset change); the per-preset `0x0E`
- * selection picks which cab a preset uses. Reading the bank (here) is safe; never WRITE it directly
- * from the app — uploads go through the edit-buffer import (see irUpload.ts / issue #37).
+ * slots at bank `a=0x02`, `b=0..7`. The slots are a GLOBAL library (a marker written to slot 3 survived
+ * a preset change); the per-preset `0x0E` selection picks which cab a preset uses.
+ *
+ * ⚠️ **All eight of these records are FACTORY cabs** — including 7 and 8. An earlier version of this
+ * comment called 7–8 "the USER-pair slots" and that reading cost a factory cab: an experimental upload
+ * to `[0x02, 0x06]` replaced cab 7 (`Voice 12L`) and it is not recoverable from the pedal. Audited
+ * 2026-08-12 by reading all eight records and diffing them against the cab `.wav`s the desktop editor
+ * ships: records 1–6 and 8 match their factory cab to within ±1 of int8 rounding; `[0x02, 0x06]` holds
+ * a SansApp test IR instead.
+ *
+ * What "user slots 7/8" really means is the per-preset **override**: a preset can point slots 7/8 at a
+ * PRIVATE record (bank `0x00`/`0x01`, indexed by program — see irImport.ts) instead of at the factory
+ * cab, chosen by its IR Mode toggle. User IR data lives there, never here. Reading this bank is safe;
+ * **never write it** — uploads go through the edit-buffer import (irUpload.ts / issue #37).
  */
 export const IR_READ_AB: Record<number, [number, number]> = {
   1: [0x02, 0x00],
@@ -26,7 +35,7 @@ export const IR_READ_AB: Record<number, [number, number]> = {
   7: [0x02, 0x06],
   8: [0x02, 0x07],
 };
-/** The two user-writable IR slots (1–6 are factory — never upload there). */
+/** The two slots a preset may OVERRIDE with a private user record (never written in bank 0x02). */
 export const USER_IR_SLOTS = [7, 8] as const;
 
 /**
