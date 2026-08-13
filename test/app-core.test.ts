@@ -198,6 +198,85 @@ describe("pedal store + controller", () => {
     ctl.dispose();
   });
 
+  it("reconciles the Red Zone claim from a loaded preset's own values, in both directions", async () => {
+    // The pedal re-derives its Red Zone state at the end of every preset load — engaged if ANY of Auto
+    // Filter / Chorus / Ambiance is non-zero (RED_ZONE_STATE_PARAMS) — so a preset load is the one
+    // moment the app can know the state exactly instead of trusting a 0x4d notify that a long-hold may
+    // have silently undone. Both corrections below are ones the notify alone can never make.
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel());
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+
+    const push = async (ambiance: number, autoFilter: number, chorus: number): Promise<void> => {
+      const blob = new Uint8Array(256);
+      blob[0] = 0x01;
+      blob[PARAMS.ambiance.blobOffset] = ambiance;
+      blob[PARAMS.autoFilterOn.blobOffset] = autoFilter;
+      blob[PARAMS.chorusOn.blobOffset] = chorus;
+      devIO.send(encode({ kind: "presetDump", slot: 3, blob, checksumOk: true }));
+      await new Promise((r) => setTimeout(r, 10));
+    };
+
+    // Stale "primary" → engaged. AMBIANCE ALONE engages the Red Zone on the pedal, and it is not one of
+    // the params the footswitch force-sets, so on an ambience-bearing preset the pedal comes up engaged
+    // (red LED lit) with no wire event ever saying so. Before the reconcile the app claimed "primary"
+    // here — and the player's next stomp DISengages, which is baffling unless the state is shown.
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(store.getState().layer).toBe("primary");
+    await push(34, 0, 0);
+    expect(store.getState().layer).toBe("red");
+    expect(store.getState().dirty).toBe(false); // reconciled state is not an unsaved edit
+    // Display only: the reconcile must never fabricate effect flags (that would corrupt the next save).
+    expect(store.getState().values.autoFilterOn).toBe(0);
+    expect(store.getState().values.chorusOn).toBe(0);
+
+    // Stale "red" → primary. A long-hold from the engaged side announces 4d=1 and then silently
+    // reverts; the load re-derives from all three params and clears the claim.
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 1 }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(store.getState().layer).toBe("red");
+    await push(0, 0, 0);
+    expect(store.getState().layer).toBe("primary");
+
+    // Each of the other two engages it on its own too.
+    await push(0, 1, 0);
+    expect(store.getState().layer).toBe("red");
+    await push(0, 0, 1);
+    expect(store.getState().layer).toBe("red");
+
+    // And the notify still wins AFTER a load — the reconcile is a load-time correction, not a mirror
+    // that overrides live footswitch traffic.
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(store.getState().layer).toBe("primary");
+    ctl.dispose();
+  });
+
+  it("an app-initiated recall reconciles the Red Zone claim too", async () => {
+    const presets = Array.from({ length: 128 }, (_, i) => {
+      const b = new Uint8Array(256);
+      b[0] = 0x01;
+      b[PARAMS.ambiance.blobOffset] = i === 9 ? 40 : 0; // only slot 9 carries any Ambiance
+      return b;
+    });
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel(presets));
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+
+    await ctl.recall(9);
+    expect(store.getState().layer).toBe("red"); // the pedal derived the same thing from the same bytes
+    await ctl.recall(10);
+    expect(store.getState().layer).toBe("primary");
+    ctl.dispose();
+  });
+
   it("firmware 1.0 red footswitch notify does NOT touch the effect enables (layer shift only)", async () => {
     // On firmware 1.0 the red switch never force-set 0x3c/0x41, so a 1.0-versioned 0x4d notify must
     // leave the effect toggles alone — mirroring there would corrupt state on old pedals.

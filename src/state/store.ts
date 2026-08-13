@@ -15,6 +15,7 @@ import {
   RED_ZONE_TOGGLE_PARAMS,
   TUNER_BLOB_OFFSET,
   asTunerMode,
+  redZoneEngagedFor,
   type ParamId,
   type TunerMode,
 } from "../protocol/params";
@@ -29,7 +30,17 @@ export interface PedalState {
   /** The connected pedal's firmware version (1.0, 1.1, …), or null until it reports one. Read off
    * byte 6 of its messages — see docs/PROTOCOL.md. Drives the "firmware update available" notice. */
   firmware: number | null;
-  /** The pedal's active knob layer (tracked from the 0x4d footswitch notify + our own sets). */
+  /**
+   * The pedal's active knob layer — its "Red Zone" state, shown by the RED ZONE indicator in the
+   * app's tuner bar (src/components/RedZoneBadge.tsx).
+   *
+   * Two sources, in decreasing order of trust: **reconciled** from the loaded values on every preset
+   * load (the pedal derives its own state the same way at the same moment — see
+   * {@link redZoneEngagedFor}), then **tracked** from the 0x4d footswitch notify in between. The
+   * notify is the weaker source: a long-hold announces a toggle it then silently undoes, so between
+   * a hold and the next preset load this can be wrong in either direction. It is displayed rather
+   * than acted on for exactly that reason — the app must never write the switch back.
+   */
   layer: KnobLayer;
   /**
    * What the app last asked the pedal's tuner to be: 0 Off / 1 Mute / 2 Bypass — the MUTE/BYPASS bar's
@@ -121,6 +132,19 @@ export function createPedalStore() {
         baseline: { ...values },
         raw, // base blob for save-from-state; null (e.g. demo mode) disables the overlay save
         dirty: false,
+        // Reconcile the Red Zone claim instead of letting it drift. The pedal re-derives its own Red
+        // Zone state from the values it just loaded — engaged if ANY of Auto Filter / Chorus /
+        // Ambiance is non-zero — as the last act of a preset load, so right here it is knowable
+        // exactly rather than inferred from a footswitch notify we may have misread (see
+        // RED_ZONE_STATE_PARAMS, and the 0x4d handler below for how the notify can lie). Doing it in
+        // the action rather than at the three call sites means no path that lands a preset can forget.
+        //
+        // One caveat, deliberately accepted: loadCurrent() READS the pedal's active program without
+        // recalling it, so there the derivation reproduces the state as of the pedal's last recall — a
+        // stomp since then is not accounted for. That is still strictly better than the "primary"
+        // default it replaces (which asserts the same thing with no evidence at all), and the whole
+        // point of surfacing it is that a player can check it against the pedal's own red LED.
+        layer: redZoneEngagedFor(values) ? "red" : "primary",
         names: slot != null && name != null ? { ...s.names, [slot]: name } : s.names,
       })),
     setNames: (names) => set({ names }),

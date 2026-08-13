@@ -15,7 +15,11 @@
  * The state shown is **what the app last asked for**. The pedal never reports its tuner, so there's no
  * readback to reconcile against; that's acceptable here because the feedback channel is your ears —
  * nobody stares at a button to find out whether the signal stopped. The mirror self-heals on any
- * preset change (see store.ts resetTunerMirror). RN app surface.
+ * preset change (see store.ts syncTunerFromPreset).
+ *
+ * The strip also carries the {@link RedZoneBadge} in its status slot — the other piece of pedal state
+ * the app can only claim rather than read back, and the other one that cuts across every tab. RN app
+ * surface.
  */
 import * as Haptics from "expo-haptics";
 import { useState } from "react";
@@ -23,6 +27,7 @@ import { Platform, Pressable, Text, View } from "react-native";
 import { useStore } from "zustand";
 import { pedalStore, setTunerMode } from "../midi/pedal";
 import type { TunerMode } from "../protocol/params";
+import { RedZoneBadge } from "./RedZoneBadge";
 import { theme } from "./theme";
 
 const MODES: { mode: Exclude<TunerMode, 0>; label: string }[] = [
@@ -36,6 +41,7 @@ export function TunerBar() {
   const slot = useStore(pedalStore, (s) => s.slot);
   const linkBusy = useStore(pedalStore, (s) => s.linkBusy);
   const [pending, setPending] = useState(false);
+  const caption = tunerCaption(tuner, { ready, linkBusy });
 
   // The nudge is a read of the active slot, so an unknown slot has nothing to nudge with. linkBusy =
   // an IR transfer owns the link, and the pedal SILENTLY skips a tuner change during one — better a
@@ -102,12 +108,22 @@ export function TunerBar() {
           </Pressable>
         );
       })}
-      <Text
-        numberOfLines={1}
-        style={{ color: theme.textDim, fontSize: 11, flex: 1, textAlign: "right" }}
-      >
-        {tunerCaption(tuner, { ready, linkBusy })}
-      </Text>
+      {/*
+        One status slot, one fact at a time. While the tuner is engaged (or an IR transfer owns the
+        link) that IS the fact you need — your signal is muted or the buttons are dead — and its
+        sentence needs the width. Otherwise the slot carries the Red Zone indicator, the other piece of
+        pedal state the app can only claim rather than verify. Stacking both would truncate the urgent
+        one on a phone.
+      */}
+      <View style={{ flex: 1, alignItems: "flex-end" }}>
+        {caption ? (
+          <Text numberOfLines={1} style={{ color: theme.textDim, fontSize: 11 }}>
+            {caption}
+          </Text>
+        ) : (
+          <RedZoneBadge />
+        )}
+      </View>
     </View>
   );
 }

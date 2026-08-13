@@ -369,6 +369,47 @@ export const RED_ZONE_TOGGLE_PARAMS: readonly ParamId[] = ["autoFilterOn", "chor
 export const RED_ZONE_TOGGLE_MIN_FIRMWARE = 1.1;
 
 /**
+ * The three params the pedal DERIVES its own Red Zone state from: Auto Filter enable (0x3c), Chorus
+ * enable (0x41) and **Ambiance** (0x08). The rule is a plain OR — any one of them non-zero and the
+ * pedal's Red Zone reads *engaged* (red LED lit, physical knobs on their alternate functions); all
+ * three zero and it reads primary. No weighting, no threshold. Confirmed instruction-by-instruction
+ * against firmware 1.1, including the branch polarity (sansapp-lab #52 carries the derivation).
+ *
+ * What makes this worth modelling is **when** it holds:
+ *
+ * - The pedal re-derives the state as the **last act of a preset load** — the routine that pushes a
+ *   blob's values into its live param array recomputes it once every value has landed. So immediately
+ *   after a recall the Red Zone state is a pure function of the loaded values, knowable with no wire
+ *   evidence at all. That is what {@link redZoneEngagedFor} is for, and it is the only claim about the
+ *   Red Zone the app can make with certainty.
+ * - It is **not** re-derived afterwards. The red footswitch overwrites the state directly as it
+ *   toggles, so it stops matching the OR the moment you stomp (engaging with Ambiance up leaves
+ *   Ambiance non-zero, which the OR would still read as engaged). Reconcile at load, then track
+ *   {@link KNOB_LAYER_NOTIFY_PARAM} notifies. **Do not derive continuously.**
+ *
+ * ⚠️ The consequence that bites players: **Ambiance is in this set but is NOT one of the params the
+ * footswitch force-sets** — {@link RED_ZONE_TOGGLE_PARAMS} is only the other two. So a preset with any
+ * Ambiance at all comes up already reading engaged, and the FIRST press of the red switch therefore
+ * takes the *disengage* branch: it notifies `4d=0` and forces Auto Filter + Chorus off, the opposite of
+ * what the player just asked for. It toggles normally from then on. The app cannot correct this (the
+ * switch's set-id is a command that also repoints all eight knobs — never write it); showing the state
+ * so the surprise is predictable instead of baffling is the whole available defence.
+ */
+export const RED_ZONE_STATE_PARAMS: readonly ParamId[] = ["autoFilterOn", "chorusOn", "ambiance"];
+
+/**
+ * Would these just-loaded preset values leave the pedal's Red Zone reading *engaged*? The pedal's own
+ * rule: non-zero in ANY of {@link RED_ZONE_STATE_PARAMS}. A missing value counts as 0 — an absent param
+ * cannot be engaging anything.
+ *
+ * Valid **at preset-load time only**; see {@link RED_ZONE_STATE_PARAMS} for why it goes stale after a
+ * stomp and must not be used as a live mirror.
+ */
+export function redZoneEngagedFor(values: Partial<Record<ParamId, number>>): boolean {
+  return RED_ZONE_STATE_PARAMS.some((id) => (values[id] ?? 0) !== 0);
+}
+
+/**
  * Per-USER-IR makeup gain scaling. The gain params themselves are the store-backed `irGain7`/`irGain8`
  * registry entries above (slot 7 = idx 0x2a, slot 8 = idx 0x2b); this is the wire↔dB conversion the IR
  * page uses. Range 0–127 maps **linearly to ±{@link USER_IR_GAIN_DB_RANGE} dB**: `dB = value/127·24 −
