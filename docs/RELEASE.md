@@ -148,6 +148,31 @@ create the initial release); after that the lanes run unattended. Bump `android.
 
 ## Gotchas
 
+- **A Ruby upgrade can break `pod install` inside the `beta`/`release` lanes.** Hit on 2026-08-12 with
+  Ruby 4.0.6: step 4 (`cocoapods`) died before doing anything, with
+  `Could not find 'httpclient' (~> 2.8, >= 2.8.3)` — the CocoaPods vendored under fastlane's own gem
+  path had an incomplete dependency tree (`httpclient` comes in via `algoliasearch`, which CocoaPods
+  uses for spec-repo search). Nothing about the app or the signing setup was wrong. Fix:
+
+      GEM_HOME=~/.local/share/fastlane/<ruby-abi>/ gem install httpclient --no-document
+
+  Confirm with `pod --version` (should answer, not backtrace) before re-running the lane. Expect the
+  same class of failure — a missing transitive gem in fastlane's bundle — after any future Ruby bump;
+  the error names the gem, so install that one into the same `GEM_HOME`.
+
+- **`fastlane ios beta`'s shell exit code is not its outcome if you pipe it.** `fastlane ... | tail`
+  reports `tail`'s status, so a lane that ends in `fastlane finished with errors` still exits 0 through
+  the pipe. Check for the literal `fastlane.tools finished successfully 🎉` line, or the step table's
+  💥 marker — don't trust `$?` through a pipe.
+- **`MARKETING_VERSION` in `ios/SansApp.xcodeproj/project.pbxproj` stays stale, and that's fine.**
+  `expo prebuild` writes the version into the generated `Info.plist` rather than syncing
+  `MARKETING_VERSION`, so the pbxproj can read `1.0` while the shipped build is correct. Verify the
+  real numbers from the built artifact, not the project file:
+
+      unzip -p build/SansApp.ipa Payload/SansApp.app/Info.plist > /tmp/i.plist
+      plutil -extract CFBundleShortVersionString raw /tmp/i.plist   # version
+      plutil -extract CFBundleVersion raw /tmp/i.plist              # build number
+
 - **Screenshots (and other version metadata) freeze once the version goes live.** `deliver` can only
   edit a version while App Store Connect reports it as `PREPARE_FOR_SUBMISSION`,
   `*_REJECTED`, or `WAITING_FOR_REVIEW` (that's the exact filter `get_edit_app_store_version` uses).
