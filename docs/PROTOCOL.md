@@ -76,13 +76,13 @@ these; `decode()` never throws (unknown input → `{ kind: "unknown" }`).
 **Additional message subs** (observed in captures; handled in the app but not part of the core
 handshake):
 
-| Bytes                          | Meaning                                                                             |
-| ------------------------------ | ----------------------------------------------------------------------------------- |
-| `05 60 / 65 / 66 0A …`         | **user-IR upload** — begin / data-chunk / end (see [IR handling](#ir-handling-)) ✅ |
-| `05 63 00 F7`, `05 61 F7`      | pedal **acks** an IR-upload begin (`63`) and end (`61`) ✅                          |
-| `05 69 0A <a> <b>`             | **read an IR** back off the pedal → a `05 60/65/66` stream ✅                       |
-| `05 56 0A <mode>` → `05 57 F7` | **factory reset** (mode 0 All / 1 Presets / 2 Settings) — destructive ✅            |
-| `05 5A 0A`                     | no-arg control; seen triggering a **resync** (block + preset re-read) ✅            |
+| Bytes                          | Meaning                                                                                  |
+| ------------------------------ | ---------------------------------------------------------------------------------------- |
+| `05 60 / 65 / 66 0A …`         | **user-IR upload** — begin / data-chunk / end (see [IR handling](#ir-handling-)) ✅      |
+| `05 63 00 F7`, `05 61 F7`      | pedal **acks** an IR-upload begin (`63`) and end (`61`) ✅                               |
+| `05 69 0A <a> <b>`             | **read an IR** back off the pedal → a `05 60/65/66` stream ✅                            |
+| `05 56 0A <mode>` → `05 57 F7` | **factory reset**, 4 modes — destructive ([what each does](#other-observed-messages)) ✅ |
+| `05 5A 0A`                     | no-arg control; seen triggering a **resync** (block + preset re-read) ✅                 |
 
 **Connect handshake** (captured, in order): `hello 5F` → `6A 00`→`6B` → `55 0F`→`52` → `55 03`→`52`
 → `55 00`→`52` → `control 5B` → `40 00`→`41` (reads preset 0). The emulator (`tools/emulate.ts`)
