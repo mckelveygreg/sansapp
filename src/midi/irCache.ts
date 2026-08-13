@@ -1,29 +1,63 @@
 /**
  * Persist the IRs pulled off the pedal so the IR page doesn't re-read them (a slow BLE round-trip
- * per slot) on every visit. Stored as JSON in the app's document directory; factory slots (1–6)
- * never change and user slots (7/8) are re-saved after an upload. RN app surface (expo-file-system).
+ * each) on every visit. Stored as JSON in the app's document directory. RN app surface
+ * (expo-file-system).
+ *
+ * ## Keyed by RECORD number — never by selector position
+ *
+ * The pedal addresses an IR by a flat 14-bit **record** number (`readIr(session, msb, lsb)`), and a
+ * preset's slot 7/8 plays whatever record *its own* pointer names — records 256–263 are the shared
+ * library, 0–255 the private per-preset store at `bank·128 + program` (see
+ * `src/protocol/irPointer.ts`; `src/protocol/irSelect.ts` maps a selector position to the record to
+ * look up here).
+ *
+ * Keying by selector **position** instead was the cross-preset leak in sansapp#68: this file holds one
+ * entry per position, global across presets, so whatever was last pulled into position 7 rendered on
+ * every preset whose IR Mode 7 was on — one preset's uploaded cab shown on ~90 others. A record key
+ * cannot alias two presets, because two presets with different IRs point at different records.
+ *
+ * (An earlier version of this note claimed the cache stays fresh because "factory slots (1–6) never
+ * change and user slots (7/8) are re-saved after an upload". That was the position model. Records
+ * 256–263 are indeed only rewritten by a Pull, but a private record's *number* outlives its contents —
+ * see below.)
+ *
+ * ## Version 2 = the re-key, and there is no migration
+ *
+ * A v1 file's keys are positions 1–8, which are indistinguishable from records 1–8 — real private
+ * records. So a v1 file cannot be reinterpreted, only discarded: {@link loadIrCache} already drops any
+ * file whose `version` doesn't match, which costs the user one Pull.
+ *
+ * ## Staleness rule
+ *
+ * A record keeps its number when its contents are rewritten, so the right key can still hold the
+ * wrong samples. Only an IR upload writes, and it only ever writes **private** records (banks 0/1 —
+ * bank 2 is read-only to this app, see `irRead.ts`), and the uploader knows the samples it sent. So
+ * the rule the IR page applies after an upload is: drop every private record from the cache, then
+ * re-file the crafted samples under the record the saved preset now points at. Library records are
+ * left alone.
  */
 import { Platform } from "react-native";
 
 const FILE = "ir-cache.json";
-const VERSION = 1;
+/** 2 = keyed by IR record number. 1 was keyed by selector position; see the module header. */
+const VERSION = 2;
 
-/** slot → cab name + impulse samples in [-1, 1] (the pedal's 2400-sample IR). */
-type IrSlots = Record<number, { name: string; samples: Float64Array }>;
+/** IR record number → cab name + impulse samples in [-1, 1] (the pedal's 2400-sample IR). */
+type IrRecords = Record<number, { name: string; samples: Float64Array }>;
 
 interface CacheFile {
   version: number;
-  slots: Record<number, { name: string; samples: number[] }>;
+  records: Record<number, { name: string; samples: number[] }>;
 }
 
-/** Save the pulled IRs. Best-effort; no-op on web. */
-export async function saveIrCache(slots: IrSlots): Promise<void> {
+/** Save the pulled IRs, keyed by record. Best-effort; no-op on web. */
+export async function saveIrCache(records: IrRecords): Promise<void> {
   if (Platform.OS === "web") return;
   try {
     const { File, Paths } = await import("expo-file-system");
-    const data: CacheFile = { version: VERSION, slots: {} };
-    for (const [pos, s] of Object.entries(slots)) {
-      data.slots[Number(pos)] = { name: s.name, samples: Array.from(s.samples) };
+    const data: CacheFile = { version: VERSION, records: {} };
+    for (const [record, s] of Object.entries(records)) {
+      data.records[Number(record)] = { name: s.name, samples: Array.from(s.samples) };
     }
     const file = new File(Paths.document, FILE);
     try {
@@ -37,17 +71,17 @@ export async function saveIrCache(slots: IrSlots): Promise<void> {
   }
 }
 
-/** Load cached IRs, or null if none / unreadable / stale version. No-op on web. */
-export async function loadIrCache(): Promise<IrSlots | null> {
+/** Load cached IRs by record, or null if none / unreadable / stale version. No-op on web. */
+export async function loadIrCache(): Promise<IrRecords | null> {
   if (Platform.OS === "web") return null;
   try {
     const { File, Paths } = await import("expo-file-system");
     const buf = await new File(Paths.document, FILE).arrayBuffer(); // throws if missing
     const parsed = JSON.parse(new TextDecoder().decode(buf)) as CacheFile;
-    if (parsed.version !== VERSION || !parsed.slots) return null;
-    const out: IrSlots = {};
-    for (const [pos, s] of Object.entries(parsed.slots)) {
-      out[Number(pos)] = { name: s.name, samples: Float64Array.from(s.samples) };
+    if (parsed.version !== VERSION || !parsed.records) return null;
+    const out: IrRecords = {};
+    for (const [record, s] of Object.entries(parsed.records)) {
+      out[Number(record)] = { name: s.name, samples: Float64Array.from(s.samples) };
     }
     return out;
   } catch {

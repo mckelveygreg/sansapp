@@ -29,6 +29,9 @@ export default function Editor() {
   const connection = useStore(pedalStore, (s) => s.connection);
   const values = useStore(pedalStore, (s) => s.values);
   const baseline = useStore(pedalStore, (s) => s.baseline);
+  // The loaded preset's blob: the Tone Shaper's cab overlay reads THIS preset's IR-record pointers
+  // out of it, rather than showing whatever cab was last pulled (sansapp#68).
+  const raw = useStore(pedalStore, (s) => s.raw);
   const [error, setError] = useState<string | null>(null);
   const ready = connection === "ready";
 
@@ -75,7 +78,7 @@ export default function Editor() {
 
       <View style={{ gap: 16, opacity: ready ? 1 : 0.55 }}>
         <Section title="TONE SHAPER">
-          <ToneShaper values={values} />
+          <ToneShaper values={values} raw={raw} />
         </Section>
         <Section title="PREAMP · EQ">
           <KnobPanel ids={PREAMP} values={values} baseline={baseline} onChange={setValue} />

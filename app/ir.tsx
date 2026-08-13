@@ -10,6 +10,11 @@
  *      (src/protocol/irEncode) — no EliteControl / WAV round-trip.
  *
  * We never ship Tech 21's IRs: every curve here is read off the user's own pedal.
+ *
+ * Everything on this page is keyed by IR **record** number, not by mic-stack position. A preset's rows
+ * 7/8 play whatever record ITS OWN pointer names, so `src/protocol/irSelect.ts` turns each position into
+ * a record for this preset (the same selector the editor's Tone Shaper uses) and `src/midi/irCache.ts`
+ * is keyed to match. Keying by position was sansapp#68: one preset's uploaded cab drawn on every other.
  */
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -35,11 +40,19 @@ import { PEDAL_IR_RATE, cabCurveDb, cabResponseAt } from "../src/dsp/tone";
 import { pickFileBytes, saveAndShare } from "../src/midi/exportFile";
 import { loadIrCache, saveIrCache } from "../src/midi/irCache";
 import { uploadCustomIr } from "../src/midi/irImport";
-import { USER_IR_SLOTS, readIrSlot } from "../src/midi/irRead";
+import { IR_READ_AB, USER_IR_SLOTS, readIr } from "../src/midi/irRead";
 import { sendParam } from "../src/midi/liveParam";
 import { getController, getSession, pedalStore } from "../src/midi/pedal";
 import { buildPresetBlob } from "../src/protocol/buildPreset";
 import { readIrPointer } from "../src/protocol/irPointer";
+import {
+  LIBRARY_RECORD_BASE,
+  type IrSource,
+  type UserIrModes,
+  irCurveAt,
+  irSourceAt,
+  libraryRecordAt,
+} from "../src/protocol/irSelect";
 import {
   PARAMS,
   USER_IR_GAIN_DB_RANGE,
@@ -78,21 +91,34 @@ const IR_SLOTS = 8;
 const slotFallback = (pos: number) => `IR ${pos}`;
 const slotToValue = (pos: number) => Math.min(127, pos * 16);
 
-// The two writable USER slots (7/8) each hold BOTH a factory cab and an uploaded custom IR; the
-// preset's per-slot IR Mode toggle (irMode7/irMode8) picks which one plays. When mode is OFF the pedal
-// plays the factory cab — whose curve we can't read — so the stack must show the factory name and NOT
-// present the pulled (user) cab as active. Slots 1–6 are plain factory cabs (always their pulled name).
-const FACTORY_IR_NAME: Record<number, string> = { 7: "Voice 12L", 8: "Brit V30" };
-const isUserSlot = (pos: number): boolean => pos >= 7;
+// The two writable USER slots (7/8) each hold BOTH a factory cab and a per-preset custom IR; the
+// preset's per-slot IR Mode toggle (irMode7/irMode8) picks which one plays. Which record each position
+// resolves to — and whether that record is what's playing or the library's copy of an unreadable
+// factory cab — is src/protocol/irSelect.ts's job, shared with the editor's Tone Shaper.
 const IR_MODE_ID = { 7: "irMode7", 8: "irMode8" } as const satisfies Record<number, ParamId>;
 const IR_GAIN_ID = { 7: "irGain7", 8: "irGain8" } as const satisfies Record<number, ParamId>;
 
-/** The label to show for a slot given its per-preset IR Mode: a user slot with the mode OFF reads as
- * its factory cab; otherwise the pulled cab name (falling back to a generic slot label). */
-const slotDisplayName = (pos: number, userIrOn: boolean, pulledName?: string): string =>
-  isUserSlot(pos) && !userIrOn
-    ? `Factory · ${FACTORY_IR_NAME[pos] ?? slotFallback(pos)}`
-    : (pulledName ?? slotFallback(pos));
+/**
+ * Row labels for positions 1–8: the name carried by the record each position resolves to, read off the
+ * pedal at record offset +4 by the pull. No hardcoded cab names — the pedal keys IRs by record where
+ * the deleted `FACTORY_IR_NAME` keyed them by position, which mislabelled every preset whose slot-7
+ * pointer named anything but record 262 (88 of the 128 factory presets point at 260 `Concert 2x15`).
+ *
+ * An unread record has no name, so the row falls back to a generic `IR n` — the same thing positions
+ * 1–6 have always shown before a pull. A record's stored name can be empty-string rather than absent,
+ * so the fallback is deliberately on falsiness.
+ */
+const slotNames = (
+  sources: readonly (IrSource | null)[],
+  pulled: Record<number, Pulled>,
+): Record<number, string> => {
+  const out: Record<number, string> = {};
+  for (let pos = 1; pos <= IR_SLOTS; pos++) {
+    const src = sources[pos - 1];
+    out[pos] = (src ? pulled[src.record]?.name : undefined) || slotFallback(pos);
+  }
+  return out;
+};
 
 const haptic = (fn: () => Promise<unknown>) => {
   if (Platform.OS !== "web") void fn().catch(() => {});
@@ -103,6 +129,8 @@ interface Cab {
   rate: number;
   name: string;
 }
+/** One IR read off the pedal. Every map of these on this page is keyed by IR **record** number, never
+ * by selector position — see src/midi/irCache.ts's header for why that distinction is the bug fix. */
 interface Pulled {
   name: string;
   db: number[];
@@ -418,22 +446,35 @@ export default function IrStudio() {
   const [status, setStatus] = useState<string | null>(null);
 
   // --- IMPULSE RESPONSE (live blend) ---
+  /** IR record → what we read there. Record-keyed (see {@link Pulled}). */
   const [pulled, setPulled] = useState<Record<number, Pulled>>({});
   const [pulling, setPulling] = useState(false);
   const [pullProg, setPullProg] = useState<{ done: number; total: number } | null>(null);
   // IR position (0x0E) is store-backed — the mic reflects the LOADED preset's cab, not a guess.
   const morph = useStore(pedalStore, (s) => s.values.irBlend) ?? 0;
+  // The loaded preset's blob carries its own slot 7/8 IR-record pointers (blob 0x57–0x5A), which is
+  // how each row knows which record THIS preset plays rather than showing the last one pulled.
+  const raw = useStore(pedalStore, (s) => s.raw);
   // Per-USER-slot IR Mode + makeup gain are store-backed too, so they reflect the LOADED preset (the
   // display gating below reads them) and an edit routes through the local-edit path (dirty + save).
   const irMode7 = (useStore(pedalStore, (s) => s.values.irMode7) ?? 0) > 0;
   const irMode8 = (useStore(pedalStore, (s) => s.values.irMode8) ?? 0) > 0;
   const irGain7 = useStore(pedalStore, (s) => s.values.irGain7);
   const irGain8 = useStore(pedalStore, (s) => s.values.irGain8);
-  const userModeOn = (pos: number): boolean => (pos === 7 ? irMode7 : pos === 8 ? irMode8 : true);
   const gainDbOf = (slot: 7 | 8): number => {
     const wire = slot === 7 ? irGain7 : irGain8;
     return wire === undefined ? 0 : valueToGainDb(wire);
   };
+  const modes: UserIrModes = useMemo(() => ({ 7: irMode7, 8: irMode8 }), [irMode7, irMode8]);
+
+  // Which record each of the eight rows resolves to for THIS preset — the shared selector, also used
+  // by the editor's Tone Shaper. Everything below (labels, curves, the faint stack) reads from here, so
+  // the page can't drift back into treating a position as if it were a record.
+  const stackSources = useMemo(
+    () => Array.from({ length: IR_SLOTS }, (_, i) => irSourceAt(raw, i + 1, modes)),
+    [raw, modes],
+  );
+  const names = slotNames(stackSources, pulled);
 
   // Load cached curves on mount so we don't re-read the pedal every visit — Refresh re-pulls.
   useEffect(() => {
@@ -441,8 +482,8 @@ export default function IrStudio() {
       const cached = await loadIrCache();
       if (!cached) return;
       const next: Record<number, Pulled> = {};
-      for (const [pos, s] of Object.entries(cached)) {
-        next[Number(pos)] = { name: s.name, ir: s.samples, db: curveOf(s.samples) };
+      for (const [record, s] of Object.entries(cached)) {
+        next[Number(record)] = { name: s.name, ir: s.samples, db: curveOf(s.samples) };
       }
       if (Object.keys(next).length > 0) {
         setPulled(next);
@@ -451,38 +492,65 @@ export default function IrStudio() {
     })();
   }, []);
 
+  /**
+   * What a Pull reads. THE READ TRIGGER, decided in lab #58: reads stay explicit and user-initiated
+   * (this button), never automatic. A `05 69` read is a ~3 s exclusive BLE window, so reading on every
+   * recall would make preset browsing sluggish and reading on page-open would fire an unsolicited
+   * multi-second burst mid-browse — the traffic pattern that has historically dropped the link.
+   *
+   * The targets are the eight library records 256–263 (the factory copies the rows proxy from) plus any
+   * record the LOADED preset's enabled user slots point at, which is the only way a private per-preset
+   * record's real curve enters the cache without an upload having just crafted it.
+   */
+  function pullTargets(): { record: number; a: number; b: number }[] {
+    const out: { record: number; a: number; b: number }[] = [];
+    for (let pos = 1; pos <= IR_SLOTS; pos++) {
+      const [a, b] = IR_READ_AB[pos]!;
+      out.push({ record: libraryRecordAt(pos), a, b });
+    }
+    for (const slot of USER_IR_SLOTS) {
+      const src = irSourceAt(raw, slot, modes);
+      if (src?.kind !== "played" || out.some((t) => t.record === src.record)) continue;
+      out.push({ record: src.record, a: src.record >> 7, b: src.record & 0x7f });
+    }
+    return out;
+  }
+
   async function pullFromPedal() {
     if (!getSession()) {
       setStatus("Connect to the pedal first.");
       return;
     }
+    const targets = pullTargets();
     setPulling(true);
-    setPullProg({ done: 0, total: IR_SLOTS });
+    setPullProg({ done: 0, total: targets.length });
     setStatus("Reading IRs from the pedal…");
     const next: Record<number, Pulled> = {};
     let lostLink = false;
-    for (let pos = 1; pos <= IR_SLOTS; pos++) {
-      // Re-fetch each slot: if the link drops mid-read the session is nulled — bail instead of
-      // hammering a dead session and silently blanking the remaining slots.
+    for (const [i, t] of targets.entries()) {
+      // Re-fetch each read: if the link drops mid-read the session is nulled — bail instead of
+      // hammering a dead session and silently blanking the remaining records.
       const session = getSession();
       if (!session) {
         lostLink = true;
         break;
       }
-      const ir = await readIrSlot(session, pos);
+      const ir = await readIr(session, t.a, t.b);
       if (ir) {
         const samples = Float64Array.from(ir.samples);
-        next[pos] = { name: ir.name || slotFallback(pos), ir: samples, db: curveOf(samples) };
+        next[t.record] = { name: ir.name, ir: samples, db: curveOf(samples) };
       }
-      setPullProg({ done: pos, total: IR_SLOTS });
+      setPullProg({ done: i + 1, total: targets.length });
       // Pace the reads so the back-to-back burst doesn't saturate the BLE TX (which was tripping a
       // transient drop). The reads bypass the request queue, so they aren't otherwise paced.
-      if (pos < IR_SLOTS) await new Promise((r) => setTimeout(r, 120));
+      if (i + 1 < targets.length) await new Promise((r) => setTimeout(r, 120));
     }
-    // A full pull REPLACES the cache (a slot that read empty is now genuinely empty). A pull cut short
-    // by a link loss only read part of the slots, so MERGE over the existing cache — don't wipe the
-    // slots we never got to.
-    const result = lostLink ? { ...pulled, ...next } : next;
+    // A full pull REPLACES the records it targeted (one that read empty is now genuinely empty) while
+    // KEEPING records it never asked about — other presets' private IRs are still valid for them. A
+    // pull cut short by a link loss also keeps the targets it never got to.
+    const kept = { ...pulled };
+    if (!lostLink) for (const t of targets) delete kept[t.record];
+    const result = { ...kept, ...next };
     setPulled(result);
     persist(result);
     setPulling(false);
@@ -504,31 +572,29 @@ export default function IrStudio() {
   }
   function selectSlot(pos: number) {
     setBlendValue(slotToValue(pos));
-    setStatus(
-      pos === 0
-        ? "Off (flat)."
-        : `Cab ${pos}: ${slotDisplayName(pos, userModeOn(pos), pulled[pos]?.name)}`,
-    );
+    setStatus(pos === 0 ? "Off (flat)." : `Cab ${pos}: ${names[pos]}`);
   }
 
-  // The blended curve at the current mic position (interpolated between the two neighbouring cabs). A
-  // user slot with its IR Mode OFF plays the factory cab, whose curve we can't read — treat it as
-  // unknown (null) so we never draw the pulled user IR as if it were the active sound.
-  const stackDb = useMemo(() => {
-    const dbAt = (pos: number) => {
-      if ((pos === 7 && !irMode7) || (pos === 8 && !irMode8)) return null;
-      return pulled[pos]?.db ?? null;
-    };
-    return cabResponseAt(morph, dbAt, FLAT_DB);
-  }, [morph, pulled, irMode7, irMode8]);
+  // The blended curve at the current mic position (interpolated between the two neighbouring cabs),
+  // through the shared selector: each endpoint is looked up by the RECORD this preset plays there. An
+  // unread record answers null, so the graph draws nothing rather than another preset's cab.
+  const stackDb = useMemo(
+    () =>
+      cabResponseAt(
+        morph,
+        irCurveAt(raw, modes, (r) => pulled[r]?.db),
+        FLAT_DB,
+      ),
+    [morph, pulled, raw, modes],
+  );
 
+  // One faint curve per row — the records the eight rows currently resolve to, deduplicated. Keyed by
+  // record, so a cache that has accumulated other presets' private IRs doesn't clutter the graph.
   const stackCurves: IrCurve[] = [
-    ...Object.values(pulled).map((p) => ({
-      db: p.db,
-      color: toneColors.cab,
-      width: 1,
-      opacity: 0.22,
-    })),
+    ...[...new Set(stackSources.map((s) => s?.record))]
+      .map((r) => (r === undefined ? undefined : pulled[r]?.db))
+      .filter((db): db is number[] => db !== undefined)
+      .map((db) => ({ db, color: toneColors.cab, width: 1, opacity: 0.22 })),
     ...(stackDb ? [{ db: stackDb, color: toneColors.cab, width: 2.6 }] : []),
   ];
 
@@ -616,16 +682,16 @@ export default function IrStudio() {
     }
   }
 
-  function useCabFromPedal(pos: number) {
-    const hit = pulled[pos];
+  function useCabFromPedal(record: number, label: string) {
+    const hit = pulled[record];
     if (!hit) {
-      setStatus(`Pull the pedal first to load slot ${pos}.`);
+      setStatus(`Pull the pedal first to load ${label}.`);
       return;
     }
-    setCabA({ ir: hit.ir, rate: PEDAL_IR_RATE, name: hit.name });
+    setCabA({ ir: hit.ir, rate: PEDAL_IR_RATE, name: hit.name || label });
     setCabB(null);
     setShowStudio(true);
-    setStatus(`Loaded "${hit.name}" into the Studio — bake a filter, then upload.`);
+    setStatus(`Loaded "${hit.name || label}" into the Studio — bake a filter, then upload.`);
   }
 
   function irName() {
@@ -681,29 +747,40 @@ export default function IrStudio() {
         program,
         blob,
       });
-      // Reflect the just-uploaded IR into the stack directly from the crafted samples. We do NOT
-      // read the slot back over MIDI here: a heavy read burst right after the upload is exactly the
-      // kind of BLE traffic that's flaky. Show what we sent.
-      const samples = Float64Array.from(craft);
-      setPulled((p) => {
-        const merged = {
-          ...p,
-          [uploadSlot]: {
-            name: irName().slice(0, 32) || slotFallback(uploadSlot),
-            ir: samples,
-            db: curveOf(samples),
-          },
-        };
-        persist(merged); // keep the cache in sync with the newly-uploaded IR
-        return merged;
-      });
       // The save-as parks the pedal on the destination program; recall it so the app state reloads
       // from the SAVED preset (slot enabled, IR selected, pointer repointed) and nothing reads dirty.
+      // It also tells us WHICH record the preset ended up pointing at, which is the cache key below.
+      let recalled = false;
       try {
-        await getController()?.recall(program);
+        const ctl = getController();
+        if (ctl) {
+          await ctl.recall(program);
+          recalled = true;
+        }
       } catch {
         /* recall is best-effort — if it drops, the preset is already saved; recall manually */
       }
+      // THE INVALIDATION RULE (lab #58). An upload rewrites a record in place, so a record-keyed cache
+      // can hold stale samples under a perfectly correct key. An upload only ever writes PRIVATE
+      // records (banks 0/1 → below LIBRARY_RECORD_BASE; bank 2 is read-only to this app), so dropping
+      // every private entry is sufficient and can't discard a library read. Then re-file the crafted
+      // samples under the record the SAVED preset now points at — read from the recalled blob, so a
+      // recall that failed files nothing rather than guessing. We never read the record back over MIDI:
+      // a heavy read burst right after an upload is exactly the flaky BLE traffic to avoid.
+      const samples = Float64Array.from(craft);
+      const saved = recalled ? readIrPointer(pedalStore.getState().raw, uploadSlot) : null;
+      const playedRecord = saved && saved.kind !== "invalid" ? saved.record : undefined;
+      setPulled((p) => {
+        const kept: Record<number, Pulled> = {};
+        for (const [k, v] of Object.entries(p)) {
+          if (Number(k) >= LIBRARY_RECORD_BASE) kept[Number(k)] = v;
+        }
+        if (playedRecord !== undefined) {
+          kept[playedRecord] = { name: irName().slice(0, 32), ir: samples, db: curveOf(samples) };
+        }
+        persist(kept); // keep the on-disk cache in step with the newly-written flash
+        return kept;
+      });
       setStatus(
         pointerConfirmed
           ? `Uploaded "${irName()}" → slot ${uploadSlot} and saved with preset ${program + 1}.`
@@ -798,12 +875,7 @@ export default function IrStudio() {
         )}
 
         <MicStack
-          names={Object.fromEntries(
-            Array.from({ length: IR_SLOTS }, (_, i) => i + 1).map((pos) => [
-              pos,
-              slotDisplayName(pos, userModeOn(pos), pulled[pos]?.name),
-            ]),
-          )}
+          names={names}
           value={morph}
           onChange={setBlendValue}
           onSelect={selectSlot}
@@ -823,9 +895,10 @@ export default function IrStudio() {
           }}
         />
         <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
-          Slots 7 & 8 are yours: the switch picks your uploaded cab (on) or the factory cab (off —
-          Voice 12L / Brit V30), and the dB trims your cab's level. Uploading only replaces your
-          cab; the factory one always returns when the switch is off.
+          Rows 7 & 8 are yours: the switch picks this preset&apos;s own uploaded cab (on) or the
+          factory cab (off), and the dB trims your cab&apos;s level. Each row is named by whatever
+          the pedal has there, so flipping the switch renames the row. An upload only replaces your
+          cab for THIS preset; the factory one always returns when the switch is off.
         </Text>
 
         <View
@@ -902,21 +975,26 @@ export default function IrStudio() {
                 />
               ) : null}
             </View>
-            {Object.keys(pulled).length ? (
+            {/* The eight rows' own records, not every record the cache happens to hold — a
+                record-keyed cache also carries other presets' private IRs, which don't belong here. */}
+            {stackSources.some((s) => s && pulled[s.record]) ? (
               <View
                 style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}
               >
                 <Text style={{ color: theme.textDim, fontSize: 12 }}>Or a pulled cab:</Text>
-                {Object.keys(pulled)
-                  .map(Number)
-                  .map((pos) => (
+                {stackSources.map((src, i) => {
+                  const record = src?.record;
+                  if (record === undefined || !pulled[record]) return null;
+                  const label = names[i + 1] ?? slotFallback(i + 1);
+                  return (
                     <Chip
-                      key={pos}
-                      label={pulled[pos]!.name}
-                      active={cabA?.name === pulled[pos]!.name}
-                      onPress={() => useCabFromPedal(pos)}
+                      key={i + 1}
+                      label={label}
+                      active={cabA?.name === (pulled[record].name || label)}
+                      onPress={() => useCabFromPedal(record, label)}
                     />
-                  ))}
+                  );
+                })}
               </View>
             ) : null}
             {cabA && cabB ? (
@@ -1027,7 +1105,7 @@ export default function IrStudio() {
               {USER_IR_SLOTS.map((s) => (
                 <Chip
                   key={s}
-                  label={`${s}: ${slotDisplayName(s, userModeOn(s), pulled[s]?.name)}`}
+                  label={`${s}: ${names[s] ?? slotFallback(s)}`}
                   active={uploadSlot === s}
                   onPress={() => setUploadSlot(s as 7 | 8)}
                 />
