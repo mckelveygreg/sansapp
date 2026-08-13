@@ -4,7 +4,7 @@
  */
 import { DeviceSession } from "../device/session";
 import { AMBIENCE_BUNDLES, AMBIENCE_PROFILE_WIRES } from "../protocol/ambience";
-import { liveSetId } from "../protocol/params";
+import { liveSetId, type TunerMode } from "../protocol/params";
 import { buildPresetBlob } from "../protocol/buildPreset";
 import { encodePreset, withName } from "../protocol/preset";
 import { ambienceStore } from "../state/ambience";
@@ -212,6 +212,30 @@ export async function renamePreset(slot: number, name: string): Promise<void> {
   await session.writePreset(slot, encodePreset(withName(preset, name)));
   cacheName(slot, name);
   pedalStore.getState().pushLog(`✎ renamed ${slot + 1} → ${name.trim()}`);
+}
+
+const TUNER_LOG_LABEL = ["off", "mute", "bypass"] as const;
+
+/**
+ * Set the pedal's tuner: 0 Off, 1 Mute, 2 Bypass — the MUTE/BYPASS bar's action.
+ *
+ * Nudges with a read of the ACTIVE slot, so it needs a known slot (the bar disables itself until the
+ * app knows which preset the pedal is on). The store's mirror is set from the session's own wire write,
+ * so it holds the REQUESTED mode even if the nudge round-trip then fails: the write is fire-and-forget,
+ * and a write that landed will be applied by any later dump — assuming it took is the safe assumption,
+ * assuming it didn't is the one that leaves the user staring at an "Off" button with no signal.
+ *
+ * Optimistic and wire-free with no session (demo mode), like setAmbienceType.
+ */
+export async function setTunerMode(mode: TunerMode): Promise<void> {
+  const { slot } = pedalStore.getState();
+  if (!session) {
+    pedalStore.getState().setTuner(mode); // demo/disconnected: mirror only, nothing to send
+    return;
+  }
+  if (slot == null) throw new Error("Recall a preset first — the tuner needs a known active slot");
+  await session.setTunerMode(mode, slot);
+  pedalStore.getState().pushLog(`🔇 tuner → ${TUNER_LOG_LABEL[mode]}`);
 }
 
 /**

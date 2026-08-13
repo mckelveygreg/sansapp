@@ -11,8 +11,24 @@
 
 import { PRESET_SIZE, PRESET_SLOT_COUNT } from "../protocol/constants";
 import type { PedalMessage } from "../protocol/messages";
+import {
+  PARAMS,
+  TUNER_BLOB_OFFSET,
+  TUNER_PARAM,
+  type TunerMode,
+  liveSetId,
+} from "../protocol/params";
 
 const EDIT_BUFFER_SLOT = 0x7f;
+
+/** Live-set wire id of the Tuner param (index 0x34 → set-id 0x38). */
+const TUNER_SET_ID = liveSetId(TUNER_PARAM);
+/** The byte the save path zeroes when the tuner is engaged (the silent-preset hazard). */
+const LEVEL_BLOB_OFFSET = PARAMS.level.blobOffset;
+
+/** Coerce a wire byte to a tuner mode (the pedal's param is a 3-position 0..2 value). */
+const clampTuner = (v: number | undefined): TunerMode =>
+  (v ?? 0) > 2 ? 0 : ((v ?? 0) as TunerMode);
 
 // Per-preset user-IR fields (PROTOCOL.md): the flat 14-bit IR record pair (MSB, LSB) at blob bytes
 // 0x57/0x58 (slot 7) and 0x59/0x5A (slot 8), the per-slot enable at 0x4A/0x4B, and each slot's
@@ -31,6 +47,19 @@ export class PedalModel {
   private readonly blocks = new Map<string, Uint8Array>();
   /** A read (05 40) only succeeds once the connect handshake has run. */
   connected = false;
+  /**
+   * The tuner value the pedal has RECORDED (its live param array): a `05 50 .. 38 <mode>` write lands
+   * here immediately, and a recall reloads it from the preset's own byte. Distinct from {@link tuner}
+   * — the recorded value is what the SAVE path reads when it decides whether to zero Level.
+   */
+  tunerWritten: TunerMode = 0;
+  /**
+   * The APPLIED tuner mode (0 Off / 1 Mute / 2 Bypass) — what the pedal is audibly doing. The tuner's
+   * own param handler does nothing at write time; the applier runs from the tail of the staged-SysEx
+   * TX drain, so the applied mode only catches up with {@link tunerWritten} when a dump-producing
+   * command runs. That is why every app tuner write has to be paired with its own nudge.
+   */
+  tuner: TunerMode = 0;
 
   constructor(presets?: Uint8Array[]) {
     this.presets =
@@ -46,6 +75,15 @@ export class PedalModel {
 
   private blobFor(slot: number): Uint8Array {
     return slot >= 0x7e ? this.editBuffer : (this.presets[slot] ?? this.editBuffer);
+  }
+
+  /**
+   * A staged dump just went out, so the applier at the tail of the drain runs: the recorded tuner
+   * value becomes the audible one. Every dump-producing command is a nudge — including one for an
+   * unrelated slot, which is why a tuner write left unpaired is a landmine.
+   */
+  private drainStagedDump(): void {
+    this.tuner = this.tunerWritten;
   }
 
   /** Handle one incoming message; return zero or more reply messages. */
@@ -80,8 +118,19 @@ export class PedalModel {
         if (msg.kind === "recallPreset") {
           this.editBuffer = blob.slice();
           this.currentSlot = msg.slot;
+          // A recall reloads the whole live param array from the preset, tuner byte included — so it
+          // silently returns the tuner to whatever the PRESET stores (0 in practice). Confirmed by ear
+          // on hardware: every preset change is a free escape hatch from a stuck mute.
+          this.tunerWritten = clampTuner(blob[TUNER_BLOB_OFFSET]);
         }
-        return [{ kind: "presetDump", slot: msg.slot, blob: blob.slice(), checksumOk: true }];
+        const dump: Exclude<PedalMessage, { kind: "unknown" }> = {
+          kind: "presetDump",
+          slot: msg.slot,
+          blob: blob.slice(),
+          checksumOk: true,
+        };
+        this.drainStagedDump(); // the dump is the nudge: a pending tuner write becomes audible here
+        return [dump];
       }
       case "writePreset": {
         // 0x7E/0x7F are NOT numbered slots: the pedal DISCARDS an edit-buffer stage (05 20 0A 7F) yet
@@ -89,6 +138,11 @@ export class PedalModel {
         // accept the frame, change nothing for the special slots, and ack like hardware.
         if (msg.slot < 0x7e && msg.slot < this.presets.length)
           this.presets[msg.slot] = msg.blob.slice();
+        // The stage REFRESHES the live param array from the blob, tuner byte included — proved on
+        // hardware: staging a blob whose 0x56 said Mute made the following save zero Level even with
+        // the pedal's own tuner off, and staging one that said Off protected the save from a tuner that
+        // WAS engaged. So the staged blob, not the footswitch, decides the save's behaviour.
+        if (msg.slot < 0x7e) this.tunerWritten = clampTuner(msg.blob[TUNER_BLOB_OFFSET]);
         return [{ kind: "writeAck", code: 0x21 }];
       }
       case "setParam": {
@@ -112,9 +166,26 @@ export class PedalModel {
               }
             }
           }
+          // The save copier reads the RECORDED tuner byte and, when it is non-zero, forces the live
+          // Level param to 0 before writing the array to flash — so a save with the tuner engaged
+          // persists that preset SILENT, with no error. Verified at instruction level.
+          if (saved && this.tunerWritten !== 0) saved[LEVEL_BLOB_OFFSET] = 0;
           this.currentSlot = msg.value; // the save parks the pedal on its target program
           const blob = this.blobFor(msg.value);
-          return [{ kind: "presetDump", slot: msg.value, blob: blob.slice(), checksumOk: true }];
+          const echo: Exclude<PedalMessage, { kind: "unknown" }> = {
+            kind: "presetDump",
+            slot: msg.value,
+            blob: blob.slice(),
+            checksumOk: true,
+          };
+          this.drainStagedDump(); // the echo is a dump: it also applies a pending tuner write
+          return [echo];
+        }
+        // The Tuner (index 0x34, set-id 0x38) records its value immediately but is only APPLIED by the
+        // next staged dump — see `tuner` / `drainStagedDump`.
+        if (msg.param === TUNER_SET_ID) {
+          this.tunerWritten = clampTuner(msg.value);
+          return [];
         }
         return [];
       }

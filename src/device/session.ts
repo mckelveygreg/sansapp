@@ -4,8 +4,8 @@
  * notifications. Pure and framework-free so it runs on the phone, in Node, and in tests.
  */
 
-import { PARAM_IDS, PARAMS, liveSetId } from "../protocol/params";
-import type { ParamId } from "../protocol/params";
+import { PARAM_IDS, PARAMS, TUNER_BLOB_OFFSET, TUNER_PARAM, liveSetId } from "../protocol/params";
+import type { ParamId, TunerMode } from "../protocol/params";
 import { decode, encode, sysexVersion } from "../protocol/messages";
 import type { PedalMessage } from "../protocol/messages";
 import { DEFAULT_PROTOCOL_VERSION, PROTOCOL_VERSIONS } from "../protocol/constants";
@@ -47,6 +47,9 @@ const LINK_SILENCE_MS = 2500;
 // (PROTOCOL-MAP §1). writePreset rejects anything above this.
 const MAX_WRITABLE_SLOT = 0x7d;
 
+/** Live-set wire id of the Tuner param (index 0x34 → set-id 0x38). See setTunerMode. */
+const TUNER_SET_ID = liveSetId(TUNER_PARAM);
+
 // A live-set knob/mic drag can emit ~60 moves/s. The pedal drops fire-and-forget sends that land in
 // one BLE connection interval, so we COALESCE per param: at most one wire message per param per this
 // window, always carrying the LATEST value (leading + trailing edge) so the final value can't be lost.
@@ -87,29 +90,29 @@ interface LiveParam {
 }
 
 /**
- * Catch the save-with-the-tuner-on hazard, which persists the preset SILENT.
+ * Make a blob safe to save: never persist a non-zero tuner byte.
  *
- * The pedal's save handler reads the live Tuner param (index 0x34) and, when it is non-zero (Mute or
- * Bypass), forces the live Level param to 0 *before* writing the array to flash. Engage the tuner —
- * today only possible from the footswitch — then save, and that slot comes back at Level 0.
+ * The pedal's save handler forces the live Level param to 0 when the live tuner is engaged, which
+ * writes the preset SILENT. Three hardware experiments (2026-08-12) pinned exactly when that fires:
  *
- * We can't check first: the tuner has no notify and no read (a preset dump is sourced from flash, so
- * blob[0x56] is the STORED tuner byte, never the live one), so the app cannot know the pedal's tuner
- * state. Instead detect it after the fact from the save echo — the pedal's own view of what it wrote.
- * Asking for a non-zero Level and getting 0 back has no other known cause.
+ * 1. A **bare commit** with the tuner engaged (no `05 20` first) persisted Level 0 — the hazard is
+ *    real, as the disassembly said.
+ * 2. A **staged** save with the tuner engaged and a blob whose own tuner byte was 0 persisted the full
+ *    Level. The stage refreshes the live param array from the blob, so the save reads the blob's tuner
+ *    byte, not whatever the footswitch did.
+ * 3. A staged save with the tuner **off** and a blob claiming Mute persisted Level 0 — proving it is
+ *    the blob's byte that arms it, and that a preset saved at the pedal with the tuner on would
+ *    re-silence itself every time the app touched it.
  *
- * Throws rather than repairing: the slot is already written, and the app has no verified way to turn
- * the tuner off (see sansapp-lab#43), so the user has to do it. Surface that instead of silently
- * handing back a dead preset.
+ * So the whole defence is this one byte, and it is a prevention: with it zeroed, the pedal cannot
+ * silence the save. (It also de-corrupts a preset that arrived that way, and stops a recall of it from
+ * muting the rig — see {@link TUNER_BLOB_OFFSET}.) Returns a copy; the caller's array is never touched.
  */
-function assertTunerDidNotZeroLevel(slot: number, sent: Uint8Array, echoed: Uint8Array): void {
-  const off = PARAMS.level.blobOffset;
-  if (sent[off] !== 0 && echoed[off] === 0) {
-    throw new Error(
-      `preset ${slot + 1} saved at Level 0 — the pedal zeroes Level when a preset is saved with the ` +
-        `tuner engaged. Turn the tuner off at the pedal and save again.`,
-    );
-  }
+function withTunerCleared(blob: Uint8Array): Uint8Array {
+  if (blob[TUNER_BLOB_OFFSET] === 0) return blob;
+  const safe = blob.slice();
+  safe[TUNER_BLOB_OFFSET] = 0;
+  return safe;
 }
 
 export class DeviceSession {
@@ -123,6 +126,8 @@ export class DeviceSession {
   private readonly msgCbs = new Set<(m: PedalMessage) => void>();
   private readonly slotCbs = new Set<(slot: number) => void>();
   private readonly pushedPresetCbs = new Set<(slot: number, preset: Preset) => void>();
+  private readonly tunerCbs = new Set<(mode: TunerMode) => void>();
+  private readonly busyCbs = new Set<(busy: boolean) => void>();
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private hbFails = 0;
   /** Wall-clock ms of the last outbound send — the heartbeat treats recent traffic as "link alive". */
@@ -175,6 +180,17 @@ export class DeviceSession {
     return this.version;
   }
 
+  /** True while an exclusive bulk op (an IR upload/read) owns the link — see {@link onLinkBusy}. */
+  get linkBusy(): boolean {
+    return this.exclusive;
+  }
+
+  private setExclusive(busy: boolean): void {
+    if (busy === this.exclusive) return;
+    this.exclusive = busy;
+    for (const cb of this.busyCbs) cb(busy);
+  }
+
   /** Fires when the pedal's firmware version becomes known or changes (argument: 1.0, 1.1, …). */
   onFirmwareVersion(cb: (firmware: number) => void): () => void {
     this.versionCbs.add(cb);
@@ -217,6 +233,23 @@ export class DeviceSession {
   onPushedPreset(cb: (slot: number, preset: Preset) => void): () => void {
     this.pushedPresetCbs.add(cb);
     return () => this.pushedPresetCbs.delete(cb);
+  }
+  /**
+   * The tuner mode we just put on the wire (see {@link setTunerMode}) — including the one writePreset
+   * sends on its own to un-silence a save. The pedal never reports its tuner state, so this is the only
+   * thing the app's MUTE/BYPASS mirror can track: what was asked for, not what is.
+   */
+  onTunerMode(cb: (mode: TunerMode) => void): () => void {
+    this.tunerCbs.add(cb);
+    return () => this.tunerCbs.delete(cb);
+  }
+  /**
+   * An exclusive bulk op (an IR upload / read — see {@link withExclusive}) took or released the link.
+   * The UI disables controls that the pedal would silently ignore during a transfer.
+   */
+  onLinkBusy(cb: (busy: boolean) => void): () => void {
+    this.busyCbs.add(cb);
+    return () => this.busyCbs.delete(cb);
   }
 
   /** Run the connect handshake: hello → config/data blocks → control(5B). */
@@ -379,11 +412,48 @@ export class DeviceSession {
   }
 
   /**
+   * Set the pedal's tuner mode: 0 Off, 1 Mute, 2 Bypass. Both non-zero modes put the tuner on the
+   * PEDAL's display (mode 2 is a genuine channel bypass at the same time — dry signal, amp/drive/cab
+   * out of circuit); the pitch is never transmitted, so the app can't show it.
+   *
+   * **The write alone does nothing.** The pedal's handler for this param records the value and returns;
+   * the applier only runs from the tail of the staged-SysEx TX drain. So the write must be paired with
+   * a dump-producing command — here a read of the ACTIVE slot (`nudgeSlot`), whose 267-byte dump takes
+   * ~254 ms to drain. Two consequences worth knowing:
+   *
+   * - **Never leave a write unpaired.** A pending mode is otherwise applied later by an unrelated
+   *   background read (confirmed on hardware) — the signal would cut out with nothing to explain it.
+   * - **`nudgeSlot` must be a real program, not 0x7F.** A read doesn't change the active preset, so
+   *   reading the slot the pedal is already on is the least surprising nudge available.
+   *
+   * The returned promise resolves once the nudge's dump has arrived — i.e. once the mode is audible.
+   * The dump itself is DISCARDED: it comes from flash, so its bytes are the stored preset, not live
+   * state, and feeding it back into the store would clobber the user's unsaved edits.
+   *
+   * Rejects during an IR transfer: the pedal's applier is gated on "no transfer in progress", so the
+   * write would be silently swallowed (the UI disables the control for the same reason).
+   */
+  async setTunerMode(mode: TunerMode, nudgeSlot: number): Promise<void> {
+    if (this.exclusive) {
+      throw new Error("busy with an IR transfer — the pedal ignores a tuner change during one");
+    }
+    // setParamsPaced, NOT setLiveParam: the live throttle can hold a value for up to LIVE_THROTTLE_MS
+    // to coalesce a knob drag, which here could put the write on the wire AFTER its own nudge — the
+    // exact unpaired-write landmine described above. This path is one message, and it sends it now.
+    await this.setParamsPaced([{ param: TUNER_SET_ID, value: mode }]);
+    for (const cb of this.tunerCbs) cb(mode);
+    await this.readPreset(nudgeSlot);
+  }
+
+  /**
    * Write a full preset blob to a numbered slot, then persist with the save command
    * `05 50 0A 12 <slot>` and await the pedal's `05 41` echo. Never 0x7F — the pedal treats
    * `0x12=0x7F` as save-to-program-128. Returns the echoed blob — the pedal's own view of what was
    * saved, which can differ from `blob` where the save rewrites bytes (the per-preset user-IR
    * pointer is repointed at save time — see midi/irImport.ts).
+   *
+   * The blob's tuner byte is forced to 0 first — see {@link withTunerCleared}: that is what stops the
+   * pedal from persisting the preset silent, and it is why this needs no after-the-fact repair.
    */
   async writePreset(slot: number, blob: Uint8Array): Promise<Uint8Array> {
     // Reject the special/edit-buffer slots (0x7E/0x7F): a `05 20` stage to 0x7F is discarded, and the
@@ -395,20 +465,27 @@ export class DeviceSession {
       );
     }
     const s = slot & 0x7f;
-    // Stage the blob; the pedal acks with 05 21 (match that specific code — a concurrent raw op's
-    // begin-ack 0x63 is also a writeAck and must NOT satisfy this).
+    return this.stageAndCommit(s, withTunerCleared(blob));
+  }
+
+  /**
+   * Stage a blob to a slot and persist it, returning the pedal's echo of what it wrote.
+   *
+   * Stage: `05 20` — the pedal acks with 05 21 (match that specific code; a concurrent raw op's
+   * begin-ack 0x63 is also a writeAck and must NOT satisfy this). Commit: `05 50 0A 12 <slot>` (value
+   * == destination slot — byte-for-byte EliteControl's Save, confirmed against
+   * captures/elite-save.jsonl; NOT a param write). On success the pedal echoes a `05 41 <slot>` dump —
+   * await that as CONFIRMATION and re-send the commit if it doesn't arrive. EliteControl
+   * fires-and-forgets over its reliable USB link; over BLE the commit can silently drop, leaving the
+   * write staged but never persisted (the copy/save-didn't-stick bug). Throws — leaving the slot
+   * unchanged, since an uncommitted write is discarded — if the pedal never confirms.
+   */
+  private async stageAndCommit(s: number, blob: Uint8Array): Promise<Uint8Array> {
     await this.request(
       { kind: "writePreset", slot: s, blob, checksumOk: true },
       (m) => m.kind === "writeAck" && m.code === 0x21,
     );
-    // Commit it: `05 50 0A 12 <slot>` (value == destination slot — byte-for-byte EliteControl's Save,
-    // confirmed against captures/elite-save.jsonl; NOT a param write). On success the pedal echoes a
-    // `05 41 <slot>` dump — await that as CONFIRMATION and re-send the commit if it doesn't arrive.
-    // EliteControl fires-and-forgets over its reliable USB link; over BLE the commit can silently drop,
-    // leaving the write staged but never persisted (the copy/save-didn't-stick bug). Throws — leaving
-    // the slot unchanged, since an uncommitted write is discarded — if the pedal never confirms.
     for (let attempt = 0; attempt < COMMIT_ATTEMPTS; attempt++) {
-      let echoed: Uint8Array;
       try {
         // Require checksumOk (like readPreset): a garbled echo must not confirm the save — the retry
         // re-sends the commit, which is idempotent.
@@ -417,15 +494,10 @@ export class DeviceSession {
           (m) => m.kind === "presetDump" && m.slot === s && m.checksumOk,
         );
         if (reply.kind !== "presetDump") throw new Error("unexpected reply");
-        echoed = reply.blob;
+        return reply.blob;
       } catch {
         // No echo — the commit likely dropped over BLE; re-send it (committing twice is idempotent).
-        continue;
       }
-      // The save landed. It may still have been corrupted by the tuner — check before returning, and
-      // OUTSIDE the try, so this throw isn't mistaken for a dropped commit and retried.
-      assertTunerDidNotZeroLevel(s, blob, echoed);
-      return echoed;
     }
     throw new Error(`preset ${s + 1} save not confirmed by the pedal`);
   }
@@ -471,11 +543,11 @@ export class DeviceSession {
    */
   withExclusive<T>(fn: () => Promise<T>): Promise<T> {
     const run = async (): Promise<T> => {
-      this.exclusive = true;
+      this.setExclusive(true);
       try {
         return await fn();
       } finally {
-        this.exclusive = false;
+        this.setExclusive(false);
         this.lastSendAt = Date.now(); // recent activity — keep the heartbeat backed off one more window
       }
     };

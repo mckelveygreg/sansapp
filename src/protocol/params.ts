@@ -271,9 +271,54 @@ export const PARAMETRIC_EQ = {
  * - 0x13 is "Reverb Extension Factor" (2–5).
  * - 0x35–0x38 are the "User IR 7/8 Preset" addressing params for the writable IR slots.
  * - The deep reverb-engine params beyond Level/Decay/Time (0x12–0x18, 0x39–0x3b), the Expander block
- *   (0x1e–0x20), AnalogSim / Anti-aliasing / Clean Input, and the Tuner (0x34) are real params
- *   SansApp doesn't expose yet (roadmap). Full table + names in docs/PARAM-MAP.md.
+ *   (0x1e–0x20), and AnalogSim / Anti-aliasing / Clean Input are real params SansApp doesn't expose
+ *   yet (roadmap). Full table + names in docs/PARAM-MAP.md.
  */
+
+/**
+ * The Tuner param (index 0x34, live-set id 0x38 via {@link liveSetId}) — the pedal's tuner/mute
+ * switch, which the app can drive: 0 = Off, 1 = Mute (silent, tuner on), 2 = Bypass (dry signal, amp
+ * / drive / cab out of circuit, tuner still on). Both non-zero modes show the played note on the
+ * PEDAL's own display (`-` when it hears nothing); the pitch is never transmitted, so the app can't
+ * show it.
+ *
+ * Deliberately NOT a {@link PARAMS} entry, even though the preset blob carries it at 0x56:
+ *
+ * - It is transient performance state, not part of a saved sound. Registering it would put it in the
+ *   modeled-params set, and every save-from-state would then write blob[0x56] — baking "muted" into
+ *   the user's presets. Unmodeled bytes are copied from the base blob instead (see store.ts), which
+ *   is exactly what's wanted.
+ * - There is no read-back: a preset dump comes from flash, so blob[0x56] is the STORED byte, never
+ *   the pedal's live tuner state, and the pedal emits no tuner notify. So it has no place in
+ *   `values`, whose whole contract is "what the pedal is doing right now".
+ *
+ * See `DeviceSession.setTunerMode` for the write path (the write alone does nothing — it needs a
+ * nudge) and docs/PROTOCOL.md.
+ */
+export const TUNER_PARAM = 0x34;
+
+/**
+ * Where a preset stores its own tuner byte (`TUNER_PARAM + 0x22`, the usual rule).
+ *
+ * It matters more than a transient param's stored copy should, because the pedal treats it as live
+ * state twice over — both confirmed on hardware 2026-08-12:
+ *
+ * - **A recall reloads the live tuner from it**, so a preset holding a non-zero byte ENGAGES the tuner
+ *   when you select it: the preset mutes your rig.
+ * - **Staging a preset (`05 20`) refreshes the live param array from it**, and the save handler then
+ *   reads that array to decide whether to force Level to 0. So a blob carrying a non-zero tuner byte
+ *   makes the pedal silence the very save that persists it — the corruption propagates itself.
+ *
+ * Hence {@link DeviceSession.writePreset} forces this byte to 0 on every save. That is the whole
+ * defence against the silent-save hazard, and it is a prevention rather than a detection.
+ */
+export const TUNER_BLOB_OFFSET = TUNER_PARAM + 0x22;
+
+/** Tuner param values: Off / Mute / Bypass. See {@link TUNER_PARAM}. */
+export type TunerMode = 0 | 1 | 2;
+
+/** Coerce a stored/wire byte to a tuner mode; anything out of range reads as Off. */
+export const asTunerMode = (v: number | undefined): TunerMode => (v === 1 || v === 2 ? v : 0);
 
 /**
  * The pedal's red "shift" footswitch — it flips the physical knobs between their primary and

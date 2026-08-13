@@ -5,6 +5,7 @@ import { DeviceSession } from "../src/device/session";
 import { createLoopback, type MidiIO } from "../src/device/transport";
 import { AMBIENCE_BUNDLES } from "../src/protocol/ambience";
 import { PROTOCOL_V1_0 } from "../src/protocol/constants";
+import { TUNER_BLOB_OFFSET } from "../src/protocol/params";
 import { ambienceStore } from "../src/state/ambience";
 import { applyAmbienceType, bindSession, createPedalStore } from "../src/state/store";
 import { angleToValue, dragToValue, toDisplay, valueToAngle } from "../src/ui/knobMath";
@@ -166,6 +167,104 @@ describe("pedal store + controller", () => {
     expect(store.getState().layer).toBe("red"); // the layer still tracks
     expect(store.getState().values.chorusOn).toBeUndefined();
     expect(store.getState().values.autoFilterOn).toBeUndefined();
+    ctl.dispose();
+  });
+});
+
+describe("tuner mirror (MUTE / BYPASS)", () => {
+  it("mirrors the mode the session put on the wire, and never as a preset value", async () => {
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel());
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+    expect(store.getState().tuner).toBe(0); // default: Off
+
+    await session.setTunerMode(2, 0);
+    expect(store.getState().tuner).toBe(2);
+    // The tuner is NOT a modeled param: it must not reach values (a save would then bake it into the
+    // user's preset) and it isn't an edit of the sound.
+    expect(Object.keys(store.getState().values)).not.toContain("tuner");
+    expect(store.getState().dirty).toBe(false);
+    ctl.dispose();
+  });
+
+  it("resets the mirror to Off when the PEDAL changes preset (footswitch push)", async () => {
+    // A recall reloads the live param array from the preset, tuner byte included, so the pedal really
+    // is Off after a preset change — and disengaging the tuner with the channel footswitch pushes an
+    // unsolicited dump. That push is the resync for the dangerous direction (app says bypassed, signal
+    // is live).
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel());
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+
+    await session.setTunerMode(1, 0);
+    expect(store.getState().tuner).toBe(1);
+
+    const blob = new Uint8Array(256);
+    blob[0] = 0x01;
+    devIO.send(encode({ kind: "presetDump", slot: 11, blob, checksumOk: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(store.getState().slot).toBe(11);
+    expect(store.getState().tuner).toBe(0);
+    ctl.dispose();
+  });
+
+  it("resets the mirror to Off when the APP recalls a preset", async () => {
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel());
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+
+    await session.setTunerMode(2, 0);
+    await ctl.recall(4);
+    expect(store.getState().tuner).toBe(0);
+    ctl.dispose();
+  });
+
+  it("tracks the exclusive-link window so the bar can disable during an IR transfer", async () => {
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel());
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+    expect(store.getState().linkBusy).toBe(false);
+
+    await session.withExclusive(async () => {
+      expect(store.getState().linkBusy).toBe(true);
+    });
+    expect(store.getState().linkBusy).toBe(false);
+    ctl.dispose();
+  });
+
+  it("adopts a preset's OWN tuner byte on recall, not a hopeful zero", async () => {
+    // A preset saved AT THE PEDAL with the tuner engaged stores 1 or 2, and recalling it genuinely
+    // engages the tuner — the pedal reloads its live tuner from that byte. Assuming Off would put the
+    // mirror wrong in the dangerous direction, on the one preset where it matters.
+    const [appIO, devIO] = createLoopback();
+    const presets = Array.from({ length: 128 }, () => {
+      const b = new Uint8Array(256);
+      b[0] = 0x01;
+      return b;
+    });
+    presets[9]![TUNER_BLOB_OFFSET] = 1; // slot 10 recalls muted
+    wireModel(devIO, new PedalModel(presets));
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+
+    await ctl.recall(9);
+    expect(store.getState().tuner).toBe(1);
+    await ctl.recall(8); // an ordinary preset clears it again
+    expect(store.getState().tuner).toBe(0);
     ctl.dispose();
   });
 });

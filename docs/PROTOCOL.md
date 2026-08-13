@@ -76,13 +76,13 @@ these; `decode()` never throws (unknown input → `{ kind: "unknown" }`).
 **Additional message subs** (observed in captures; handled in the app but not part of the core
 handshake):
 
-| Bytes                          | Meaning                                                                             |
-| ------------------------------ | ----------------------------------------------------------------------------------- |
-| `05 60 / 65 / 66 0A …`         | **user-IR upload** — begin / data-chunk / end (see [IR handling](#ir-handling-)) ✅ |
-| `05 63 00 F7`, `05 61 F7`      | pedal **acks** an IR-upload begin (`63`) and end (`61`) ✅                          |
-| `05 69 0A <a> <b>`             | **read an IR** back off the pedal → a `05 60/65/66` stream ✅                       |
-| `05 56 0A <mode>` → `05 57 F7` | **factory reset** (mode 0 All / 1 Presets / 2 Settings) — destructive ✅            |
-| `05 5A 0A`                     | no-arg control; seen triggering a **resync** (block + preset re-read) ✅            |
+| Bytes                          | Meaning                                                                                  |
+| ------------------------------ | ---------------------------------------------------------------------------------------- |
+| `05 60 / 65 / 66 0A …`         | **user-IR upload** — begin / data-chunk / end (see [IR handling](#ir-handling-)) ✅      |
+| `05 63 00 F7`, `05 61 F7`      | pedal **acks** an IR-upload begin (`63`) and end (`61`) ✅                               |
+| `05 69 0A <a> <b>`             | **read an IR** back off the pedal → a `05 60/65/66` stream ✅                            |
+| `05 56 0A <mode>` → `05 57 F7` | **factory reset**, 4 modes — destructive ([what each does](#other-observed-messages)) ✅ |
+| `05 5A 0A`                     | no-arg control; seen triggering a **resync** (block + preset re-read) ✅                 |
 
 **Connect handshake** (captured, in order): `hello 5F` → `6A 00`→`6B` → `55 0F`→`52` → `55 03`→`52`
 → `55 00`→`52` → `control 5B` → `40 00`→`41` (reads preset 0). The emulator (`tools/emulate.ts`)
@@ -278,6 +278,62 @@ predicted offset).
 The compressor block, gate/expander, Auto-Filter Attack/Release, Ambience Decay/Time, IR Mode/Gain
 toggles, and Preset Level are all mapped the same way — see `docs/PARAM-MAP.md` and `params.ts`.
 
+### The Tuner param needs a nudge ✅ (index `0x34`, set-id `0x38`)
+
+The tuner/mute switch is a writable live param — `0`, `1` (Mute), `2` (Bypass) — and it is the one
+control whose write is **not self-sufficient**:
+
+```
+F0 00 51 21 05 50 <ver> 38 <00|01|02> F7   ; Off / Mute / Bypass -- records the value, does nothing
+F0 00 51 21 05 40 <ver> <active slot> F7   ; the nudge: any dump-producing command applies it
+```
+
+Observed on hardware (all four points):
+
+1. **The write alone changes nothing.** The value is recorded, but the pedal only acts on it while
+   draining a staged SysEx reply — of which the 267-byte preset dump is the only safe one. So the app
+   pairs every tuner write with a **read of the active slot** and discards the dump (a read doesn't
+   change the active preset; the dump's bytes come from flash, so they are stored state, not live).
+2. **An unpaired write is a landmine**, not a no-op: the next unrelated dump — a background read, even
+   a reconnect handshake — applies it, cutting the signal minutes later with nothing to explain it.
+3. **Nothing comes back.** No notify, no readback (a dump's `blob[0x56]` is the _stored_ byte), and no
+   pitch: the note appears on the **pedal's own display** (`-` = no signal detected), in Mute and in
+   Bypass alike. The app can only track what it asked for. A footswitch engage is completely silent,
+   but a footswitch _disengage_ pushes an unsolicited `05 41` dump, and a recall reloads the tuner byte
+   from the preset — so **any preset change clears both the pedal and the mirror**.
+4. **The applier is skipped entirely while an IR transfer is in progress**, so the app disables the
+   control for the duration instead of writing into the gap.
+
+### The silent-save hazard, and the one byte that prevents it ✅ (hardware, 2026-08-12)
+
+The pedal's save handler forces the live Level param to 0 when the live tuner is engaged, then writes
+the array to flash — so a save with the tuner on persists the preset **silent**, with no error. Three
+experiments pinned when that actually fires:
+
+| what was sent                                      | result         | what it shows                                    |
+| -------------------------------------------------- | -------------- | ------------------------------------------------ |
+| bare commit (`0x12`), tuner engaged, no `05 20`    | Level **0**    | the hazard is real                               |
+| `05 20` + commit, tuner engaged, blob's `0x56` = 0 | Level **kept** | the stage refreshes the live array from the blob |
+| `05 20` + commit, tuner **off**, blob's `0x56` = 1 | Level **0**    | the _blob's_ tuner byte is what arms it          |
+
+So **the staged blob decides, not the footswitch**, and the defence is one byte: `writePreset` forces
+`blob[0x56]` to 0, which makes the silent save unreachable. That also de-corrupts a preset that arrived
+that way — a preset saved at the pedal with the tuner engaged stores a non-zero byte, and since a
+recall reloads the live tuner from it, **selecting that preset mutes the rig**. Storing transient tuner
+state in a preset has no upside, so the app never does.
+
+⚠️ A save is therefore **not** byte-faithful in one other place: the pedal rewrites the 16-byte cab
+name at `0xC0`–`0xCF` from **the IR record the saved preset points at**. Observed by writing a blob back
+unchanged: a preset whose slot-7 pointer is `[2,4]` came back naming that record (`Concert 2x15`) in
+place of the `VT_SPKR` label the factory build had left there — while the pedal itself was parked on an
+unrelated preset, so it is the target's pointer that decides, not live state. The factory presets carry
+Tech 21's internal labels here, and re-saving one replaces them with the real record name. Display only:
+pointer, IR Mode and blend all survive.
+
+Mode 2 is a genuine channel bypass (dry signal, amp/drive/cab out of circuit) _and_ a tuner at the
+same time; there is no separate bypass param — the footswitch bypass handlers have no MIDI path.
+`setTunerMode()` in `src/device/session.ts`; the UI is `src/components/TunerBar.tsx`.
+
 ## Config / data blocks ✅ (read live, 2026-07-03)
 
 Read straight off the pedal via `tools/dump-blocks.ts` (config `05 6A`→`6B`, data `05 55`→`52`):
@@ -320,8 +376,28 @@ reference; 17→445), and **Tuner Detune** `[10]` = `0/1/2` = none/b/bb.
 
 ## Other observed messages
 
-- **`05 56 0A <mode>` → `05 57 F7` = FACTORY RESET** ✅ (2026-07-06): **mode 0 = All, 1 = Presets,
-  2 = Settings**; pedal acks `05 57`. ⚠ Destructive: Presets/All wipe stored presets.
+- **`05 56 0A <mode>` → `05 57 F7` = FACTORY RESET** ✅ — **four** modes, not three. Read out of the
+  handler at `0xffa0447a` (2026-08-12); it acks `05 57` for any mode byte, including ones it ignores.
+  Each mode is a set of 4 KiB flash block operations, all of which either **copy a golden region over
+  a live one** or **erase**:
+
+  | mode               | what it does                                                    | flash                                |
+  | ------------------ | --------------------------------------------------------------- | ------------------------------------ |
+  | `0` "All"          | modes 1 + 2 together, then erases the per-preset user-IR stores | copies + erase `0x048000`–`0x0E8000` |
+  | `1` "Presets"      | restores all 128 presets from the pedal's own factory copy      | `0x032000` → `0x040000`, 32,768 B    |
+  | `2` "Settings"     | restores the config/settings pages                              | `0x031000`… → `0x03F000`…            |
+  | `3` (undocumented) | erases the per-preset user-IR stores only                       | erase `0x048000`–`0x0E8000`          |
+
+  Two things follow, and both matter:
+
+  - ⭐ **The factory presets live in the pedal.** Mode 1 copies 32,768 B — exactly 128 × 256 — from a
+    golden region at `0x032000` onto the live preset bank. So a pristine preset bank never needs an
+    external backup.
+  - ⚠️ **No mode restores an IR, and none touches the shared cab library.** The erase runs from
+    `0x048000` to exactly `0x0E8000`, which is precisely where the library begins (see
+    [IR handling](#ir-handling-)) — it clears the two **per-preset** user-IR stores and stops. Nothing
+    in the image ever writes the library, so a cab overwritten there is gone until it is re-uploaded.
+
 - **`05 69 0A <a> <b>` → `05 60`/`05 65`/`05 66` stream** ✅ (2026-07-06): a **read** that returns
   data in the packed IR-chunk format (EliteControl reads the current IR this way).
 - **`05 5A 0A` → (no reply)** ✅ (2026-07-04): a no-arg control, like `05 5B`. Seen followed by a
@@ -334,13 +410,36 @@ reference; 17→445), and **Tuner Detune** `[10]` = `0/1/2` = none/b/bb.
 The pedal has **8 cab (IR) slots**, read off the pedal at bank `a = 0x02`, `b = 0..7`
 (`src/midi/irRead.ts`). The per-preset param `0x0E` selects (and morphs between) them:
 
-- **Slots 1–6 are fixed factory cabs** (SansAmp, Fliptop, VT 8x10, Cali 2x15, Concert 2x15, Htke
-  4x10). The app never writes them.
-- **Slots 7 & 8 are user-pair slots.** Each pairs a **factory cab** (Voice 12L / Brit V30) with a
-  **user IR**, and a **per-preset "IR Mode" toggle** (`0x28` slot 7, `0x29` slot 8; blob `0x4a`/
-  `0x4b`) chooses which one plays. Each also has a **per-slot gain** (`0x2a`/`0x2b`, 0–127 ↦ ±12 dB
-  linear). Uploading a custom IR fills the _user_ half — it does **not** overwrite the factory cab;
-  flip IR Mode back to hear the factory cab again.
+- **All eight library records are factory cabs** — SansAmp, Fliptop, VT 8x10, Cali 2x15, Concert 2x15,
+  Htke 4x10, **Voice 12L, Brit V30**. Slots 7 and 8 are not exceptions, and treating them as "the user
+  slots" is how you lose a cab. The app never writes this bank.
+- **Slots 7 & 8 are the two a preset may OVERRIDE.** A **per-preset "IR Mode" toggle** (`0x28` slot 7,
+  `0x29` slot 8; blob `0x4a`/`0x4b`) chooses between the factory cab and a **user IR**, which lives in
+  a private record (bank `0x00`/`0x01`, indexed by program — never in bank `0x02`). Each also has a
+  **per-slot gain** (`0x2a`/`0x2b`, 0–127 ↦ ±12 dB linear). Uploading a custom IR fills the _user_
+  half; flip IR Mode back to hear the factory cab again.
+
+### The library's own encoding ✅ (audited 2026-08-12)
+
+The desktop editor ships the eight cabs as 16-bit `.wav`s, which makes the library auditable — and all
+eight records on a real pedal are reproduced **byte-exactly** by
+
+```
+int8[i] = round(wav16[i] * 127 / 32768)      # 1000 samples, zero-padded to 2400
+```
+
+with **no normalisation**: the records peak at 63–92, not 127. The stored makeup-gain field then obeys
+one invariant across all eight records, to five decimal places:
+
+```
+gainField x RMS(samples as stored, /127) = 0.017321
+```
+
+⚠️ `irEncode.ts`'s `FACTORY_IR_LOUDNESS = 0.18` is expressed against a **peak-normalised** RMS, and on
+that basis the factory cabs are _not_ invariant (0.0239–0.0348) — so 0.18 matches the factory library on
+neither basis, and a peak-normalised custom IR gets a gain field several dB hotter than a factory cab.
+Not changed here: the per-slot ±12 dB gain lets a player trim it, and the constant's history deserves a
+deliberate reconciliation rather than a drive-by edit.
 
 The IR library is a **global** store (a marker written to a slot survived a preset change); each
 preset just points at an IR **record** ([pointer pairs](#preset-blob-format-)) and carries its own
@@ -421,7 +520,8 @@ Codec + `restorePlan()` in `src/protocol/bundle.ts`.
   committing (`05 50 0A 12 <slot>`), which persists regardless of pedal mode.
 - Red/Tuner footswitch: in **Performance** mode it toggles the preset's built-in chorus/filter; in
   **Studio** mode it engages the **Red Zone** editing layer (our `05 51 0A 4D` notify); hold in
-  either mode = tuner (tuner emits nothing over MIDI).
+  either mode = tuner. The tuner itself emits nothing over MIDI, but it can be **driven** from the app
+  — see [the Tuner param](#the-tuner-param-needs-a-nudge--index-0x34-set-id-0x38).
 - A `1–128` vs `0–127` offset option and optional PC→preset mapping table exist. 🤔 encoding.
 
 ## Selector encoding: amp model / ambience type / IR ✅
@@ -457,7 +557,7 @@ Handshake + checksum; `setParam`/`recall`/`read`/`write` (`0x20`) commands; the 
 framing; **all 15 knob param ids** (8 main + 7 Red Zone) and the read-vs-write (+4) rule; blob
 offsets for every mapped param (`= index + 0x22`); the **settings write** command (`05 52` block
 write, ack `05 53`); amp/ambience selection = live-set param bundles; IR select = param `0x0E`;
-user-IR upload transport + payload.
+user-IR upload transport + payload; the **Tuner** param `0x34` and its write-plus-nudge requirement.
 
 ## Open questions ❓
 

@@ -13,7 +13,10 @@ import {
   PARAMS,
   RED_ZONE_TOGGLE_MIN_FIRMWARE,
   RED_ZONE_TOGGLE_PARAMS,
+  TUNER_BLOB_OFFSET,
+  asTunerMode,
   type ParamId,
+  type TunerMode,
 } from "../protocol/params";
 import type { Preset } from "../protocol/preset";
 import { ambienceStore } from "./ambience";
@@ -28,6 +31,21 @@ export interface PedalState {
   firmware: number | null;
   /** The pedal's active knob layer (tracked from the 0x4d footswitch notify + our own sets). */
   layer: KnobLayer;
+  /**
+   * What the app last asked the pedal's tuner to be: 0 Off / 1 Mute / 2 Bypass — the MUTE/BYPASS bar's
+   * state. **Optimistic**, and deliberately not part of `values`: the tuner has no notify and no
+   * read-back, so there is nothing to reconcile against, and modelling it would make every save write
+   * blob[0x56] (baking "muted" into the user's presets — see TUNER_PARAM). Set from the session's own
+   * wire writes, and re-sourced from the preset's own tuner byte on every preset change — which is what
+   * the pedal itself reloads from (see syncTunerFromPreset).
+   */
+  tuner: TunerMode;
+  /**
+   * True while an IR transfer (or another exclusive bulk op) owns the link. The pedal's tuner applier
+   * is gated on "no transfer in progress", so a tuner change made now would be silently swallowed —
+   * the bar disables itself rather than lie.
+   */
+  linkBusy: boolean;
   /** Active preset slot (null = the pedal's current/live edit buffer, slot unknown). */
   slot: number | null;
   /** Name of the currently-loaded preset / edit buffer (from its blob). */
@@ -53,6 +71,8 @@ export interface PedalState {
   setConnection: (s: ConnectionState) => void;
   setFirmware: (firmware: number | null) => void;
   setLayer: (layer: KnobLayer) => void;
+  setTuner: (tuner: TunerMode) => void;
+  setLinkBusy: (linkBusy: boolean) => void;
   loadPreset: (
     slot: number | null,
     values: Partial<Record<ParamId, number>>,
@@ -76,6 +96,8 @@ export function createPedalStore() {
   return createStore<PedalState>((set) => ({
     connection: "disconnected",
     layer: "primary",
+    tuner: 0,
+    linkBusy: false,
     firmware: null,
     slot: null,
     name: null,
@@ -89,6 +111,8 @@ export function createPedalStore() {
     setConnection: (connection) => set({ connection }),
     setFirmware: (firmware) => set({ firmware }),
     setLayer: (layer) => set({ layer }),
+    setTuner: (tuner) => set({ tuner }),
+    setLinkBusy: (linkBusy) => set({ linkBusy }),
     loadPreset: (slot, values, name = null, raw = null) =>
       set((s) => ({
         slot,
@@ -149,6 +173,31 @@ export function applyAmbienceType(store: PedalStoreApi, index: number): void {
   });
 }
 
+/**
+ * A preset change happened — adopt ITS tuner byte as the mirror.
+ *
+ * This is the resync for the one direction that matters: the app believing the signal is muted/bypassed
+ * when it is actually live. The pedal reloads its whole live param array from the preset on every
+ * recall, tuner byte included (confirmed by ear: a preset change is a free escape hatch from a stuck
+ * mute), and disengaging the tuner with the channel footswitch pushes an unsolicited preset dump — so
+ * the preset-change hooks fire on exactly the transition that clears it.
+ *
+ * Reading the byte rather than assuming 0 is what makes this firmware-exact instead of merely usual.
+ * Presets store 0 in practice — but one saved AT THE PEDAL with the tuner engaged stores 1 or 2, and
+ * recalling it genuinely engages the tuner. Assuming Off there would put the mirror wrong in the
+ * dangerous direction, on the one preset where it matters.
+ *
+ * The other direction stays optimistic: a footswitch engaging the tuner is completely silent on the
+ * wire, so nothing can tell the app about it. (The 0x4d notify is NOT that signal — a long-hold passes
+ * through the Red Zone engage on its way to the tuner and emits a `4d=1` byte-identical to an ordinary
+ * press, about a second BEFORE the tuner comes on. Clearing the mirror on 0x4d would clear it at the
+ * exact moment the pedal is heading into Mute.)
+ */
+function syncTunerFromPreset(store: PedalStoreApi, raw: Uint8Array | null): void {
+  const mode = asTunerMode(raw?.[TUNER_BLOB_OFFSET]);
+  if (store.getState().tuner !== mode) store.getState().setTuner(mode);
+}
+
 /** Wire a DeviceSession's events into the store and return UI-facing actions. */
 export function bindSession(session: DeviceSession, store: PedalStoreApi): PedalController {
   store.getState().setConnection(session.state); // seed current state (may already be connected)
@@ -179,13 +228,20 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     const name = preset.name?.trim() || null;
     store.getState().loadPreset(slot, preset.values, name, preset.raw);
     syncAmbienceType(preset);
+    syncTunerFromPreset(store, preset.raw); // the backstop path follows a real preset change
     store.getState().pushLog(`● loaded current preset${slot != null ? ` (${slot + 1})` : ""}`);
     return preset;
   };
 
   let reloading = false; // avoid overlapping reloads from repeated slot notifications
   const unsubs = [
-    session.onState((s) => store.getState().setConnection(s)),
+    session.onState((s) => {
+      store.getState().setConnection(s);
+      // A link that dies mid-IR-transfer never delivers the exclusive window's release (the controller
+      // is disposed first), which would leave the tuner bar disabled forever. The disconnect is the
+      // release.
+      if (s === "disconnected") store.getState().setLinkBusy(false);
+    }),
     session.onFirmwareVersion((firmware) => {
       store.getState().setFirmware(firmware);
       store.getState().pushLog(`pedal firmware ${firmware.toFixed(1)}`);
@@ -196,6 +252,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     session.onPushedPreset((slot, preset) => {
       store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null, preset.raw);
       syncAmbienceType(preset);
+      syncTunerFromPreset(store, preset.raw); // the recall behind this push reloaded its tuner byte
       store.getState().pushLog(`⤺ pedal → preset ${slot + 1}: ${preset.name.trim()}`);
     }),
     session.onSlotChange((slot) => {
@@ -205,6 +262,9 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
         reloading = false;
       });
     }),
+    // The only tuner state the app can have is what it asked for — the pedal never reports the param.
+    session.onTunerMode((mode) => store.getState().setTuner(mode)),
+    session.onLinkBusy((busy) => store.getState().setLinkBusy(busy)),
     session.onParamNotify((e) => {
       // The red "shift" footswitch reports as a 0x4d notify. 0x4d is High Freq's live-set id, never
       // its notify id (High Freq notifies on 0x49), so a 0x4d notify is always the footswitch — never
@@ -243,6 +303,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
       const preset = await session.recallPreset(slot);
       store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null, preset.raw);
       syncAmbienceType(preset); // highlighted engine, from this preset's blob
+      syncTunerFromPreset(store, preset.raw); // every recall reloads the tuner from the preset
       store.getState().pushLog(`▶ recalled ${slot}: ${preset.name}`);
       return preset;
     },
