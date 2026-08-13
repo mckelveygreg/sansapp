@@ -29,7 +29,7 @@
  *
  * Framework-free (no React/React Native): usable from the app and the Node tools.
  */
-import type { DeviceSession } from "../device/session";
+import { MAX_WRITABLE_SLOT, type DeviceSession } from "../device/session";
 import { buildIrUpload, buildIrUploadFromDat } from "../protocol/irEncode";
 import { IR_PAIR_BLOB_OFFSET } from "../protocol/irPointer";
 import { liveSetId } from "../protocol/params";
@@ -176,6 +176,18 @@ export async function uploadCustomIr(
   const echo = await session.writePreset(program, staged);
 
   // The echo is the pedal's view of the saved preset: a repointed pair == the copy-on-save-as ran.
+  //
+  // ⚠️ This check leans on a guard in another module. `staged[pLsbOff]` is INIT_PROGRAM (0x7F), so a
+  // destination `program` of 0x7F would satisfy `echo[pLsbOff] === (program & 0x7f)` against the
+  // *un-repointed* stage and report a copy that never happened. That is unreachable only because
+  // {@link DeviceSession.writePreset} rejects anything above {@link MAX_WRITABLE_SLOT} first. Asserted
+  // here so the dependency is explicit in code rather than resting on a comment: if that guard is ever
+  // relaxed, this fails loudly instead of silently returning a false confirmation.
+  if (program > MAX_WRITABLE_SLOT) {
+    throw new Error(
+      `uploadCustomIr: program 0x${program.toString(16)} exceeds MAX_WRITABLE_SLOT — the pointer echo check would be unsound`,
+    );
+  }
   const pointerConfirmed =
     echo.length === 256 &&
     echo[pMsbOff] === bank &&
