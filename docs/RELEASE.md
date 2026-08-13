@@ -159,6 +159,7 @@ create the initial release); after that the lanes run unattended. Bump `android.
   Confirm with `pod --version` (should answer, not backtrace) before re-running the lane. Expect the
   same class of failure — a missing transitive gem in fastlane's bundle — after any future Ruby bump;
   the error names the gem, so install that one into the same `GEM_HOME`.
+
 - **`fastlane ios beta`'s shell exit code is not its outcome if you pipe it.** `fastlane ... | tail`
   reports `tail`'s status, so a lane that ends in `fastlane finished with errors` still exits 0 through
   the pipe. Check for the literal `fastlane.tools finished successfully 🎉` line, or the step table's
