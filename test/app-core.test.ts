@@ -5,7 +5,7 @@ import { DeviceSession } from "../src/device/session";
 import { createLoopback, type MidiIO } from "../src/device/transport";
 import { AMBIENCE_BUNDLES } from "../src/protocol/ambience";
 import { PROTOCOL_V1_0 } from "../src/protocol/constants";
-import { TUNER_BLOB_OFFSET } from "../src/protocol/params";
+import { PARAMS, TUNER_BLOB_OFFSET } from "../src/protocol/params";
 import { ambienceStore } from "../src/state/ambience";
 import { applyAmbienceType, bindSession, createPedalStore } from "../src/state/store";
 import { angleToValue, dragToValue, toDisplay, valueToAngle } from "../src/ui/knobMath";
@@ -148,6 +148,53 @@ describe("pedal store + controller", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(store.getState().values.chorusOn).toBe(0);
     expect(store.getState().values.autoFilterOn).toBe(0);
+    ctl.dispose();
+  });
+
+  it("a pedal preset push repairs a Red Zone mirror the long-hold left stale (both directions)", async () => {
+    // The red switch's LONG-HOLD (footswitch tuner-engage) runs the same Red-Zone toggle twice — once
+    // with the 0x4d notify, once silently on its way into the tuner — so the pedal reverts and the app
+    // is left holding the announced half. Symmetric: a hold begun with the Red Zone engaged notifies
+    // 4d=0 and then silently turns both flags back ON. Nothing announces the revert and nothing reads
+    // live params back, so the ONLY repair is a preset change: it reloads the pedal's live array from
+    // the blob and pushes that blob unsolicited. This pins that repair — loadPreset must keep
+    // re-sourcing `values` wholesale from the pushed blob, never merge over the stale mirror.
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel());
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+    expect(store.getState().firmware).toBe(1.1);
+
+    const push = async (autoFilter: number, chorus: number, slot: number): Promise<void> => {
+      const blob = new Uint8Array(256);
+      blob[0] = 0x01;
+      blob[PARAMS.autoFilterOn.blobOffset] = autoFilter;
+      blob[PARAMS.chorusOn.blobOffset] = chorus;
+      devIO.send(encode({ kind: "presetDump", slot, blob, checksumOk: true }));
+      await new Promise((r) => setTimeout(r, 10));
+    };
+
+    // Long-hold from Red Zone OFF: notified 4d=1 → the app mirrors both flags on, the pedal reverted
+    // them to 0 in silence. Exiting the tuner with the channel footswitch pushes the dump.
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 1 }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(store.getState().values.autoFilterOn).toBe(1); // stale — the pedal has 0
+    await push(0, 0, 11);
+    expect(store.getState().slot).toBe(11);
+    expect(store.getState().values.autoFilterOn).toBe(0);
+    expect(store.getState().values.chorusOn).toBe(0);
+    expect(store.getState().dirty).toBe(false); // repaired state is not an unsaved edit
+
+    // Long-hold from Red Zone ON: notified 4d=0 → the app mirrors both flags off while the pedal
+    // silently turned them back on. The same push repairs it in that direction too.
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(store.getState().values.chorusOn).toBe(0); // stale — the pedal has 1
+    await push(1, 1, 12);
+    expect(store.getState().values.autoFilterOn).toBe(1);
+    expect(store.getState().values.chorusOn).toBe(1);
     ctl.dispose();
   });
 

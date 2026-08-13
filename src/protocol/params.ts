@@ -335,9 +335,33 @@ export const KNOB_LAYER_NOTIFY_PARAM = 0x4d;
  * params — Auto Filter enable (0x3c) and Chorus enable (0x41) — to 1/0 on the pedal. (The audible
  * reverb/ambience drop rides the same toggle inside the DSP; there is no separate reverb-enable
  * param.) The pedal does NOT notify 0x3c/0x41 individually — the ONLY wire traffic is the 0x4d
- * notify above — so on firmware ≥ 1.1 the app must mirror both flags itself when it sees one, or
- * its toggles go stale and the next save-from-state writes the pre-toggle flags back to the pedal.
- * On firmware 1.0 the switch did not touch these params, so the mirror must be version-gated.
+ * notify above — so on firmware ≥ 1.1 the app mirrors both flags itself when it sees one, or its
+ * toggles go stale.
+ *
+ * The version gate is the firmware's own: the footswitch handler takes an argument and skips both
+ * force-sets when it is 0. Firmware 1.1's dispatcher passes 1, which is what turned the switch into
+ * an effects toggle; 1.0 did not touch these params, so mirroring on a 1.0 pedal would corrupt state.
+ *
+ * ⚠️ **The mirror is PROVISIONAL in both directions — a long-hold silently undoes what it announced.**
+ * The red switch's handler has two arms and they perform the *same* Red-Zone toggle (same state byte,
+ * same two force-sets):
+ *
+ * - the **press** arm toggles, force-sets both flags, and notifies `05 51 0B 4D <new>`;
+ * - the **hold** arm, reached when the hold deadline passes and the tuner is not already engaged,
+ *   performs that identical toggle **again** and then engages the tuner — emitting nothing at all.
+ *
+ * So a long-hold (the footswitch tuner-engage) toggles the Red Zone TWICE, once announced and once
+ * silently, and the two cancel: the pedal ends where it started while the app keeps the announced
+ * half. It is symmetric — a hold begun with the Red Zone already engaged notifies `4d=0` and then
+ * silently turns both flags back ON — so the ordinary `4d=0` on a short press is NOT evidence that
+ * the off direction can be trusted.
+ *
+ * Nothing can be listened for (the hold arm and the tuner's mode cycling are wire-silent) and nothing
+ * can be read back (the only command returning parameter state is the preset dump, and the pedal
+ * sources that from flash — see {@link TUNER_BLOB_OFFSET}). The repair is a preset change: it reloads
+ * the pedal's live array from the blob, and it pushes that blob unsolicited, so `onPushedPreset` →
+ * `loadPreset` re-sources both flags from the pedal's own bytes. See the 0x4d handler in state/store.ts
+ * for what that leaves exposed.
  */
 export const RED_ZONE_TOGGLE_PARAMS: readonly ParamId[] = ["autoFilterOn", "chorusOn"];
 
