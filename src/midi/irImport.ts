@@ -31,6 +31,7 @@
  */
 import type { DeviceSession } from "../device/session";
 import { buildIrUpload, buildIrUploadFromDat } from "../protocol/irEncode";
+import { IR_PAIR_BLOB_OFFSET } from "../protocol/irPointer";
 import { liveSetId } from "../protocol/params";
 import { irAddrSetIds, uploadIr } from "./irUpload";
 import { readIrDat } from "./irRead";
@@ -42,7 +43,7 @@ const INIT_PROGRAM = 0x7f;
 const IR_BANK = { 7: 0x00, 8: 0x01 } as const;
 
 /** Preset-blob offsets of the per-slot IR record pair `(MSB, LSB)` — bytes 0x57–0x5A. */
-const PAIR_OFFSET = { 7: [0x57, 0x58], 8: [0x59, 0x5a] } as const;
+const PAIR_OFFSET = IR_PAIR_BLOB_OFFSET;
 
 /** Preset-blob offsets of the per-slot IR Mode enable (params 0x28/0x29 at +0x22). */
 const MODE_OFFSET = { 7: 0x4a, 8: 0x4b } as const;

@@ -39,6 +39,7 @@ import { USER_IR_SLOTS, readIrSlot } from "../src/midi/irRead";
 import { sendParam } from "../src/midi/liveParam";
 import { getController, getSession, pedalStore } from "../src/midi/pedal";
 import { buildPresetBlob } from "../src/protocol/buildPreset";
+import { readIrPointer } from "../src/protocol/irPointer";
 import {
   PARAMS,
   USER_IR_GAIN_DB_RANGE,
@@ -554,6 +555,22 @@ export default function IrStudio() {
     pedalStore.getState().setValueLocal(id, wire);
   };
   const setMode = (slot: 7 | 8, on: boolean) => {
+    // Turning a user slot ON makes the pedal fetch whatever record this preset's pointer names, with no
+    // bounds check of its own — so an out-of-range pointer would convolve arbitrary flash at an
+    // unpredictable level. 27 factory presets carry the unused default pair (64,64) = record 8256, which
+    // is exactly that case; they are harmless only while their mode stays off. Refuse instead of
+    // enabling. See {@link readIrPointer}. Turning a slot OFF is always safe — the pointer stops being
+    // read at all — so the guard is one-directional.
+    if (on) {
+      const ptr = readIrPointer(pedalStore.getState().raw, slot);
+      if (ptr?.kind === "invalid") {
+        setStatus(
+          `Slot ${slot} has no IR stored for this preset (record ${ptr.record}) — upload one first. ` +
+            `Enabling it would play unstored data at an unpredictable level.`,
+        );
+        return;
+      }
+    }
     const id = IR_MODE_ID[slot];
     sendParam(PARAMS[id].paramId ?? 0, on ? 1 : 0);
     pedalStore.getState().setValueLocal(id, on ? 1 : 0);
