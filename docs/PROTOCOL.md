@@ -376,8 +376,28 @@ reference; 17→445), and **Tuner Detune** `[10]` = `0/1/2` = none/b/bb.
 
 ## Other observed messages
 
-- **`05 56 0A <mode>` → `05 57 F7` = FACTORY RESET** ✅ (2026-07-06): **mode 0 = All, 1 = Presets,
-  2 = Settings**; pedal acks `05 57`. ⚠ Destructive: Presets/All wipe stored presets.
+- **`05 56 0A <mode>` → `05 57 F7` = FACTORY RESET** ✅ — **four** modes, not three. Read out of the
+  handler at `0xffa0447a` (2026-08-12); it acks `05 57` for any mode byte, including ones it ignores.
+  Each mode is a set of 4 KiB flash block operations, all of which either **copy a golden region over
+  a live one** or **erase**:
+
+  | mode               | what it does                                                    | flash                                |
+  | ------------------ | --------------------------------------------------------------- | ------------------------------------ |
+  | `0` "All"          | modes 1 + 2 together, then erases the per-preset user-IR stores | copies + erase `0x048000`–`0x0E8000` |
+  | `1` "Presets"      | restores all 128 presets from the pedal's own factory copy      | `0x032000` → `0x040000`, 32,768 B    |
+  | `2` "Settings"     | restores the config/settings pages                              | `0x031000`… → `0x03F000`…            |
+  | `3` (undocumented) | erases the per-preset user-IR stores only                       | erase `0x048000`–`0x0E8000`          |
+
+  Two things follow, and both matter:
+
+  - ⭐ **The factory presets live in the pedal.** Mode 1 copies 32,768 B — exactly 128 × 256 — from a
+    golden region at `0x032000` onto the live preset bank. So a pristine preset bank never needs an
+    external backup.
+  - ⚠️ **No mode restores an IR, and none touches the shared cab library.** The erase runs from
+    `0x048000` to exactly `0x0E8000`, which is precisely where the library begins (see
+    [IR handling](#ir-handling-)) — it clears the two **per-preset** user-IR stores and stops. Nothing
+    in the image ever writes the library, so a cab overwritten there is gone until it is re-uploaded.
+
 - **`05 69 0A <a> <b>` → `05 60`/`05 65`/`05 66` stream** ✅ (2026-07-06): a **read** that returns
   data in the packed IR-chunk format (EliteControl reads the current IR this way).
 - **`05 5A 0A` → (no reply)** ✅ (2026-07-04): a no-arg control, like `05 5B`. Seen followed by a
@@ -390,13 +410,36 @@ reference; 17→445), and **Tuner Detune** `[10]` = `0/1/2` = none/b/bb.
 The pedal has **8 cab (IR) slots**, read off the pedal at bank `a = 0x02`, `b = 0..7`
 (`src/midi/irRead.ts`). The per-preset param `0x0E` selects (and morphs between) them:
 
-- **Slots 1–6 are fixed factory cabs** (SansAmp, Fliptop, VT 8x10, Cali 2x15, Concert 2x15, Htke
-  4x10). The app never writes them.
-- **Slots 7 & 8 are user-pair slots.** Each pairs a **factory cab** (Voice 12L / Brit V30) with a
-  **user IR**, and a **per-preset "IR Mode" toggle** (`0x28` slot 7, `0x29` slot 8; blob `0x4a`/
-  `0x4b`) chooses which one plays. Each also has a **per-slot gain** (`0x2a`/`0x2b`, 0–127 ↦ ±12 dB
-  linear). Uploading a custom IR fills the _user_ half — it does **not** overwrite the factory cab;
-  flip IR Mode back to hear the factory cab again.
+- **All eight library records are factory cabs** — SansAmp, Fliptop, VT 8x10, Cali 2x15, Concert 2x15,
+  Htke 4x10, **Voice 12L, Brit V30**. Slots 7 and 8 are not exceptions, and treating them as "the user
+  slots" is how you lose a cab. The app never writes this bank.
+- **Slots 7 & 8 are the two a preset may OVERRIDE.** A **per-preset "IR Mode" toggle** (`0x28` slot 7,
+  `0x29` slot 8; blob `0x4a`/`0x4b`) chooses between the factory cab and a **user IR**, which lives in
+  a private record (bank `0x00`/`0x01`, indexed by program — never in bank `0x02`). Each also has a
+  **per-slot gain** (`0x2a`/`0x2b`, 0–127 ↦ ±12 dB linear). Uploading a custom IR fills the _user_
+  half; flip IR Mode back to hear the factory cab again.
+
+### The library's own encoding ✅ (audited 2026-08-12)
+
+The desktop editor ships the eight cabs as 16-bit `.wav`s, which makes the library auditable — and all
+eight records on a real pedal are reproduced **byte-exactly** by
+
+```
+int8[i] = round(wav16[i] * 127 / 32768)      # 1000 samples, zero-padded to 2400
+```
+
+with **no normalisation**: the records peak at 63–92, not 127. The stored makeup-gain field then obeys
+one invariant across all eight records, to five decimal places:
+
+```
+gainField x RMS(samples as stored, /127) = 0.017321
+```
+
+⚠️ `irEncode.ts`'s `FACTORY_IR_LOUDNESS = 0.18` is expressed against a **peak-normalised** RMS, and on
+that basis the factory cabs are _not_ invariant (0.0239–0.0348) — so 0.18 matches the factory library on
+neither basis, and a peak-normalised custom IR gets a gain field several dB hotter than a factory cab.
+Not changed here: the per-slot ±12 dB gain lets a player trim it, and the constant's history deserves a
+deliberate reconciliation rather than a drive-by edit.
 
 The IR library is a **global** store (a marker written to a slot survived a preset change); each
 preset just points at an IR **record** ([pointer pairs](#preset-blob-format-)) and carries its own
