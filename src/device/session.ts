@@ -45,7 +45,7 @@ const LINK_SILENCE_MS = 2500;
 // The highest writable stored-preset slot. 0x7E/0x7F are NOT numbered slots: staging to 0x7F is
 // discarded by the pedal, and the save command `05 50 0A 12 7F` saves-to/jumps-to program 128
 // (PROTOCOL-MAP §1). writePreset rejects anything above this.
-const MAX_WRITABLE_SLOT = 0x7d;
+export const MAX_WRITABLE_SLOT = 0x7d;
 
 /** Live-set wire id of the Tuner param (index 0x34 → set-id 0x38). See setTunerMode. */
 const TUNER_SET_ID = liveSetId(TUNER_PARAM);
