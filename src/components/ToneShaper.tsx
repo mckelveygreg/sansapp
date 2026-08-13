@@ -14,6 +14,7 @@ import { Pressable, Text, View } from "react-native";
 import { logGrid } from "../dsp/ir";
 import { cabCurveDb, cabResponseAt, softClipShelfDb, toneResponse } from "../dsp/tone";
 import { loadIrCache } from "../midi/irCache";
+import { irCurveAt } from "../protocol/irSelect";
 import type { ParamId } from "../protocol/params";
 import { fitDbWindow } from "../ui/graphWindow";
 import type { IrCurve } from "./IrGraph";
@@ -59,9 +60,19 @@ function LegendChip({
   );
 }
 
-export function ToneShaper({ values }: { values: Readonly<Partial<Record<ParamId, number>>> }) {
+/** `raw` is the loaded preset's 256-byte blob (`pedalStore.raw`) — the cab overlay needs it to know
+ * which IR record THIS preset's slot 7/8 plays. Null (nothing recalled) just means no user-slot cab. */
+export function ToneShaper({
+  values,
+  raw,
+}: {
+  values: Readonly<Partial<Record<ParamId, number>>>;
+  raw: Uint8Array | null;
+}) {
   const [boxW, setBoxW] = useState(0);
   const [show, setShow] = useState({ eq: true, drive: true, cab: true, clip: true });
+  /** IR **record** → its display curve. Record-keyed, like the cache it comes from — a position key
+   * is what leaked one preset's cab onto every other (sansapp#68). */
   const [cabDb, setCabDb] = useState<Record<number, number[]>>({});
 
   // The cab curves come from the IR page's persisted pull cache — nothing is read off the pedal
@@ -70,8 +81,8 @@ export function ToneShaper({ values }: { values: Readonly<Partial<Record<ParamId
     void loadIrCache().then((cached) => {
       if (!cached) return;
       const next: Record<number, number[]> = {};
-      for (const [pos, s] of Object.entries(cached)) {
-        next[Number(pos)] = cabCurveDb(s.samples, GRID);
+      for (const [record, s] of Object.entries(cached)) {
+        next[Number(record)] = cabCurveDb(s.samples, GRID);
       }
       setCabDb(next);
     });
@@ -104,17 +115,21 @@ export function ToneShaper({ values }: { values: Readonly<Partial<Record<ParamId
     [values],
   );
 
-  // The active cab at the preset's IR position, from the pulled curves — same gating as the IR
-  // page: a user slot (7/8) with its IR Mode off plays the factory cab, whose curve we can't read.
+  // The active cab at the preset's IR position — resolved through the SHARED selector (irSelect), the
+  // same one the IR page uses, so the two views can't drift apart again. It turns each position into
+  // the record this preset actually plays and looks that up by record.
   const morph = values.irBlend ?? 0;
-  const cab = useMemo(() => {
-    const dbAt = (pos: number): readonly number[] | null => {
-      const modeOn =
-        pos === 7 ? (values.irMode7 ?? 0) > 0 : pos === 8 ? (values.irMode8 ?? 0) > 0 : true;
-      return modeOn ? (cabDb[pos] ?? null) : null;
-    };
-    return cabResponseAt(morph, dbAt, FLAT_DB);
-  }, [morph, cabDb, values.irMode7, values.irMode8]);
+  const mode7 = (values.irMode7 ?? 0) > 0;
+  const mode8 = (values.irMode8 ?? 0) > 0;
+  const cab = useMemo(
+    () =>
+      cabResponseAt(
+        morph,
+        irCurveAt(raw, { 7: mode7, 8: mode8 }, (r) => cabDb[r]),
+        FLAT_DB,
+      ),
+    [morph, cabDb, raw, mode7, mode8],
+  );
 
   // Soft Clip's HF smoother is in the path only while the level gate holds it in — and only when
   // Soft Clip is on at all, so with it off (or unknown) the stage isn't drawn or listed.
