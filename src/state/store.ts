@@ -279,6 +279,24 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
         // Auto Filter + Chorus enable to 1/0 WITHOUT notifying them (see RED_ZONE_TOGGLE_PARAMS).
         // Mirror them or the app's toggles go stale and the next save writes the old flags back.
         // The firmware version is known here: it's byte 6 of this very notify, latched before decode.
+        //
+        // ⚠️ The mirror is provisional, and knowingly so: a LONG-HOLD of this switch (the footswitch
+        // tuner-engage) performs the very same Red-Zone toggle a SECOND time, silently, on its way
+        // into the tuner — so the pedal ends where it started while we keep the announced half. It is
+        // symmetric: a hold begun with the Red Zone engaged notifies 4d=0 and then silently turns both
+        // flags back on. Neither an inferred fix nor a reconciliation can close that: the hold arm is
+        // wire-silent (so waiting out the hold window learns nothing and would have to apply the
+        // mirror anyway), and the pedal has no live-param read-back at all — a preset dump comes from
+        // flash. So the exposure is bounded, not eliminated, by the repair below:
+        //
+        // A preset change reloads the pedal's live array from the blob AND pushes that blob
+        // unsolicited, so onPushedPreset → loadPreset re-sources both flags from the pedal's own
+        // bytes. Exiting the tuner with the channel footswitch IS a preset change, so the ordinary
+        // gesture repairs itself. What remains exposed is a save (or a red-zone toggle in the UI)
+        // taken between the long-hold and the next preset change/recall/reconnect: saveCurrentTo
+        // builds the blob from `values`, so it would persist the announced half. Do NOT "fix" that by
+        // writing the toggle back at the pedal — the red switch's set-id (0x13) is a command that also
+        // repoints all eight physical knobs at the other knob bank.
         const fw = store.getState().firmware;
         if (fw !== null && fw >= RED_ZONE_TOGGLE_MIN_FIRMWARE) {
           for (const id of RED_ZONE_TOGGLE_PARAMS) store.getState().noteExternal(id, on);

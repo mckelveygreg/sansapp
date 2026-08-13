@@ -78,6 +78,22 @@ describe("buildPresetBlob", () => {
     expect(untouched[PARAMS.irMode7.blobOffset]).toBe(0);
   });
 
+  it("writes the Red Zone enables straight from `values` — a stale mirror reaches the blob", () => {
+    // Characterization of a KNOWN, deliberate exposure (lab #52). The red footswitch's long-hold runs
+    // the Red-Zone toggle twice, announcing only the first half, so pedalStore.values can hold effect
+    // enables the pedal has already reverted. Nothing distinguishes that from a genuine stomp and
+    // there is no live-param read-back, so a save taken before the next preset change persists the
+    // announced half — which is what the shipped mirror was chosen to do ("save what the pedal is
+    // doing"). If that trade is ever reversed (source these two from the base blob unless the user
+    // touched them in the app), THIS is the assertion that must flip.
+    const base = makeBase();
+    base[PARAMS.autoFilterOn.blobOffset] = 0; // the loaded preset had both effects off…
+    base[PARAMS.chorusOn.blobOffset] = 0;
+    const blob = buildPresetBlob(base, { autoFilterOn: 1, chorusOn: 1 }, "X", null);
+    expect(blob[PARAMS.autoFilterOn.blobOffset]).toBe(1); // …the mirror wins
+    expect(blob[PARAMS.chorusOn.blobOffset]).toBe(1);
+  });
+
   it("round-trips: decoding the built blob yields the edited values", () => {
     const blob = buildPresetBlob(makeBase(), { drive: 77, gateThreshold: 10 }, "RT", null);
     const p = decodePreset(blob);
