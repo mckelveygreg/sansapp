@@ -32,7 +32,7 @@ const config: ExpoConfig = {
   },
   android: {
     package: "com.mckelveygreg.sansapp",
-    versionCode: 1,
+    versionCode: 2,
     adaptiveIcon: { foregroundImage: "./assets/icon.png", backgroundColor: "#0e0e10" },
   },
   plugins: [
