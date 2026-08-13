@@ -5,7 +5,10 @@ import {
   CHORUS_PARAMS,
   PARAM_IDS,
   PARAMS,
+  RED_ZONE_STATE_PARAMS,
+  RED_ZONE_TOGGLE_PARAMS,
   liveSetId,
+  redZoneEngagedFor,
 } from "../src/protocol/params";
 
 describe("param registry", () => {
@@ -124,6 +127,30 @@ describe("param registry", () => {
     ]).toEqual([0x3d, 0x3e, 0x3f]);
     // live-set ids (index+4, deep range): 0x3c→0x40, 0x3d→0x41, 0x3e→0x42, 0x3f→0x43.
     expect([0x3c, 0x3d, 0x3e, 0x3f].map(liveSetId)).toEqual([0x40, 0x41, 0x42, 0x43]);
+  });
+
+  it("derives the pedal's Red Zone state from Auto Filter OR Chorus OR Ambiance", () => {
+    // The pedal recomputes its own Red Zone state at the end of every preset load, from exactly these
+    // three params, as a plain OR (confirmed against firmware 1.1 — see sansapp-lab #52). Pin the SET
+    // and its wire ids: get the set wrong and the app's indicator asserts the wrong thing about
+    // hardware it cannot read back.
+    expect(RED_ZONE_STATE_PARAMS.map((id) => PARAMS[id].paramId)).toEqual([0x3c, 0x41, 0x08]);
+
+    // Ambiance is the member that surprises people, and the reason this is modelled at all: it is NOT
+    // one of the two params the footswitch force-sets, so it can hold the Red Zone engaged on its own.
+    expect(RED_ZONE_STATE_PARAMS).toContain("ambiance");
+    for (const id of RED_ZONE_TOGGLE_PARAMS) expect(RED_ZONE_STATE_PARAMS).toContain(id);
+    expect(RED_ZONE_TOGGLE_PARAMS).not.toContain("ambiance");
+
+    // Each param engages it alone; only all-zero reads primary.
+    expect(redZoneEngagedFor({ ambiance: 34, autoFilterOn: 0, chorusOn: 0 })).toBe(true);
+    expect(redZoneEngagedFor({ ambiance: 0, autoFilterOn: 1, chorusOn: 0 })).toBe(true);
+    expect(redZoneEngagedFor({ ambiance: 0, autoFilterOn: 0, chorusOn: 1 })).toBe(true);
+    expect(redZoneEngagedFor({ ambiance: 0, autoFilterOn: 0, chorusOn: 0 })).toBe(false);
+
+    // Absent counts as 0 — and no OTHER param may engage it (a stray non-zero must not leak in).
+    expect(redZoneEngagedFor({})).toBe(false);
+    expect(redZoneEngagedFor({ drive: 127, chorus: 127, ambienceDecay: 127 })).toBe(false);
   });
 
   it("deep-param blob offsets recovered 2026-07-07 form contiguous blocks", () => {

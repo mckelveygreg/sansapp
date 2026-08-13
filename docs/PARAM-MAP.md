@@ -15,6 +15,17 @@ pre-programmed effect"): engaging/disengaging it sets **Auto Filter enable (`0x3
 (`0x41`) to 1/0 on the pedal** — with the ambience/reverb block following the same toggle audibly —
 but the only message sent is the `0x4D <1|0>` notify itself, so SansApp mirrors both enables off that
 notify (`RED_ZONE_TOGGLE_PARAMS` in `params.ts`). Firmware 1.0's switch only shifted the knob layer.
+
+The pedal also **derives** that Red Zone state for itself at the end of every preset load, as
+`0x3c || 0x41 || 0x08` — Auto Filter enable **or** Chorus enable **or Ambiance** — engaged if any is
+non-zero (`RED_ZONE_STATE_PARAMS` / `redZoneEngagedFor`). Two consequences worth knowing. First, a
+preset load is the one moment the state is knowable without wire evidence, so SansApp reconciles its
+indicator there rather than letting the notify drift. Second, **Ambiance is in that OR but is not one
+of the params the footswitch force-sets**, so a preset carrying any Ambiance loads with the Red Zone
+already engaged (red LED lit) and the _first_ press of the red switch **dis**engages — notifying
+`4D 0` and forcing Auto Filter + Chorus off. It toggles normally after that. The state is not
+re-derived once loaded: the footswitch overwrites it directly, so this holds at load time only.
+
 `*` = ambience time/decay are engine-specific (captured on Echo / Echo Verb); other engines reuse
 those indices for different controls.
 
