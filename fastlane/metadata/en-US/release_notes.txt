@@ -1,1 +1,12 @@
-Adds support for pedal firmware 1.1, including the red footswitch's new effects toggle. The editor gains a Tone Shaper graph showing EQ, drive, and cab response together, plus more accurate EQ and amp curves modeled directly from the pedal's own filters. Also fixes a bug where a custom IR could be silently overwritten when saving a preset.
+Adds support for pedal firmware 1.2. One build now talks to firmware 1.0, 1.1 and 1.2 — SansApp detects which one your pedal is running and adapts to it, including firmware 1.2's change to how the red footswitch's Red Zone state is worked out.
+
+New:
+• Red Zone indicator. The status bar now shows whether the pedal's red footswitch layer is engaged, and re-checks it every time a preset loads. On firmware 1.1 and earlier, any preset with Ambiance dialled in comes up already engaged, so the first press of the red switch turns things off rather than on — now you can see that coming instead of guessing. Firmware 1.2 fixes it at the pedal.
+• MUTE / BYPASS bar, for silent tuning and quick A/B against your dry signal.
+
+Fixed:
+• A user IR slot can no longer be enabled when its pointer doesn't refer to a real cab — closing a path that could send a write to the wrong place on the pedal.
+• Custom IR uploads no longer begin unless the connection can carry them through, and they reconnect before retrying.
+• Each preset's cab is resolved by record, so presets sharing or overriding a custom IR load the right one.
+• A preset saved with its Level at zero is no longer silently treated as empty.
+• The tuner no longer leaves an unsaved change behind after you use it.
