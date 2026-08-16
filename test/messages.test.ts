@@ -9,7 +9,13 @@ import {
   sysexVersion,
   type PedalMessage,
 } from "../src/protocol/messages";
-import { DEFAULT_PROTOCOL_VERSION, PROTOCOL_V1_0, PROTOCOL_V1_1 } from "../src/protocol/constants";
+import {
+  DEFAULT_PROTOCOL_VERSION,
+  PROTOCOL_V1_0,
+  PROTOCOL_V1_1,
+  PROTOCOL_V1_2,
+  PROTOCOL_VERSIONS,
+} from "../src/protocol/constants";
 
 /**
  * decode(hex) must equal `expected`, and re-encoding IN THE SAME PROTOCOL VERSION must reproduce the
@@ -51,14 +57,25 @@ describe("sysex messages (all confirmed from live capture)", () => {
     const set: PedalMessage = { kind: "setParam", param: 0x05, value: 0x28 };
     expect(bytesToHex(encode(set, PROTOCOL_V1_0))).toBe("F0 00 51 21 05 50 0A 05 28 F7");
     expect(bytesToHex(encode(set, PROTOCOL_V1_1))).toBe("F0 00 51 21 05 50 0B 05 28 F7");
+    expect(bytesToHex(encode(set, PROTOCOL_V1_2))).toBe("F0 00 51 21 05 50 0C 05 28 F7");
     expect(bytesToHex(encode(set))).toBe(
       bytesToHex(encode(set, DEFAULT_PROTOCOL_VERSION)), // default = newest firmware
     );
   });
 
+  it("probes newest firmware first and defaults to it", () => {
+    // The pedal drops a wrong-version message silently — no reply, no error — so the probe order is
+    // the whole connect strategy: current hardware must answer on the first try. Newest-first also
+    // means a firmware bump only ever costs older pedals one extra timeout.
+    expect(DEFAULT_PROTOCOL_VERSION).toBe(PROTOCOL_V1_2);
+    expect([...PROTOCOL_VERSIONS]).toEqual([PROTOCOL_V1_2, PROTOCOL_V1_1, PROTOCOL_V1_0]);
+    expect(PROTOCOL_VERSIONS[0]).toBe(DEFAULT_PROTOCOL_VERSION);
+  });
+
   it("reads the version byte and rejects out-of-range ones", () => {
     expect(sysexVersion(hexToBytes("F0 00 51 21 05 51 0A 05 3E F7"))).toBe(PROTOCOL_V1_0);
     expect(sysexVersion(hexToBytes("F0 00 51 21 05 51 0B 05 3E F7"))).toBe(PROTOCOL_V1_1);
+    expect(sysexVersion(hexToBytes("F0 00 51 21 05 51 0C 05 3E F7"))).toBe(PROTOCOL_V1_2);
     expect(sysexVersion(hexToBytes("F0 00 51 21 05 21 F7"))).toBeNull(); // short ack, no version
     // EliteControl's own window: below 0x0A it says "upgrade the pedal", above 0x77 "upgrade the editor"
     expect(isSupportedVersion(0x09)).toBe(false);
