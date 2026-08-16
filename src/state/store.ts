@@ -133,9 +133,9 @@ export function createPedalStore() {
         raw, // base blob for save-from-state; null (e.g. demo mode) disables the overlay save
         dirty: false,
         // Reconcile the Red Zone claim instead of letting it drift. The pedal re-derives its own Red
-        // Zone state from the values it just loaded — engaged if ANY of Auto Filter / Chorus /
-        // Ambiance is non-zero — as the last act of a preset load, so right here it is knowable
-        // exactly rather than inferred from a footswitch notify we may have misread (see
+        // Zone state from the values it just loaded — engaged if ANY of Auto Filter / Chorus (and, on
+        // firmware ≤ 1.1, Ambiance) is non-zero — as the last act of a preset load, so right here it
+        // is knowable exactly rather than inferred from a footswitch notify we may have misread (see
         // RED_ZONE_STATE_PARAMS, and the 0x4d handler below for how the notify can lie). Doing it in
         // the action rather than at the three call sites means no path that lands a preset can forget.
         //
@@ -144,7 +144,7 @@ export function createPedalStore() {
         // stomp since then is not accounted for. That is still strictly better than the "primary"
         // default it replaces (which asserts the same thing with no evidence at all), and the whole
         // point of surfacing it is that a player can check it against the pedal's own red LED.
-        layer: redZoneEngagedFor(values) ? "red" : "primary",
+        layer: redZoneEngagedFor(values, s.firmware) ? "red" : "primary",
         names: slot != null && name != null ? { ...s.names, [slot]: name } : s.names,
       })),
     setNames: (names) => set({ names }),

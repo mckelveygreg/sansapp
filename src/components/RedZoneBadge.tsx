@@ -13,11 +13,12 @@
  * in exactly this state, so a player glancing between the two can see a disagreement and clear it with
  * one stomp. Hence: no press handler, no confirmation, nothing to get wrong — a dot and a word.
  *
- * It is also the surface for a genuinely confusing piece of hardware behaviour. The pedal derives its
- * Red Zone state from Auto Filter OR Chorus OR **Ambiance**, so almost any ambience-bearing preset
- * loads with the Red Zone already engaged and the next stomp *dis*engages it (see
- * RED_ZONE_STATE_PARAMS). Shown, that is merely surprising once; unshown, it looks like a broken
- * footswitch.
+ * It is also the surface for a genuinely confusing piece of hardware behaviour **on firmware ≤ 1.1**.
+ * There the pedal derives its Red Zone state from Auto Filter OR Chorus OR **Ambiance**, so almost any
+ * ambience-bearing preset loads with the Red Zone already engaged and the next stomp *dis*engages it
+ * (see RED_ZONE_STATE_PARAMS). Shown, that is merely surprising once; unshown, it looks like a broken
+ * footswitch. Firmware 1.2 drops Ambiance from the derivation, so on 1.2 the badge is just a mirror —
+ * still worth showing, because the 0x4d notify can still lie after a long-hold.
  *
  * Deliberately non-interactive, and dim rather than hidden when disengaged — an indicator that vanishes
  * can't be distinguished from an app that isn't tracking.

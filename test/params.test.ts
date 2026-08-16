@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  AMBIANCE_RED_ZONE_FIXED_FIRMWARE,
   AMBIENCE_PARAMS,
   AUTO_FILTER_PARAMS,
   CHORUS_PARAMS,
   PARAM_IDS,
   PARAMS,
   RED_ZONE_STATE_PARAMS,
+  RED_ZONE_STATE_PARAMS_POST_AMBIANCE,
   RED_ZONE_TOGGLE_PARAMS,
   liveSetId,
   redZoneEngagedFor,
+  redZoneStateParamsFor,
 } from "../src/protocol/params";
 
 describe("param registry", () => {
@@ -151,6 +154,37 @@ describe("param registry", () => {
     // Absent counts as 0 — and no OTHER param may engage it (a stray non-zero must not leak in).
     expect(redZoneEngagedFor({})).toBe(false);
     expect(redZoneEngagedFor({ drive: 127, chorus: 127, ambienceDecay: 127 })).toBe(false);
+  });
+
+  it("drops Ambiance from the Red Zone derivation on firmware 1.2", () => {
+    // Firmware 1.2 removed the Ambiance leg of the OR, leaving Auto Filter and Chorus — so the derived
+    // set becomes exactly the set the footswitch force-sets, and the first-press trap is gone. Pin both
+    // sets and their wire ids: this is the one place the app's Red Zone claim depends on the version.
+    expect(RED_ZONE_STATE_PARAMS_POST_AMBIANCE.map((id) => PARAMS[id].paramId)).toEqual([
+      0x3c, 0x41,
+    ]);
+    expect(RED_ZONE_STATE_PARAMS_POST_AMBIANCE).not.toContain("ambiance");
+    expect([...RED_ZONE_STATE_PARAMS_POST_AMBIANCE]).toEqual([...RED_ZONE_TOGGLE_PARAMS]);
+
+    // The version boundary itself.
+    expect(AMBIANCE_RED_ZONE_FIXED_FIRMWARE).toBe(1.2);
+    expect(redZoneStateParamsFor(1.1)).toBe(RED_ZONE_STATE_PARAMS);
+    expect(redZoneStateParamsFor(1.2)).toBe(RED_ZONE_STATE_PARAMS_POST_AMBIANCE);
+    // Unknown version is the conservative case: assume the older, Ambiance-bearing rule.
+    expect(redZoneStateParamsFor(null)).toBe(RED_ZONE_STATE_PARAMS);
+    // A future firmware keeps the fixed behaviour rather than silently reverting.
+    expect(redZoneStateParamsFor(1.3)).toBe(RED_ZONE_STATE_PARAMS_POST_AMBIANCE);
+
+    // The behavioural difference that matters: Ambiance alone engages on 1.1, not on 1.2.
+    const ambianceOnly = { ambiance: 34, autoFilterOn: 0, chorusOn: 0 };
+    expect(redZoneEngagedFor(ambianceOnly, 1.1)).toBe(true);
+    expect(redZoneEngagedFor(ambianceOnly, 1.2)).toBe(false);
+    expect(redZoneEngagedFor(ambianceOnly)).toBe(true); // no version in hand → ≤ 1.1 rule
+
+    // The other two still engage on 1.2.
+    expect(redZoneEngagedFor({ autoFilterOn: 1 }, 1.2)).toBe(true);
+    expect(redZoneEngagedFor({ chorusOn: 1 }, 1.2)).toBe(true);
+    expect(redZoneEngagedFor({}, 1.2)).toBe(false);
   });
 
   it("deep-param blob offsets recovered 2026-07-07 form contiguous blocks", () => {

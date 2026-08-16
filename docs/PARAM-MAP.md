@@ -26,6 +26,13 @@ already engaged (red LED lit) and the _first_ press of the red switch **dis**eng
 `4D 0` and forcing Auto Filter + Chorus off. It toggles normally after that. The state is not
 re-derived once loaded: the footswitch overwrites it directly, so this holds at load time only.
 
+⚠️ **Firmware 1.2 changed this derivation to `0x3c || 0x41`** — Ambiance no longer participates, so
+the derived set now equals the set the footswitch force-sets and the first-press surprise above is
+gone. The rule is therefore version-dependent: use `redZoneStateParamsFor(firmware)` rather than the
+`RED_ZONE_STATE_PARAMS` constant, which stays the ≤ 1.1 set because that is the safe assumption when
+the version is not yet known. This is the only known behavioural difference between 1.1 and 1.2;
+everything else in 1.2 is the version byte itself.
+
 `*` = ambience time/decay are engine-specific (captured on Echo / Echo Verb); other engines reuse
 those indices for different controls.
 

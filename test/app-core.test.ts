@@ -4,7 +4,7 @@ import { PedalModel } from "../src/device/pedalModel";
 import { DeviceSession } from "../src/device/session";
 import { createLoopback, type MidiIO } from "../src/device/transport";
 import { AMBIENCE_BUNDLES } from "../src/protocol/ambience";
-import { PROTOCOL_V1_0 } from "../src/protocol/constants";
+import { PROTOCOL_V1_0, PROTOCOL_V1_1, PROTOCOL_V1_2 } from "../src/protocol/constants";
 import { PARAMS, TUNER_BLOB_OFFSET } from "../src/protocol/params";
 import { ambienceStore } from "../src/state/ambience";
 import { applyAmbienceType, bindSession, createPedalStore } from "../src/state/store";
@@ -131,20 +131,20 @@ describe("pedal store + controller", () => {
     // The app must mirror both flags off that one notify or its toggles (and the next save-from-
     // state) keep the pre-toggle values.
     const [appIO, devIO] = createLoopback();
-    wireModel(devIO, new PedalModel());
+    wireModel(devIO, new PedalModel(), PROTOCOL_V1_1);
     const session = new DeviceSession(appIO, 500);
     await session.connect(); // loopback model replies with the fw 1.1 version byte → firmware = 1.1
     const store = createPedalStore();
     const ctl = bindSession(session, store);
     expect(store.getState().firmware).toBe(1.1);
 
-    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 1 })); // Red Zone engaged
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 1 }, PROTOCOL_V1_1)); // engaged
     await new Promise((r) => setTimeout(r, 10));
     expect(store.getState().values.chorusOn).toBe(1);
     expect(store.getState().values.autoFilterOn).toBe(1);
     expect(store.getState().dirty).toBe(false); // pedal-initiated, not a local edit
 
-    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 })); // Red Zone off
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 }, PROTOCOL_V1_1)); // off
     await new Promise((r) => setTimeout(r, 10));
     expect(store.getState().values.chorusOn).toBe(0);
     expect(store.getState().values.autoFilterOn).toBe(0);
@@ -160,7 +160,7 @@ describe("pedal store + controller", () => {
     // the blob and pushes that blob unsolicited. This pins that repair — loadPreset must keep
     // re-sourcing `values` wholesale from the pushed blob, never merge over the stale mirror.
     const [appIO, devIO] = createLoopback();
-    wireModel(devIO, new PedalModel());
+    wireModel(devIO, new PedalModel(), PROTOCOL_V1_1);
     const session = new DeviceSession(appIO, 500);
     await session.connect();
     const store = createPedalStore();
@@ -172,13 +172,13 @@ describe("pedal store + controller", () => {
       blob[0] = 0x01;
       blob[PARAMS.autoFilterOn.blobOffset] = autoFilter;
       blob[PARAMS.chorusOn.blobOffset] = chorus;
-      devIO.send(encode({ kind: "presetDump", slot, blob, checksumOk: true }));
+      devIO.send(encode({ kind: "presetDump", slot, blob, checksumOk: true }, PROTOCOL_V1_1));
       await new Promise((r) => setTimeout(r, 10));
     };
 
     // Long-hold from Red Zone OFF: notified 4d=1 → the app mirrors both flags on, the pedal reverted
     // them to 0 in silence. Exiting the tuner with the channel footswitch pushes the dump.
-    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 1 }));
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 1 }, PROTOCOL_V1_1));
     await new Promise((r) => setTimeout(r, 10));
     expect(store.getState().values.autoFilterOn).toBe(1); // stale — the pedal has 0
     await push(0, 0, 11);
@@ -189,7 +189,7 @@ describe("pedal store + controller", () => {
 
     // Long-hold from Red Zone ON: notified 4d=0 → the app mirrors both flags off while the pedal
     // silently turned them back on. The same push repairs it in that direction too.
-    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 }));
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 }, PROTOCOL_V1_1));
     await new Promise((r) => setTimeout(r, 10));
     expect(store.getState().values.chorusOn).toBe(0); // stale — the pedal has 1
     await push(1, 1, 12);
@@ -198,17 +198,19 @@ describe("pedal store + controller", () => {
     ctl.dispose();
   });
 
-  it("reconciles the Red Zone claim from a loaded preset's own values, in both directions", async () => {
+  it("reconciles the Red Zone claim from a loaded preset's own values, in both directions (fw 1.1)", async () => {
     // The pedal re-derives its Red Zone state at the end of every preset load — engaged if ANY of Auto
     // Filter / Chorus / Ambiance is non-zero (RED_ZONE_STATE_PARAMS) — so a preset load is the one
     // moment the app can know the state exactly instead of trusting a 0x4d notify that a long-hold may
     // have silently undone. Both corrections below are ones the notify alone can never make.
+    // Pinned to firmware 1.1: 1.2 drops Ambiance from the OR (covered by the next test).
     const [appIO, devIO] = createLoopback();
-    wireModel(devIO, new PedalModel());
+    wireModel(devIO, new PedalModel(), PROTOCOL_V1_1);
     const session = new DeviceSession(appIO, 500);
     await session.connect();
     const store = createPedalStore();
     const ctl = bindSession(session, store);
+    expect(store.getState().firmware).toBe(1.1);
 
     const push = async (ambiance: number, autoFilter: number, chorus: number): Promise<void> => {
       const blob = new Uint8Array(256);
@@ -216,7 +218,7 @@ describe("pedal store + controller", () => {
       blob[PARAMS.ambiance.blobOffset] = ambiance;
       blob[PARAMS.autoFilterOn.blobOffset] = autoFilter;
       blob[PARAMS.chorusOn.blobOffset] = chorus;
-      devIO.send(encode({ kind: "presetDump", slot: 3, blob, checksumOk: true }));
+      devIO.send(encode({ kind: "presetDump", slot: 3, blob, checksumOk: true }, PROTOCOL_V1_1));
       await new Promise((r) => setTimeout(r, 10));
     };
 
@@ -224,7 +226,7 @@ describe("pedal store + controller", () => {
     // the params the footswitch force-sets, so on an ambience-bearing preset the pedal comes up engaged
     // (red LED lit) with no wire event ever saying so. Before the reconcile the app claimed "primary"
     // here — and the player's next stomp DISengages, which is baffling unless the state is shown.
-    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 }));
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 }, PROTOCOL_V1_1));
     await new Promise((r) => setTimeout(r, 10));
     expect(store.getState().layer).toBe("primary");
     await push(34, 0, 0);
@@ -236,7 +238,7 @@ describe("pedal store + controller", () => {
 
     // Stale "red" → primary. A long-hold from the engaged side announces 4d=1 and then silently
     // reverts; the load re-derives from all three params and clears the claim.
-    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 1 }));
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 1 }, PROTOCOL_V1_1));
     await new Promise((r) => setTimeout(r, 10));
     expect(store.getState().layer).toBe("red");
     await push(0, 0, 0);
@@ -250,13 +252,50 @@ describe("pedal store + controller", () => {
 
     // And the notify still wins AFTER a load — the reconcile is a load-time correction, not a mirror
     // that overrides live footswitch traffic.
-    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 }));
+    devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 }, PROTOCOL_V1_1));
     await new Promise((r) => setTimeout(r, 10));
     expect(store.getState().layer).toBe("primary");
     ctl.dispose();
   });
 
-  it("an app-initiated recall reconciles the Red Zone claim too", async () => {
+  it("on firmware 1.2, Ambiance alone no longer reads as Red Zone engaged", async () => {
+    // Firmware 1.2 removed Ambiance from the derivation the pedal runs at the end of a preset load, so
+    // the app's reconcile has to follow the connected pedal's version. Same bytes, same code path, one
+    // version byte apart — the ambience-bearing preset that reads "red" on 1.1 must read "primary" here,
+    // and the two params the footswitch force-sets must still engage it.
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel(), PROTOCOL_V1_2);
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+    expect(store.getState().firmware).toBe(1.2);
+
+    const push = async (ambiance: number, autoFilter: number, chorus: number): Promise<void> => {
+      const blob = new Uint8Array(256);
+      blob[0] = 0x01;
+      blob[PARAMS.ambiance.blobOffset] = ambiance;
+      blob[PARAMS.autoFilterOn.blobOffset] = autoFilter;
+      blob[PARAMS.chorusOn.blobOffset] = chorus;
+      devIO.send(encode({ kind: "presetDump", slot: 3, blob, checksumOk: true }, PROTOCOL_V1_2));
+      await new Promise((r) => setTimeout(r, 10));
+    };
+
+    await push(34, 0, 0); // the 1.1 first-press trap: gone on 1.2
+    expect(store.getState().layer).toBe("primary");
+    await push(127, 0, 0); // and not a threshold effect — Ambiance is simply out of the set
+    expect(store.getState().layer).toBe("primary");
+
+    await push(0, 1, 0);
+    expect(store.getState().layer).toBe("red");
+    await push(0, 0, 1);
+    expect(store.getState().layer).toBe("red");
+    await push(34, 1, 0); // Ambiance neither adds to nor cancels the other two
+    expect(store.getState().layer).toBe("red");
+    ctl.dispose();
+  });
+
+  it("an app-initiated recall reconciles the Red Zone claim too (fw 1.1)", async () => {
     const presets = Array.from({ length: 128 }, (_, i) => {
       const b = new Uint8Array(256);
       b[0] = 0x01;
@@ -264,7 +303,7 @@ describe("pedal store + controller", () => {
       return b;
     });
     const [appIO, devIO] = createLoopback();
-    wireModel(devIO, new PedalModel(presets));
+    wireModel(devIO, new PedalModel(presets), PROTOCOL_V1_1);
     const session = new DeviceSession(appIO, 500);
     await session.connect();
     const store = createPedalStore();

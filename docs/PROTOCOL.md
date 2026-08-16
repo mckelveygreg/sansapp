@@ -34,12 +34,18 @@ a 256-byte body + a 2-byte 14-bit checksum. **100% of the captured device SysEx 
 ### Byte 6 is the firmware version, not a marker ⚠️
 
 Earlier notes here called byte 6 a "fixed marker `0x0A`". It is actually the pedal's **firmware
-version × 10**, and firmware 1.1 (August 2026) changed it:
+version × 10**, and firmware 1.1 (August 2026) changed it — as did 1.2:
 
 | firmware | byte 6 |
 | -------- | ------ |
 | 1.0      | `0x0A` |
 | 1.1      | `0x0B` |
+| 1.2      | `0x0C` |
+
+The pedal is strict in **both** directions: it compares byte 6 for equality before it even reads the
+command byte, so a message carrying the wrong version is dropped with no reply and no error. Wrong
+version doesn't degrade — the pedal simply goes silent, which is why the handshake probes rather than
+assuming.
 
 EliteControl reads that byte, shows it as `VERSION: <byte/10>` with one decimal, and warns "please
 upgrade Elite" below `0x0A` / "editor version out of date" above `0x77`. Each EliteControl release is

@@ -369,11 +369,19 @@ export const RED_ZONE_TOGGLE_PARAMS: readonly ParamId[] = ["autoFilterOn", "chor
 export const RED_ZONE_TOGGLE_MIN_FIRMWARE = 1.1;
 
 /**
- * The three params the pedal DERIVES its own Red Zone state from: Auto Filter enable (0x3c), Chorus
- * enable (0x41) and **Ambiance** (0x08). The rule is a plain OR — any one of them non-zero and the
- * pedal's Red Zone reads *engaged* (red LED lit, physical knobs on their alternate functions); all
- * three zero and it reads primary. No weighting, no threshold. Confirmed instruction-by-instruction
- * against firmware 1.1, including the branch polarity (sansapp-lab #52 carries the derivation).
+ * The params the pedal DERIVES its own Red Zone state from: Auto Filter enable (0x3c), Chorus
+ * enable (0x41) and — **on firmware ≤ 1.1 only** — **Ambiance** (0x08). The rule is a plain OR — any
+ * one of them non-zero and the pedal's Red Zone reads *engaged* (red LED lit, physical knobs on their
+ * alternate functions); all zero and it reads primary. No weighting, no threshold. Confirmed
+ * instruction-by-instruction against firmware 1.1, including the branch polarity (sansapp-lab #52
+ * carries the derivation).
+ *
+ * **Firmware 1.2 dropped Ambiance from the OR**, leaving Auto Filter and Chorus — which makes the
+ * derived set equal to {@link RED_ZONE_TOGGLE_PARAMS} and retires the first-press trap described
+ * below. Use {@link redZoneStateParamsFor} rather than this constant wherever a firmware version is
+ * in hand; this list stays the ≤ 1.1 set because that is the conservative default when the version
+ * is unknown (claiming *engaged* on a pedal that reads primary is a visible, checkable disagreement;
+ * the reverse silently reproduces the bug the badge exists to warn about).
  *
  * What makes this worth modelling is **when** it holds:
  *
@@ -387,26 +395,48 @@ export const RED_ZONE_TOGGLE_MIN_FIRMWARE = 1.1;
  *   Ambiance non-zero, which the OR would still read as engaged). Reconcile at load, then track
  *   {@link KNOB_LAYER_NOTIFY_PARAM} notifies. **Do not derive continuously.**
  *
- * ⚠️ The consequence that bites players: **Ambiance is in this set but is NOT one of the params the
- * footswitch force-sets** — {@link RED_ZONE_TOGGLE_PARAMS} is only the other two. So a preset with any
- * Ambiance at all comes up already reading engaged, and the FIRST press of the red switch therefore
- * takes the *disengage* branch: it notifies `4d=0` and forces Auto Filter + Chorus off, the opposite of
- * what the player just asked for. It toggles normally from then on. The app cannot correct this (the
- * switch's set-id is a command that also repoints all eight knobs — never write it); showing the state
- * so the surprise is predictable instead of baffling is the whole available defence.
+ * ⚠️ The consequence that bites players **on firmware ≤ 1.1**: Ambiance is in the derived set but is
+ * NOT one of the params the footswitch force-sets — {@link RED_ZONE_TOGGLE_PARAMS} is only the other
+ * two. So a preset with any Ambiance at all comes up already reading engaged, and the FIRST press of
+ * the red switch therefore takes the *disengage* branch: it notifies `4d=0` and forces Auto Filter +
+ * Chorus off, the opposite of what the player just asked for. It toggles normally from then on. The
+ * app cannot correct this (the switch's set-id is a command that also repoints all eight knobs —
+ * never write it); showing the state so the surprise is predictable instead of baffling is the whole
+ * available defence. Firmware 1.2 fixes it at source, so on 1.2 the first press does what it looks
+ * like it should.
  */
 export const RED_ZONE_STATE_PARAMS: readonly ParamId[] = ["autoFilterOn", "chorusOn", "ambiance"];
 
+/** The derived set on firmware ≥ {@link AMBIANCE_RED_ZONE_FIXED_FIRMWARE} — Ambiance no longer
+ * participates, so it coincides with {@link RED_ZONE_TOGGLE_PARAMS}. */
+export const RED_ZONE_STATE_PARAMS_POST_AMBIANCE: readonly ParamId[] = ["autoFilterOn", "chorusOn"];
+
+/** First firmware version that drops Ambiance from the Red Zone derivation. */
+export const AMBIANCE_RED_ZONE_FIXED_FIRMWARE = 1.2;
+
+/**
+ * The params firmware `firmware` ORs together to decide its Red Zone state. `null` (version not yet
+ * known) gets the ≤ 1.1 set — see {@link RED_ZONE_STATE_PARAMS} for why that is the safe default.
+ */
+export function redZoneStateParamsFor(firmware: number | null): readonly ParamId[] {
+  return firmware !== null && firmware >= AMBIANCE_RED_ZONE_FIXED_FIRMWARE
+    ? RED_ZONE_STATE_PARAMS_POST_AMBIANCE
+    : RED_ZONE_STATE_PARAMS;
+}
+
 /**
  * Would these just-loaded preset values leave the pedal's Red Zone reading *engaged*? The pedal's own
- * rule: non-zero in ANY of {@link RED_ZONE_STATE_PARAMS}. A missing value counts as 0 — an absent param
- * cannot be engaging anything.
+ * rule: non-zero in ANY of {@link redZoneStateParamsFor}`(firmware)`. A missing value counts as 0 — an
+ * absent param cannot be engaging anything. `firmware` omitted or `null` uses the ≤ 1.1 set.
  *
  * Valid **at preset-load time only**; see {@link RED_ZONE_STATE_PARAMS} for why it goes stale after a
  * stomp and must not be used as a live mirror.
  */
-export function redZoneEngagedFor(values: Partial<Record<ParamId, number>>): boolean {
-  return RED_ZONE_STATE_PARAMS.some((id) => (values[id] ?? 0) !== 0);
+export function redZoneEngagedFor(
+  values: Partial<Record<ParamId, number>>,
+  firmware: number | null = null,
+): boolean {
+  return redZoneStateParamsFor(firmware).some((id) => (values[id] ?? 0) !== 0);
 }
 
 /**
