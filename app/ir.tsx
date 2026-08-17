@@ -46,7 +46,7 @@ import { getController, getSession, pedalCacheKey, pedalStore } from "../src/mid
 import { buildPresetBlob } from "../src/protocol/buildPreset";
 import { readIrPointer } from "../src/protocol/irPointer";
 import {
-  LIBRARY_RECORD_BASE,
+  recordsInvalidatedByUpload,
   type IrSource,
   type UserIrModes,
   irCurveAt,
@@ -780,19 +780,25 @@ export default function IrStudio() {
         /* recall is best-effort — if it drops, the preset is already saved; recall manually */
       }
       // THE INVALIDATION RULE (lab #58). An upload rewrites a record in place, so a record-keyed cache
-      // can hold stale samples under a perfectly correct key. An upload only ever writes PRIVATE
-      // records (banks 0/1 → below LIBRARY_RECORD_BASE; bank 2 is read-only to this app), so dropping
-      // every private entry is sufficient and can't discard a library read. Then re-file the crafted
-      // samples under the record the SAVED preset now points at — read from the recalled blob, so a
-      // recall that failed files nothing rather than guessing. We never read the record back over MIDI:
-      // a heavy read burst right after an upload is exactly the flaky BLE traffic to avoid.
+      // can hold stale samples under a perfectly correct key. {@link recordsInvalidatedByUpload} names
+      // the records this upload could have written — the two scratch records plus the destination —
+      // and nothing else is touched. Then re-file the crafted samples under the record the SAVED
+      // preset now points at, read from the recalled blob so a recall that failed files nothing rather
+      // than guessing. We never read the record back over MIDI: a heavy read burst right after an
+      // upload is exactly the flaky BLE traffic to avoid.
+      //
+      // The old rule dropped EVERY private entry. Sufficient, but far too broad — it discarded the
+      // other slot's good curve, so a slot-8 upload made slot 7's cab vanish from this page while the
+      // pedal went on playing it correctly. That is what was reported as "uploading to slot 8 cleared
+      // slot 7" on 2026-08-17; `tools/ir-audit.ts` then showed both records intact on the pedal.
       const samples = Float64Array.from(craft);
       const saved = recalled ? readIrPointer(pedalStore.getState().raw, uploadSlot) : null;
       const playedRecord = saved && saved.kind !== "invalid" ? saved.record : undefined;
+      const stale = recordsInvalidatedByUpload(uploadSlot, playedRecord);
       setPulled((p) => {
         const kept: Record<number, Pulled> = {};
         for (const [k, v] of Object.entries(p)) {
-          if (Number(k) >= LIBRARY_RECORD_BASE) kept[Number(k)] = v;
+          if (!stale.has(Number(k))) kept[Number(k)] = v;
         }
         if (playedRecord !== undefined) {
           kept[playedRecord] = { name: irName().slice(0, 32), ir: samples, db: curveOf(samples) };

@@ -62,6 +62,44 @@ export function libraryRecordAt(pos: number): number {
   return LIBRARY_RECORD_BASE + pos - 1;
 }
 
+/** Private-record bank per user slot: `record = bank·128 + program`. Slot 7 → 0, slot 8 → 1. */
+const SLOT_BANK = { 7: 0, 8: 1 } as const;
+
+/** Program 127 (`INIT`) — whose private records are the scratch space every upload stages through. */
+const SCRATCH_PROGRAM = 127;
+
+/**
+ * Exactly which cached records an upload to `slot` of `program` can have made stale.
+ *
+ * A record-keyed cache can hold correct samples under a correct key, so invalidation has to name the
+ * records the upload actually wrote and no others. Those are:
+ *
+ * - the uploaded slot's **scratch** record (`bank·128 + 127`), which every import stages through;
+ * - the **other** slot's scratch record, which the backup pre-copy overwrites when it runs;
+ * - the uploaded slot's **destination** record — passed in as `playedRecord`, since only the recalled
+ *   blob knows where the save-as actually repointed, and a failed recall must not guess.
+ *
+ * Deliberately NOT "every private record". That was the old rule: sufficient, but far too broad —
+ * it discarded the *other* slot's perfectly good cached curve, so uploading to slot 8 made slot 7's
+ * cab vanish from the IR page while the pedal still played it correctly. Reported as data loss on
+ * hardware 2026-08-17; an audit of the pedal showed both records intact and only the display wrong.
+ *
+ * The other slot's DESTINATION record is deliberately absent: the backup re-uploads it byte-faithfully,
+ * so its contents are unchanged and its cache entry stays valid.
+ */
+export function recordsInvalidatedByUpload(
+  slot: UserIrSlot,
+  playedRecord: number | undefined,
+): Set<number> {
+  const other: UserIrSlot = slot === 7 ? 8 : 7;
+  const stale = new Set<number>([
+    SLOT_BANK[slot] * 128 + SCRATCH_PROGRAM,
+    SLOT_BANK[other] * 128 + SCRATCH_PROGRAM,
+  ]);
+  if (playedRecord !== undefined) stale.add(playedRecord);
+  return stale;
+}
+
 /**
  * Where a position's curve and name come from:
  * - `played` — the pedal plays this exact record, and it is readable. A real reading.
