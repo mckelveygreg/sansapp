@@ -14,6 +14,7 @@ import { Pressable, Text, View } from "react-native";
 import { logGrid } from "../dsp/ir";
 import { cabCurveDb, cabResponseAt, softClipShelfDb, toneResponse } from "../dsp/tone";
 import { loadIrCache } from "../midi/irCache";
+import { pedalCacheKey } from "../midi/pedal";
 import { irCurveAt } from "../protocol/irSelect";
 import type { ParamId } from "../protocol/params";
 import { fitDbWindow } from "../ui/graphWindow";
@@ -78,7 +79,7 @@ export function ToneShaper({
   // The cab curves come from the IR page's persisted pull cache — nothing is read off the pedal
   // here. No cache yet (or web) just means the cab overlay reads "not pulled".
   useEffect(() => {
-    void loadIrCache().then((cached) => {
+    void loadIrCache(pedalCacheKey()).then((cached) => {
       if (!cached) return;
       const next: Record<number, number[]> = {};
       for (const [record, s] of Object.entries(cached)) {

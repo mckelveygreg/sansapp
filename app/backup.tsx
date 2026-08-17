@@ -9,7 +9,7 @@ import { useStore } from "zustand";
 import { radius, theme } from "../src/components/theme";
 import { exportPresetsBundle, restoreBundle } from "../src/midi/bundleIo";
 import { pickFileBytes } from "../src/midi/exportFile";
-import { getSession, pedalStore } from "../src/midi/pedal";
+import { getSession, invalidateAllChecksums, pedalStore } from "../src/midi/pedal";
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -106,6 +106,9 @@ export default function Backup() {
       const r = await restoreBundle(session, picked.bytes, (done, total) =>
         setMsg(`Restoring… ${done}/${total}`),
       );
+      // A restore rewrites arbitrary slots, so nothing we had cached about this pedal's bank still
+      // describes it — drop the checksums and let the next sync re-read.
+      invalidateAllChecksums();
       setMsg(
         `Restored ${r.presets} presets${r.irs ? ` + ${r.irs} IRs` : ""}` +
           (r.failed ? ` · ${r.failed} failed — reconnect and restore again to retry` : "") +

@@ -16,7 +16,13 @@ import {
   DEMO_VALUES,
 } from "../state/demoState";
 import { ensureBluetoothMidi } from "./bleMidi";
-import { loadNameCache, saveNameCache } from "./nameCache";
+import {
+  UNIDENTIFIED_SERIAL,
+  adoptUnidentifiedEntry,
+  emptyEntry,
+  loadDeviceCache,
+  saveDeviceEntry,
+} from "./deviceCache";
 import { requestMIDIAccess } from "./requestAccess";
 import { listPortNames, midiIOAutodetect, midiIOFromWebMidi } from "./webMidiAdapter";
 import {
@@ -37,20 +43,107 @@ export const pedalStore = createPedalStore();
 
 // Persist the slot→name map so the Presets list is populated on launch (and offline), surviving
 // restarts. Hydrate once at startup — any live read already in the store wins over the cache — then
-// save (debounced) whenever the names map changes (syncNames, or a per-preset name learned on load).
-void loadNameCache().then((cached) => {
-  if (Object.keys(cached).length > 0) {
-    pedalStore.getState().setNames({ ...cached, ...pedalStore.getState().names });
+// save (debounced) whenever the names map changes (a sync, or a per-preset name learned on load).
+//
+// The cache is keyed by the pedal's SERIAL, which isn't known until a connect, so launch hydrates from
+// whichever pedal was used last and `adoptCacheForSerial` corrects it if a different one turns up. Its
+// companion is the per-slot checksum baseline below, which is what makes the reconcile-on-connect cheap.
+
+/** The pedal whose cache is currently loaded (its serial, or UNIDENTIFIED_SERIAL before one is read). */
+let cacheSerial: string | null = null;
+/**
+ * slot → 14-bit preset checksum matching the NAMES now in the store. The next connect diffs the
+ * pedal's own checksum table against this and re-reads only what moved (src/protocol/identity.ts); a
+ * slot missing here is always re-read, which is why every write invalidates its entry.
+ */
+let cachedChecksums: Record<number, number> = {};
+
+/** The checksums the cached names were read at — the baseline a delta sync diffs against. */
+export const cachedPresetChecksums = (): Record<number, number> => cachedChecksums;
+
+/**
+ * Which pedal on-disk caches belong to: its serial, {@link UNIDENTIFIED_SERIAL} for one that didn't
+ * report one, or null before any pedal has been identified. Also the IR cache's owner tag.
+ */
+export const pedalCacheKey = (): string | null => cacheSerial;
+
+void loadDeviceCache().then((cache) => {
+  // A connect that beat this read to it has already adopted the RIGHT pedal's cache; hydrating
+  // "whichever was used last" on top of that would swap in another pedal's names and checksums.
+  if (cacheSerial !== null) return;
+  const serial = cache.lastSerial;
+  const entry = serial ? cache.devices[serial] : undefined;
+  if (!serial || !entry) return;
+  cacheSerial = serial;
+  cachedChecksums = entry.checksums ?? {};
+  if (Object.keys(entry.names).length > 0) {
+    pedalStore.getState().setNames({ ...entry.names, ...pedalStore.getState().names });
   }
 });
+
 let nameSaveTimer: ReturnType<typeof setTimeout> | undefined;
 let lastNames = pedalStore.getState().names;
+function persistCacheSoon(): void {
+  clearTimeout(nameSaveTimer);
+  nameSaveTimer = setTimeout(() => {
+    void saveDeviceEntry(cacheSerial ?? UNIDENTIFIED_SERIAL, {
+      names: pedalStore.getState().names,
+      checksums: cachedChecksums,
+    });
+  }, 400);
+}
 pedalStore.subscribe((s) => {
   if (s.names === lastNames) return;
   lastNames = s.names;
-  clearTimeout(nameSaveTimer);
-  nameSaveTimer = setTimeout(() => void saveNameCache(lastNames), 400);
+  persistCacheSoon();
 });
+
+/**
+ * Record the checksum a slot's cached name was read at, so the next connect can tell whether that
+ * preset still matches. Called by a sync for each slot it actually read.
+ */
+export function noteSlotChecksum(slot: number, checksum: number): void {
+  cachedChecksums = { ...cachedChecksums, [slot]: checksum };
+  persistCacheSoon();
+}
+
+/**
+ * Forget what we knew about a slot's contents — the next sync re-reads it. Every write invalidates
+ * rather than recording the bytes it sent, because a save is not byte-faithful: the pedal rewrites the
+ * cab-name field from the preset's IR pointer (docs/PROTOCOL.md), so a locally computed checksum would
+ * disagree with the pedal's table anyway.
+ */
+export function invalidateSlotChecksum(slot: number): void {
+  if (!(slot in cachedChecksums)) return;
+  const next = { ...cachedChecksums };
+  delete next[slot];
+  cachedChecksums = next;
+  persistCacheSoon();
+}
+
+/** Forget the whole bank's checksums — for a bulk restore, which rewrites arbitrary slots. */
+export function invalidateAllChecksums(): void {
+  cachedChecksums = {};
+  persistCacheSoon();
+}
+
+/**
+ * Point the cache at the pedal that just connected. A pedal we've never seen (or a different one than
+ * launch hydrated from) starts from ITS own cached names — never the previous pedal's, which would
+ * otherwise be persisted under this pedal's serial and shown for its slots.
+ */
+async function adoptCacheForSerial(serial: string | null): Promise<void> {
+  const key = serial ?? UNIDENTIFIED_SERIAL;
+  // A cache written before the serial was readable (or by an older build) is re-keyed to this pedal
+  // rather than dropped — those names came from the only pedal the app had ever talked to.
+  if (serial) await adoptUnidentifiedEntry(serial);
+  if (key === cacheSerial) return;
+  const entry = (await loadDeviceCache()).devices[key] ?? emptyEntry();
+  cacheSerial = key;
+  cachedChecksums = entry.checksums;
+  lastNames = entry.names;
+  pedalStore.getState().setNames(entry.names);
+}
 
 let controller: PedalController | null = null;
 let session: DeviceSession | null = null;
@@ -104,6 +197,14 @@ export async function connectPedal(portMatch?: string): Promise<void> {
   });
   await newSession.connect();
   pedalStore.getState().pushLog(`🔌 connected via ${found.name}`);
+  // The handshake read this pedal's serial for free — swap the cache to it before anything reads or
+  // writes names, so a second pedal never inherits the first one's. Best-effort: a cache miss must not
+  // fail a working connection.
+  try {
+    await adoptCacheForSerial(newSession.serial);
+  } catch {
+    // no cached bank for this pedal — the Presets list syncs from the pedal instead
+  }
   // Show the pedal's CURRENT tone (read-only) — do NOT recall a slot, which would change the pedal.
   // Best-effort: the session is already "ready", so a hiccup reading the current tone must NOT fail
   // the whole connection. Leave the user connected (they can recall a preset) instead of tearing down.
@@ -152,10 +253,15 @@ export function loadDemoState(): void {
   st.pushLog("● demo state loaded (no hardware)");
 }
 
-/** Update the cached slot→name map for one slot so the Presets list re-renders immediately. */
+/**
+ * Update the cached slot→name map for one slot so the Presets list re-renders immediately. Every
+ * caller has just WRITTEN that slot, so its cached checksum no longer describes the pedal — drop it and
+ * let the next sync re-read that one slot.
+ */
 function cacheName(slot: number, name: string): void {
   const cur = pedalStore.getState().names;
   pedalStore.getState().setNames({ ...cur, [slot]: name.trim() || `Preset ${slot + 1}` });
+  invalidateSlotChecksum(slot);
 }
 
 /** Copy a preset's full blob from one slot to another (blob-level — no offset map needed). */

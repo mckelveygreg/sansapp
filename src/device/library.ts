@@ -40,10 +40,24 @@ export async function readAllPresets(
   session: DeviceSession,
   onProgress?: (done: number, total: number) => void,
 ): Promise<SlotPreset[]> {
+  const all = Array.from({ length: PRESET_SLOT_COUNT }, (_, slot) => slot);
+  return readPresets(session, all, onProgress);
+}
+
+/**
+ * Read just the given slots, reporting progress against that list. Same sequential, per-slot-resilient
+ * path as {@link readAllPresets} — used by a delta sync, which learns from the pedal's per-preset
+ * checksum table (`src/protocol/identity.ts`) that only a handful of slots have changed.
+ */
+export async function readPresets(
+  session: DeviceSession,
+  slots: readonly number[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<SlotPreset[]> {
   const out: SlotPreset[] = [];
-  for (let slot = 0; slot < PRESET_SLOT_COUNT; slot++) {
+  for (const slot of slots) {
     out.push({ slot, preset: await readSlotResilient(session, slot) });
-    onProgress?.(slot + 1, PRESET_SLOT_COUNT);
+    onProgress?.(out.length, slots.length);
   }
   return out;
 }
