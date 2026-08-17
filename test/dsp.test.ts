@@ -55,7 +55,7 @@ describe("frequency response", () => {
   // and lifts the passband far above 0 dB — the lows pin to the top of the graph and the preview is
   // useless for the filter it is previewing.
   const lowpassAt = (fc: number) =>
-    generateIr("lowpass", { fc, q: 0.707, stages: 1, taps: 2000, sampleRate: 44100 });
+    generateIr("lowpass", { fc, q: Math.SQRT1_2, stages: 1, taps: 2000, sampleRate: 44100 });
 
   it("band-normalizing a sub-band low-pass pushes the passband way above 0 dB", () => {
     const db = frequencyResponse(lowpassAt(200), grid, { normalizeBand: [700, 1400] });
