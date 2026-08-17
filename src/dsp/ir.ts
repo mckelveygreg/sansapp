@@ -21,6 +21,15 @@ export interface ResponseOptions {
   octaveFraction?: number;
   /** Normalize so the median across this band reads 0 dB. Set null to skip. */
   normalizeBand?: readonly [number, number] | null;
+  /**
+   * Normalize so the curve's own PEAK reads 0 dB, and everything else reads as attenuation below it.
+   * Takes precedence over {@link normalizeBand}.
+   *
+   * Use this when the curve has no guaranteed energy in any fixed reference band — a crafted filter,
+   * as opposed to a speaker cab. Band-normalizing a low-pass whose corner sits below the band means
+   * referencing its own stopband, which lifts the passband far above 0 dB.
+   */
+  normalizePeak?: boolean;
 }
 
 /**
@@ -57,6 +66,10 @@ export function frequencyResponse(
     return sum / (i1 - i0 + 1);
   });
 
+  if (opts.normalizePeak) {
+    const peak = out.reduce((m, v) => (v > m ? v : m), -Infinity);
+    return Number.isFinite(peak) ? out.map((v) => v - peak) : out;
+  }
   if (normalizeBand) {
     const [lo, hi] = normalizeBand;
     // .filter() returns a fresh array, so sorting it in place is safe — and Array.prototype.sort

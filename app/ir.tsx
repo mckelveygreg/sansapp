@@ -664,8 +664,19 @@ export default function IrStudio() {
     }
     return filterOn ? cascadeIr(base, filterIr, TAPS) : Float64Array.from(base);
   }, [cabA, cabB, blend, filterOn, filterIr]);
+  // The Studio preview is normalized to its own PEAK, not to the 700–1400 Hz reference band the
+  // mic-stack rows use. That band is right for comparing speaker cabs, which all have energy there.
+  // A crafted filter need not: a low-pass cornered below 700 Hz has that whole band inside its
+  // STOPBAND, so referencing it lifted the passband far above 0 dB and pinned the lows to the top of
+  // the graph — the preview was unreadable for exactly the filter it exists to preview (reported on
+  // hardware 2026-08-17). Referencing the peak reads as "attenuation from the loudest point", which
+  // is meaningful for every shape offered here.
+  //
+  // Safe to differ from the rows: this graph draws a single curve on its own axes, so the two scales
+  // are never compared. It is display-only either way — the samples uploaded to the pedal are `craft`
+  // itself, untouched by any of this.
   const craftDb = useMemo(
-    () => frequencyResponse(craft, GRID, { sampleRate: rate, normalizeBand: [700, 1400] }),
+    () => frequencyResponse(craft, GRID, { sampleRate: rate, normalizePeak: true }),
     [craft, rate],
   );
 
