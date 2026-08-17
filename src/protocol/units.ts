@@ -22,9 +22,14 @@
 
 // Screenshot-calibrated helpers: 0..127 maps onto [lo, hi] inclusive.
 const lin = (r: number, lo: number, hi: number): number => lo + (r / 127) * (hi - lo);
-const logMap = (r: number, lo: number, hi: number): number => lo * (hi / lo) ** (r / 127);
+// `logMap` used to live here and is gone. Every taper that used it — comp Attack, comp Release, gate
+// Release — has since been measured against the pedal, and **all three turned out not to be log**.
+// Worth remembering before reaching for it again: the log law was a guess that fitted two endpoints,
+// and two endpoints fit everything.
 /** Square taper — same endpoints as {@link lin}, but the midpoint sits a quarter of the way up. */
 const sqMap = (r: number, lo: number, hi: number): number => lo + (hi - lo) * (r / 127) ** 2;
+/** Cube taper — steeper again; the midpoint sits an eighth of the way up. */
+const cubeMap = (r: number, lo: number, hi: number): number => lo + (hi - lo) * (r / 127) ** 3;
 // Hardware-model helpers: x = value/128 (exactly 0.5 at 64), x' = 2x − 1 (bipolar, 0 at 64).
 const lin128 = (r: number, lo: number, hi: number): number => lo + (r / 128) * (hi - lo);
 const bipolar = (r: number): number => 2 * (r / 128) - 1;
@@ -49,18 +54,16 @@ export const compThresholdLabel = (r: number): string => {
 };
 export const compRatio = (r: number): number => lin(r, 1, 20); // 1.0:1 … 20.0:1 (hardware-confirmed)
 export const compOutputDb = (r: number): number => lin(r, -30, 18); // −30.0 … +18.0 dB
-// Endpoints re-read off EliteControl 1.2 on 2026-08-17: **10 … 100 ms**, so the old 1 ms minimum was
-// wrong by a decade and the app read Attack far too fast at the bottom of its travel.
+// 1 … 100 ms with a CUBE taper. Read off EliteControl 1.2, 2026-08-17: min 1.0, noon 13.7, max 100.0.
 //
-// ⚠️ The TAPER is still unconfirmed, and one earlier reading in that session is known bad: Attack's
-// noon was reported as 261.4 ms, which cannot be true of a 10–100 ms control at all. Do not treat
-// that number as evidence about Attack.
+// The endpoints were right all along — an intermediate reading of "10.0" for the minimum was wrong and
+// briefly shipped as such. What was wrong was the taper: `1 + 99·(64/127)³ = 13.67` against a measured
+// 13.7, and that fit uses only the two ENDPOINTS, so noon is a genuine out-of-sample prediction rather
+// than a curve pulled through every point. Log gives 10.2 and square 26.1, so neither is close.
 //
-// Left on the log law rather than moved to sqMap with the two Release controls, because here the two
-// are nearly indistinguishable — noon is 31.9 ms under log and 32.9 ms under square, diverging by at
-// most 4.5 ms anywhere in the travel. That closeness cuts both ways: it is weak grounds to switch,
-// and it caps the cost of being wrong at a few ms of display error. One noon reading decides it.
-export const compAttackMs = (r: number): number => logMap(r, 10, 100); // 10 … 100 ms (taper unconfirmed)
+// ⚠️ Note the three time constants do NOT share one law, which was the tempting inference: Attack is a
+// cube over 1–100 while both Release controls are squares over 10–1000. Do not "unify" them.
+export const compAttackMs = (r: number): number => cubeMap(r, 1, 100); // 1 … 100 ms (hardware-confirmed)
 export const compReleaseMs = (r: number): number => sqMap(r, 10, 1000); // 10 … 1000 ms (hardware-confirmed)
 
 /* ── Gate (noise gate, on the Dynamics page) ─────────────────────────────────── */
