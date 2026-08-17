@@ -25,7 +25,7 @@ describe("unit calibration (measured vs EliteControl)", () => {
     expect(compRatio(127)).toBeCloseTo(20);
     expect(compOutputDb(0)).toBeCloseTo(-30);
     expect(compOutputDb(127)).toBeCloseTo(18);
-    expect(compAttackMs(0)).toBeCloseTo(1);
+    expect(compAttackMs(0)).toBeCloseTo(10);
     expect(compAttackMs(127)).toBeCloseTo(100);
     expect(compReleaseMs(0)).toBeCloseTo(10);
     expect(compReleaseMs(127)).toBeCloseTo(1000);
@@ -40,13 +40,14 @@ describe("unit calibration (measured vs EliteControl)", () => {
     expect(gateReleaseMs(64)).not.toBeCloseTo(101.8, 0);
   });
 
-  // Attack is NOT asserted at noon on purpose. The same session read it as 261.4 ms, which lies
-  // outside the 1–100 ms range units.ts records — so the endpoints themselves are in dispute and a
-  // midpoint assertion would bake in whichever guess we made. Only the endpoints we still believe
-  // are pinned, so this test fails loudly if someone quietly changes the range without a reading.
-  it("compressor Attack keeps its disputed 1–100 ms endpoints until they are re-read", () => {
-    expect(compAttackMs(0)).toBeCloseTo(1, 5);
+  // Attack's endpoints re-read as 10–100 ms (EliteControl 1.2, 2026-08-17) — the old 1 ms minimum was
+  // out by a decade. Its noon is deliberately NOT asserted: the only midpoint reading taken that
+  // session was 261.4 ms, which cannot describe a 10–100 ms control, so there is no trustworthy
+  // evidence about the taper yet and an assertion here would just pin whichever law we guessed.
+  it("compressor Attack spans 10–100 ms, not 1–100", () => {
+    expect(compAttackMs(0)).toBeCloseTo(10, 5);
     expect(compAttackMs(127)).toBeCloseTo(100, 5);
+    expect(compAttackMs(0)).not.toBeCloseTo(1, 5);
   });
 
   it("compressor ratio + threshold sit near noon at their EliteControl mid read-outs", () => {
