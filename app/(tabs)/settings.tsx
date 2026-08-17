@@ -1,5 +1,6 @@
 /** Settings / about. RN app surface. */
 import { Ionicons } from "@expo/vector-icons";
+import Constants from "expo-constants";
 import { Link } from "expo-router";
 import type { ReactNode } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -76,7 +77,9 @@ export default function Settings() {
         </Text>
       </Card>
       <Card title="Version">
-        <Text style={{ color: theme.textDim }}>1.0.0 · edit live over MIDI (USB or Bluetooth)</Text>
+        <Text style={{ color: theme.textDim }}>
+          {Constants.expoConfig?.version ?? "unknown"} · edit live over MIDI (USB or Bluetooth)
+        </Text>
       </Card>
     </ScrollView>
   );
