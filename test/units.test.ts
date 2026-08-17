@@ -36,6 +36,27 @@ describe("unit calibration (measured vs EliteControl)", () => {
     expect(compThresholdDb(64)!).toBeCloseTo(-30, 0);
   });
 
+  // Read off EliteControl 1.2 beside a real pedal, 2026-08-17 (sansapp#47 item 4). The endpoints
+  // alone can't pin a taper — 10 and 1000 are the same under all three candidate laws — so the noon
+  // reading is the assertion that matters, and it is what caught the app under-reading Release by
+  // 2.6× through the middle of its travel.
+  it("compressor Release follows a square taper — 10 / 261.4 / 1000 ms", () => {
+    expect(compReleaseMs(0)).toBeCloseTo(10.0, 1);
+    expect(compReleaseMs(64)).toBeCloseTo(261.4, 1);
+    expect(compReleaseMs(127)).toBeCloseTo(1000.0, 1);
+    // The two laws it is not: linear noon = 505 ms, log noon = 101.8 ms.
+    expect(compReleaseMs(64)).not.toBeCloseTo(505, 0);
+    expect(compReleaseMs(64)).not.toBeCloseTo(101.8, 0);
+  });
+
+  // The protocol map said 1–16:1 and 50–5000 ms. The pedal says otherwise on both counts, so the
+  // screenshot calibration wins and the map's numbers are retired rather than reconciled.
+  it("compressor Ratio keeps the screenshot endpoints the protocol map disputed", () => {
+    expect(compRatio(127)).toBeCloseTo(20, 5); // not 16:1
+    expect(compReleaseMs(0)).toBeCloseTo(10, 5); // not 50 ms
+    expect(compReleaseMs(127)).toBeCloseTo(1000, 5); // not 5000 ms
+  });
+
   it("auto filter: bipolar level with centre bypass, 0–100% times", () => {
     expect(filterLevelPct(0)).toBe(-100);
     expect(filterLevelPct(127)).toBe(100);
