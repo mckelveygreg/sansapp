@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fftInPlace, magnitudeSpectrum } from "../src/dsp/fft";
 import { frequencyResponse, logGrid } from "../src/dsp/ir";
+import { generateIr } from "../src/dsp/generators";
 import { convolve, highpassImpulse, makeHighpassIr } from "../src/dsp/hpf";
 import { floatToPcm } from "../src/protocol/wav";
 
@@ -47,6 +48,35 @@ describe("frequency response", () => {
   it("never returns non-finite values, even for a degenerate IR (guards the iOS SVG graph)", () => {
     const db = frequencyResponse([Number.NaN, Infinity, -Infinity, 0, 1], grid);
     for (const v of db) expect(Number.isFinite(v)).toBe(true);
+  });
+
+  // The IR Studio bug reported on hardware 2026-08-17: a low-pass cornered below the 700–1400 Hz
+  // reference band has that whole band in its STOPBAND, so band-normalizing references the stopband
+  // and lifts the passband far above 0 dB — the lows pin to the top of the graph and the preview is
+  // useless for the filter it is previewing.
+  const lowpassAt = (fc: number) =>
+    generateIr("lowpass", { fc, q: 0.707, stages: 1, taps: 2000, sampleRate: 44100 });
+
+  it("band-normalizing a sub-band low-pass pushes the passband way above 0 dB", () => {
+    const db = frequencyResponse(lowpassAt(200), grid, { normalizeBand: [700, 1400] });
+    const lows = db.filter((_, k) => grid[k]! < 100);
+    expect(Math.max(...lows)).toBeGreaterThan(12); // the symptom, pinned so the fix can't regress
+  });
+
+  it("normalizePeak keeps the peak at 0 dB and everything else below it", () => {
+    for (const fc of [200, 1000, 5000]) {
+      const db = frequencyResponse(lowpassAt(fc), grid, { normalizePeak: true });
+      expect(Math.max(...db)).toBeCloseTo(0, 6);
+      for (const v of db) expect(v).toBeLessThanOrEqual(1e-9);
+    }
+  });
+
+  it("normalizePeak takes precedence over normalizeBand", () => {
+    const both = frequencyResponse(lowpassAt(200), grid, {
+      normalizePeak: true,
+      normalizeBand: [700, 1400],
+    });
+    expect(Math.max(...both)).toBeCloseTo(0, 6);
   });
 });
 
