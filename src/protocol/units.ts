@@ -49,10 +49,16 @@ export const compThresholdLabel = (r: number): string => {
 };
 export const compRatio = (r: number): number => lin(r, 1, 20); // 1.0:1 … 20.0:1 (hardware-confirmed)
 export const compOutputDb = (r: number): number => lin(r, -30, 18); // −30.0 … +18.0 dB
-// ⚠️ Attack's SHAPE is still only a two-point calibration — the same gap that hid Release's. Its
-// endpoints are right; whether the middle is log or square wants one noon reading (log → 10.2 ms,
-// square → 26.1 ms). Left as log until someone reads it.
-export const compAttackMs = (r: number): number => logMap(r, 1, 100); // 1 … 100 ms (log, unconfirmed)
+// ⚠️ UNRESOLVED, and left alone deliberately. The 2026-08-17 EliteControl reading put Attack's noon
+// at 261.4 ms — which is not merely a different taper, it is OUTSIDE the 1–100 ms range recorded
+// here, so one of the two is wrong about the ENDPOINTS and a midpoint can't tell us which.
+//
+// 261.4 ms is also exactly what a square taper over 10–1000 ms gives, i.e. the same law and range as
+// both Release controls — so "all three time constants share one law" is the obvious reading. It is
+// also exactly the kind of inference that produced the bug this comment sits next to. Changing a
+// range on the strength of a single midpoint would repeat the two-point mistake in the other
+// direction. Needs Attack's own min and max read off EliteControl before it moves.
+export const compAttackMs = (r: number): number => logMap(r, 1, 100); // 1 … 100 ms (DISPUTED — see above)
 export const compReleaseMs = (r: number): number => sqMap(r, 10, 1000); // 10 … 1000 ms (hardware-confirmed)
 
 /* ── Gate (noise gate, on the Dynamics page) ─────────────────────────────────── */
@@ -64,11 +70,9 @@ export const gateThresholdLabel = (r: number): string => {
   return db === null ? "Bypass" : `${db.toFixed(1)} dB`;
 };
 export const gateRatio = (r: number): number => lin(r, 1, 10); // 1.0:1 … 10.0:1
-// ⚠️ Deliberately NOT changed with the compressor's. It shares Release's endpoints and was
-// calibrated the same two-point way, so it is a prime suspect for the same square taper — but that
-// is a guess, and guessing is what put the wrong law here in the first place. One noon reading
-// decides it (log → 101.8 ms, square → 261.4 ms).
-export const gateReleaseMs = (r: number): number => logMap(r, 10, 1000); // 10 … 1000 ms (log, unconfirmed)
+// The noon reading came back 261.4 ms (EliteControl 1.2, 2026-08-17) — the square prediction to the
+// decimal, not the log one's 101.8. Same law as the compressor's Release, same endpoints.
+export const gateReleaseMs = (r: number): number => sqMap(r, 10, 1000); // 10 … 1000 ms (hardware-confirmed)
 
 /* ── Auto Filter (envelope wah) ──────────────────────────────────────────────── */
 // Level is bipolar −100 … +100 %, with the centre detent (raw 64) reading "Bypass".
