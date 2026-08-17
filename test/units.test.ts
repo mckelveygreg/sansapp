@@ -9,6 +9,7 @@ import {
   eqGainDb,
   filterLevelLabel,
   filterLevelPct,
+  gateReleaseMs,
   filterTimePct,
   fmtHz,
   sweepFreqHz,
@@ -28,6 +29,24 @@ describe("unit calibration (measured vs EliteControl)", () => {
     expect(compAttackMs(127)).toBeCloseTo(100);
     expect(compReleaseMs(0)).toBeCloseTo(10);
     expect(compReleaseMs(127)).toBeCloseTo(1000);
+  });
+
+  // Same reading session as the compressor's Release, same answer to the decimal: the gate's Release
+  // shares both the range and the square law. Read off EliteControl 1.2, 2026-08-17.
+  it("gate Release follows the same square taper — noon is 261.4 ms, not the log 101.8", () => {
+    expect(gateReleaseMs(0)).toBeCloseTo(10.0, 1);
+    expect(gateReleaseMs(64)).toBeCloseTo(261.4, 1);
+    expect(gateReleaseMs(127)).toBeCloseTo(1000.0, 1);
+    expect(gateReleaseMs(64)).not.toBeCloseTo(101.8, 0);
+  });
+
+  // Attack is NOT asserted at noon on purpose. The same session read it as 261.4 ms, which lies
+  // outside the 1–100 ms range units.ts records — so the endpoints themselves are in dispute and a
+  // midpoint assertion would bake in whichever guess we made. Only the endpoints we still believe
+  // are pinned, so this test fails loudly if someone quietly changes the range without a reading.
+  it("compressor Attack keeps its disputed 1–100 ms endpoints until they are re-read", () => {
+    expect(compAttackMs(0)).toBeCloseTo(1, 5);
+    expect(compAttackMs(127)).toBeCloseTo(100, 5);
   });
 
   it("compressor ratio + threshold sit near noon at their EliteControl mid read-outs", () => {
