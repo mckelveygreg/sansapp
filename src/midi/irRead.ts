@@ -46,7 +46,7 @@ export const USER_IR_SLOTS = [7, 8] as const;
  * hardware probe 2026-07-17). `(a, b)` is the flat 14-bit IR record selector (MSB, LSB) — the same
  * addressing as an upload header: the library slots are bank `a=0x02` ({@link IR_READ_AB}).
  */
-function readIrPacked(
+export function readIrPacked(
   session: DeviceSession,
   a: number,
   b: number,
