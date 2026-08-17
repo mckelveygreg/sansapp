@@ -20,6 +20,7 @@ import {
   irCurveAt,
   irSourceAt,
   libraryRecordAt,
+  recordsInvalidatedByUpload,
 } from "../src/protocol/irSelect";
 
 /** A 256-byte preset blob carrying slot 7's pointer pair at 0x57/0x58 and slot 8's at 0x59/0x5A. */
@@ -140,6 +141,39 @@ describe("irCurveAt: the record-keyed curve lookup both pages share", () => {
     // not the record that happens to be cached for its neighbour.
     const presetSeven = blobWithPairs([0, 7]);
     expect(cabResponseAt(112, irCurveAt(presetSeven, BOTH_ON, dbOf), flat)).toBeNull();
+  });
+
+  // The reported symptom (hardware, 2026-08-17): "uploading to slot 8 cleared slot 7". An audit of the
+  // pedal afterwards found BOTH records intact — preset 1 still held its high-pass on record 0 and its
+  // low-pass on record 128 — so nothing was lost on the device. The cache was what got cleared, by an
+  // invalidation rule that dropped every private entry instead of the ones the upload wrote.
+  describe("recordsInvalidatedByUpload", () => {
+    it("keeps the OTHER slot's record — the slot-7-vanishes-on-a-slot-8-upload bug", () => {
+      // Upload to slot 8 of program 0. Slot 7's record for that preset is 0.
+      const stale = recordsInvalidatedByUpload(8, 128);
+      expect(stale.has(0)).toBe(false); // slot 7's cab survives
+      expect(stale.has(128)).toBe(true); // the destination is re-filed by the caller
+      expect(stale.has(255)).toBe(true); // slot 8's scratch record
+      expect(stale.has(127)).toBe(true); // slot 7's scratch record (the backup overwrites it)
+    });
+
+    it("is symmetric — a slot-7 upload keeps slot 8's record", () => {
+      const stale = recordsInvalidatedByUpload(7, 0);
+      expect(stale.has(128)).toBe(false); // slot 8's cab for program 0 survives
+      expect(stale.has(0)).toBe(true);
+    });
+
+    it("never invalidates a library record, whatever the destination", () => {
+      for (const slot of [7, 8] as const) {
+        const stale = recordsInvalidatedByUpload(slot, undefined);
+        for (const r of [256, 260, 262, 263]) expect(stale.has(r)).toBe(false);
+      }
+    });
+
+    it("still drops both scratch records when the recall failed and there is no destination", () => {
+      const stale = recordsInvalidatedByUpload(8, undefined);
+      expect([...stale].sort((a, b) => a - b)).toEqual([127, 255]);
+    });
   });
 
   it("blends the two endpoints the pedal blends, each resolved on its own row's terms", () => {
