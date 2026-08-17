@@ -62,6 +62,7 @@ function Chip({
   active,
   dim,
   accent,
+  disabled,
   onPress,
   onLongPress,
 }: {
@@ -69,13 +70,15 @@ function Chip({
   active: boolean;
   dim?: boolean;
   accent?: boolean;
+  /** No pedal: selecting a model can't apply, but a long-press (delete a saved amp) still can. */
+  disabled?: boolean;
   onPress: () => void;
   onLongPress?: () => void;
 }) {
   const border = active ? theme.accent : accent ? theme.amber : theme.panelEdge;
   return (
     <Pressable
-      onPress={onPress}
+      onPress={disabled ? undefined : onPress}
       onLongPress={onLongPress}
       style={{
         paddingHorizontal: 13,
@@ -84,7 +87,7 @@ function Chip({
         borderWidth: 1,
         minWidth: 96,
         alignItems: "center",
-        opacity: dim ? 0.5 : 1,
+        opacity: disabled || dim ? 0.5 : 1,
         borderColor: border,
         backgroundColor: active ? theme.accent : theme.panel,
       }}
@@ -250,6 +253,7 @@ export default function Amp() {
               label={name}
               active={active === name}
               dim={!hasAmpBundle(name)}
+              disabled={!ready}
               onPress={() => void applyBundle(name, AMP_BUNDLES[name] ?? [])}
             />
           ))}
@@ -263,6 +267,7 @@ export default function Amp() {
                 label={c.name}
                 active={active === c.name}
                 accent
+                disabled={!ready}
                 onPress={() => void applyBundle(c.name, c.bytes)}
                 onLongPress={() => deleteCustom(c.name)}
               />
@@ -330,6 +335,7 @@ export default function Amp() {
               ghost={baseline[id]}
               display={`${rawToPct(values[id] ?? 64)}%`}
               onChange={set(id, PARAMS[id].paramId ?? 0)}
+              disabled={!ready}
             />
           ))}
         </View>

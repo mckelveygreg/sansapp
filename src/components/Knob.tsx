@@ -25,22 +25,44 @@ export interface KnobProps {
   onPress?: () => void;
   /** The preset's baseline value; when it differs from `value`, shows a ghost tick + amber label. */
   ghost?: number;
+  /**
+   * No pedal to send to: the knob renders dimmed and won't change its value (no drag, no
+   * snap-back-to-preset). A tap still opens the deep page — navigation isn't an edit. Without this a
+   * knob turns and updates the store while nothing reaches the pedal, and the next connect's
+   * `loadCurrent` silently overwrites what the user did.
+   */
+  disabled?: boolean;
 }
 
 const TICKS = 11;
 const TAP_SLOP = 5; // px of movement below which a gesture counts as a tap, not a drag
+/** Opacity for a knob with nothing on the other end. */
+const DISABLED_OPACITY = 0.45;
 
 /** Fire a haptic on device only (no-op / swallowed on web). */
 const haptic = (fn: () => Promise<unknown>) => {
   if (Platform.OS !== "web") void fn().catch(() => {});
 };
 
-export function Knob({ label, value, onChange, size = 84, display, onPress, ghost }: KnobProps) {
+export function Knob({
+  label,
+  value,
+  onChange,
+  size = 84,
+  display,
+  onPress,
+  ghost,
+  disabled,
+}: KnobProps) {
   const startValue = useRef(value);
   const valueRef = useRef(value);
   valueRef.current = value;
   const ghostRef = useRef(ghost);
   ghostRef.current = ghost;
+  // The PanResponder is built once, so its handlers must read `disabled` through a ref — a captured
+  // prop would freeze at whatever the connection state was on first render.
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
   const moved = useRef(false);
   const longFired = useRef(false);
   const longTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -51,15 +73,20 @@ export function Knob({ label, value, onChange, size = 84, display, onPress, ghos
       // Claim the touch at the capture phase so a parent ScrollView never gets it first, and never
       // hand it back once grabbed. Belt-and-suspenders with KnobScroll (which also hard-disables
       // scrolling via uiStore.adjusting while dragging) so a knob drag adjusts, never scrolls.
+      //
+      // A DISABLED knob still claims the touch (a tap must still open its deep page) but gives it back
+      // on request and never locks KnobScroll — otherwise a swipe that happens to start on a knob would
+      // freeze a page that's mostly knobs, which is exactly the disconnected editor.
       onStartShouldSetPanResponderCapture: () => true,
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderTerminationRequest: () => false,
-      onShouldBlockNativeResponder: () => true,
+      onPanResponderTerminationRequest: () => disabledRef.current === true,
+      onShouldBlockNativeResponder: () => !disabledRef.current,
       onPanResponderGrant: () => {
         startValue.current = valueRef.current;
         moved.current = false;
         longFired.current = false;
+        if (disabledRef.current) return; // inert: no bubble, no scroll lock, no snap-back-to-preset
         setActive(true);
         uiStore.getState().setAdjusting(true); // lock the surrounding KnobScroll
         haptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
@@ -76,6 +103,7 @@ export function Knob({ label, value, onChange, size = 84, display, onPress, ghos
       onPanResponderMove: (_e, g) => {
         if (Math.abs(g.dy) <= TAP_SLOP && Math.abs(g.dx) <= TAP_SLOP) return; // ignore jitter / taps
         moved.current = true;
+        if (disabledRef.current) return; // a drag on an inert knob does nothing (and isn't a tap)
         if (longTimer.current) {
           clearTimeout(longTimer.current);
           longTimer.current = null;
@@ -144,6 +172,7 @@ export function Knob({ label, value, onChange, size = 84, display, onPress, ghos
           alignItems: "center",
           justifyContent: "center",
           transform: [{ scale: active ? 1.08 : 1 }],
+          opacity: disabled ? DISABLED_OPACITY : 1,
         }}
       >
         {onPress ? (

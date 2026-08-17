@@ -123,6 +123,7 @@ export default function ParametricEq() {
                 ghost={ghostOf(`${b.key}Gain`)}
                 display={`${eqGainDb(read(`${b.key}Gain`)).toFixed(0)}dB`}
                 onChange={set(`${b.key}Gain`, b.ids.gain)}
+                disabled={!ready}
               />
               <Knob
                 label="Freq"
@@ -130,6 +131,7 @@ export default function ParametricEq() {
                 ghost={ghostOf(`${b.key}Freq`)}
                 display={fmtHz(design.freqHz)}
                 onChange={set(`${b.key}Freq`, b.ids.freq)}
+                disabled={!ready}
               />
               <Knob
                 label="Q"
@@ -137,6 +139,7 @@ export default function ParametricEq() {
                 ghost={ghostOf(`${b.key}Q`)}
                 display={design.q.toFixed(1)}
                 onChange={set(`${b.key}Q`, b.ids.q)}
+                disabled={!ready}
               />
             </View>
           </View>

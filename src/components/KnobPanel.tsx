@@ -11,6 +11,8 @@ export interface KnobPanelProps {
   /** Preset baseline per knob — drives each Knob's "changed" highlight + ghost tick. */
   baseline: Partial<Record<ParamId, number>>;
   onChange: (id: ParamId, value: number) => void;
+  /** No pedal connected: knobs render dimmed and inert (a tap still opens the deep page). */
+  disabled?: boolean;
 }
 
 // Knobs that have a deep-edit page: tapping the knob opens it (the Knob shows a chevron badge).
@@ -35,7 +37,7 @@ const DEEP_LINK: Partial<Record<ParamId, string>> = {
 };
 
 /** A wrapping grid of knobs bound to `values` — used by the editor and Red Zone screens. */
-export function KnobPanel({ ids, values, baseline, onChange }: KnobPanelProps) {
+export function KnobPanel({ ids, values, baseline, onChange, disabled }: KnobPanelProps) {
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap, justifyContent: "center" }}>
       {ids.map((id) => {
@@ -49,6 +51,7 @@ export function KnobPanel({ ids, values, baseline, onChange }: KnobPanelProps) {
             ghost={baseline[id]}
             onChange={(v) => onChange(id, v)}
             onPress={href ? () => router.push(href) : undefined}
+            disabled={disabled}
           />
         );
       })}

@@ -64,6 +64,7 @@ export default function Ambience() {
             return (
               <Pressable
                 key={name}
+                disabled={!ready}
                 onPress={() => selectType(i)}
                 style={{
                   paddingHorizontal: 13,
@@ -72,6 +73,7 @@ export default function Ambience() {
                   borderWidth: 1,
                   borderColor: active ? theme.accent : theme.panelEdge,
                   backgroundColor: active ? theme.accent : theme.panel,
+                  opacity: ready ? 1 : 0.45,
                 }}
               >
                 <Text style={{ color: active ? "#fff" : theme.textDim, fontSize: 13 }}>{name}</Text>
@@ -98,6 +100,7 @@ export default function Ambience() {
             ghost={baseline.ambiance}
             display={`${rawToPct(level)}%`}
             onChange={onLevel}
+            disabled={!ready}
           />
           <Knob
             label="Decay"
@@ -105,6 +108,7 @@ export default function Ambience() {
             ghost={baseline.ambienceDecay}
             display={`${rawToPct(decay)}%`}
             onChange={onDecay}
+            disabled={!ready}
           />
           {isEcho(type) ? (
             <Knob
@@ -113,6 +117,7 @@ export default function Ambience() {
               ghost={baseline.ambienceTime}
               display={`${ms(time)}ms`}
               onChange={onTime}
+              disabled={!ready}
             />
           ) : null}
         </View>

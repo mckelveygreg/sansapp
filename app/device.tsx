@@ -17,10 +17,16 @@ import {
   SPECIAL_FUNCTIONS,
   TUNER_DETUNE,
   tunerHz,
+  withDisengagePots,
   withSetting,
   type SpecialFunction,
 } from "../src/protocol/settings";
 import { getSession, pedalStore } from "../src/midi/pedal";
+
+/** Opacity for a control the pedal isn't there to answer for. */
+const DIM = 0.4;
+/** Stand-in for a numeric setting we haven't read off the pedal yet. */
+const UNKNOWN = "—";
 
 function Row({
   label,
@@ -58,13 +64,23 @@ function Row({
   );
 }
 
-function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+function Toggle({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: boolean;
+  disabled: boolean;
+  onChange: (v: boolean) => void;
+}) {
   return (
     <Switch
       value={value}
+      disabled={disabled}
       onValueChange={onChange}
       trackColor={{ false: theme.panelEdge, true: theme.accent }}
       thumbColor="#ffffff"
+      style={{ opacity: disabled ? DIM : 1 }}
     />
   );
 }
@@ -72,10 +88,12 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
 function Segmented({
   options,
   value,
+  disabled,
   onChange,
 }: {
   options: readonly string[];
   value: number;
+  disabled: boolean;
   onChange: (v: number) => void;
 }) {
   return (
@@ -85,14 +103,17 @@ function Segmented({
         borderColor: theme.panelEdge,
         borderWidth: 1,
         borderRadius: 8,
+        opacity: disabled ? DIM : 1,
       }}
     >
       {options.map((opt, i) => {
-        const active = i === value;
+        // Nothing is "selected" until the pedal has told us what it holds — highlighting a guess
+        // would read as the pedal's real setting.
+        const active = !disabled && i === value;
         return (
           <Text
             key={opt}
-            onPress={() => onChange(i)}
+            onPress={disabled ? undefined : () => onChange(i)}
             style={{
               paddingHorizontal: 12,
               paddingVertical: 6,
@@ -114,12 +135,14 @@ function Stepper({
   value,
   min,
   max,
+  disabled,
   format,
   onChange,
 }: {
   value: number;
   min: number;
   max: number;
+  disabled: boolean;
   format: (v: number) => string;
   onChange: (v: number) => void;
 }) {
@@ -127,6 +150,7 @@ function Stepper({
   const Btn = ({ label, d }: { label: string; d: number }) => (
     <Pressable
       onPress={() => step(d)}
+      disabled={disabled}
       style={{
         width: 34,
         height: 34,
@@ -135,6 +159,7 @@ function Stepper({
         borderWidth: 1,
         alignItems: "center",
         justifyContent: "center",
+        opacity: disabled ? DIM : 1,
       }}
     >
       <Text style={{ color: theme.text, fontSize: 18 }}>{label}</Text>
@@ -144,9 +169,14 @@ function Stepper({
     <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
       <Btn label="−" d={-1} />
       <Text
-        style={{ color: theme.text, width: 62, textAlign: "center", fontVariant: ["tabular-nums"] }}
+        style={{
+          color: disabled ? theme.textDim : theme.text,
+          width: 62,
+          textAlign: "center",
+          fontVariant: ["tabular-nums"],
+        }}
       >
-        {format(value)}
+        {disabled ? UNKNOWN : format(value)}
       </Text>
       <Btn label="+" d={1} />
     </View>
@@ -231,31 +261,25 @@ function ManualCard() {
   );
 }
 
-// Initial values from the captured settings block (final state).
-const INITIAL: Record<string, number> = {
-  patchOffset: 1,
-  midiMapping: 1,
-  midiThru: 1,
-  midiCcMode: 0, // off4, off by default
-  safeLevelMode: 0, // off17, off by default
-  disengagePots: 1,
-  presetProtection: 0,
-  cabinetBypass: 1,
-  midiChannel: 2,
-  tunerFreq: 0x11,
-  tunerDetune: 2,
-};
-
 export default function Device() {
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
-  const [vals, setVals] = useState<Record<string, number>>(INITIAL);
+  // NULL until the pedal has told us what it actually holds. These are the pedal's settings, not the
+  // app's — there is no sensible local default, and showing plausible-looking defaults invites the
+  // user to "change" a setting that was never read and can't be written.
+  const [vals, setVals] = useState<Record<string, number> | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   // The pedal's current settings block (256 B). A write sends the WHOLE block, so we start from
   // the real one and change a single byte — never clobbering the bytes we don't understand.
   const block = useRef<Uint8Array | null>(null);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready) {
+      // The link dropped: the block we were compounding edits onto is no longer known to match the
+      // pedal, so drop it rather than resume writing against a stale copy on reconnect.
+      block.current = null;
+      setVals(null);
+      return;
+    }
     const session = getSession();
     if (!session) return;
     let live = true;
@@ -266,41 +290,58 @@ export default function Device() {
         block.current = b;
         setVals(Object.fromEntries(SPECIAL_FUNCTIONS.map((fn) => [fn.id, b[fn.offset] ?? 0])));
       })
-      .catch(() => {});
+      .catch((e: unknown) => {
+        if (!live) return;
+        setStatus(
+          `Couldn't read the pedal's settings — ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
     return () => {
       live = false;
     };
   }, [ready]);
 
+  /** A control is only live once the pedal is connected AND its real block has been read. */
+  const editable = ready && vals !== null && block.current !== null;
+
   const set = (fn: SpecialFunction, v: number) => {
-    const prevVal = vals[fn.id] ?? 0;
+    const prevVal = vals?.[fn.id] ?? 0;
     const prevBlock = block.current;
-    setVals((s) => ({ ...s, [fn.id]: v }));
-    if (!ready || !prevBlock) return;
+    if (!editable || !prevBlock) return; // no pedal / no real block: nothing to change
     const session = getSession();
     if (!session) return;
-    const next = withSetting(prevBlock, fn.offset, v);
+    setVals((s) => (s ? { ...s, [fn.id]: v } : s));
+    // Disengage All Pots is stored as a PAIR — byte 7 plus its inverse at byte 15 — and the pedal
+    // expects both. Every other function is a single byte.
+    const next =
+      fn.id === "disengagePots"
+        ? withDisengagePots(prevBlock, v !== 0)
+        : withSetting(prevBlock, fn.offset, v);
     block.current = next; // optimistic — each further toggle builds on this
     setStatus(null);
     void session.writeBlock(0x52, SETTINGS_BLOCK, next).catch((e: unknown) => {
       // The write failed — REVERT the optimistic block byte + UI. Otherwise the local block silently
       // diverges from the pedal and every later toggle compounds the change onto bytes it never took.
       block.current = prevBlock;
-      setVals((s) => ({ ...s, [fn.id]: prevVal }));
+      setVals((s) => (s ? { ...s, [fn.id]: prevVal } : s));
       setStatus(`Couldn't save "${fn.label}" — ${e instanceof Error ? e.message : String(e)}`);
     });
   };
 
   const control = (fn: SpecialFunction): ReactNode => {
-    const v = vals[fn.id] ?? 0;
+    const v = vals?.[fn.id] ?? 0;
+    const off = !editable;
     if (fn.kind === "toggle")
-      return <Toggle value={v !== 0} onChange={(on) => set(fn, on ? 1 : 0)} />;
+      return (
+        <Toggle value={!off && v !== 0} disabled={off} onChange={(on) => set(fn, on ? 1 : 0)} />
+      );
     if (fn.kind === "channel")
       return (
         <Stepper
           value={v}
           min={0}
           max={16}
+          disabled={off}
           format={(n) => (n === 0 ? "OMNI" : `Ch ${n}`)}
           onChange={(n) => set(fn, n)}
         />
@@ -311,11 +352,14 @@ export default function Device() {
           value={v}
           min={2}
           max={22}
+          disabled={off}
           format={(n) => `${tunerHz(n)} Hz`}
           onChange={(n) => set(fn, n)}
         />
       );
-    return <Segmented options={TUNER_DETUNE} value={v} onChange={(n) => set(fn, n)} />;
+    return (
+      <Segmented options={TUNER_DETUNE} value={v} disabled={off} onChange={(n) => set(fn, n)} />
+    );
   };
 
   const descOf = (fn: SpecialFunction): string =>
@@ -338,9 +382,11 @@ export default function Device() {
       >
         <Text style={{ color: theme.textDim, fontSize: 12, lineHeight: 18 }}>
           The pedal's Special Page Functions.{" "}
-          {ready
-            ? "Live — changes write to the pedal (only the changed byte; the rest of the block is preserved)."
-            : "Connect to read and write these."}
+          {!ready
+            ? "Connect a pedal to read and change these — they're stored in the pedal, not in the app."
+            : editable
+              ? "Live — changes write to the pedal (only the changed byte; the rest of the block is preserved)."
+              : "Reading the pedal's settings…"}
         </Text>
       </View>
 
