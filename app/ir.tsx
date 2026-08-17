@@ -42,7 +42,7 @@ import { loadIrCache, saveIrCache } from "../src/midi/irCache";
 import { uploadCustomIr } from "../src/midi/irImport";
 import { IR_READ_AB, USER_IR_SLOTS, readIr } from "../src/midi/irRead";
 import { sendParam } from "../src/midi/liveParam";
-import { getController, getSession, pedalStore } from "../src/midi/pedal";
+import { getController, getSession, pedalCacheKey, pedalStore } from "../src/midi/pedal";
 import { buildPresetBlob } from "../src/protocol/buildPreset";
 import { readIrPointer } from "../src/protocol/irPointer";
 import {
@@ -145,6 +145,7 @@ const persist = (map: Record<number, Pulled>): void =>
     Object.fromEntries(
       Object.entries(map).map(([k, v]) => [Number(k), { name: v.name, samples: v.ir }]),
     ),
+    pedalCacheKey(), // tag the file with the pedal these records came from
   );
 
 function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
@@ -479,7 +480,7 @@ export default function IrStudio() {
   // Load cached curves on mount so we don't re-read the pedal every visit — Refresh re-pulls.
   useEffect(() => {
     void (async () => {
-      const cached = await loadIrCache();
+      const cached = await loadIrCache(pedalCacheKey());
       if (!cached) return;
       const next: Record<number, Pulled> = {};
       for (const [record, s] of Object.entries(cached)) {

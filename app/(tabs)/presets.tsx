@@ -6,25 +6,32 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, FlatList, Pressable, Text, TextInput, View } from "react-native";
 import { useStore } from "zustand";
-import { readAllPresets } from "../../src/device/library";
+import { readAllPresets, readPresets } from "../../src/device/library";
 import { radius, theme } from "../../src/components/theme";
 import { recallWithUnsavedGuard } from "../../src/components/unsavedGuard";
 import { exportPreset, importPresetInto } from "../../src/midi/bundleIo";
 import { pickFileBytes } from "../../src/midi/exportFile";
 import {
+  cachedPresetChecksums,
   copyPreset,
   getSession,
+  invalidateSlotChecksum,
+  noteSlotChecksum,
   pedalStore,
   renamePreset,
   saveCurrentTo,
   swapPresets,
 } from "../../src/midi/pedal";
+import { presetChecksum, staleSlots } from "../../src/protocol/identity";
+import { PRESET_SLOT_COUNT } from "../../src/protocol/constants";
 
 export default function Presets() {
   const slot = useStore(pedalStore, (s) => s.slot);
   const connection = useStore(pedalStore, (s) => s.connection);
   const names = useStore(pedalStore, (s) => s.names); // cached in the store; survives tab switches
   const [progress, setProgress] = useState<number | null>(null);
+  /** How many slots the sync in progress is reading — 128 for a full sync, fewer for a delta. */
+  const [total, setTotal] = useState(PRESET_SLOT_COUNT);
   const [pending, setPending] = useState<{ kind: "copy" | "swap"; from: number } | null>(null);
   const [query, setQuery] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -122,6 +129,7 @@ export default function Presets() {
               const picked = await pickFileBytes();
               if (!picked) return;
               await importPresetInto(session, item, picked.bytes);
+              invalidateSlotChecksum(item); // that slot's contents are no longer what we cached
               setMsg(`Imported ${picked.name} → slot ${item + 1}`);
             } catch (e) {
               setMsg(e instanceof Error ? e.message : String(e));
@@ -138,17 +146,22 @@ export default function Presets() {
     return String(i + 1).includes(q) || (names[i]?.toLowerCase().includes(q) ?? false);
   });
 
-  const syncNames = useCallback(async () => {
+  /** Read every slot off the pedal and replace the cached names wholesale (~35 s over Bluetooth). */
+  const fullSync = useCallback(async () => {
     const session = getSession();
     if (!session) return;
     setProgress(0);
+    setTotal(PRESET_SLOT_COUNT);
     // try/finally so a mid-sync failure (a dropped BLE reply that even the per-slot retry can't
-    // recover) can't wedge the button at "Reading… N/128" or leave `void syncNames()` rejecting
+    // recover) can't wedge the button at "Reading… N/128" or leave `void fullSync()` rejecting
     // unhandled. The error surfaces on the status line; progress always clears.
     try {
       const all = await readAllPresets(session, (done) => setProgress(done));
       const map: Record<number, string> = {};
-      for (const { slot: s, preset } of all) map[s] = preset.name?.trim() || `Preset ${s + 1}`;
+      for (const { slot: s, preset } of all) {
+        map[s] = preset.name?.trim() || `Preset ${s + 1}`;
+        noteSlotChecksum(s, presetChecksum(preset.raw));
+      }
       pedalStore.getState().setNames(map); // cache in the store (shared with the Editor, across tabs)
       setMsg("Synced names from the pedal.");
     } catch (e) {
@@ -158,8 +171,48 @@ export default function Presets() {
     }
   }, []);
 
-  // Auto-sync names from the pedal once per connection — but only if they aren't already cached
-  // (they live in each preset's blob, so this reads all 128 ~35s over Bluetooth, with progress).
+  /**
+   * Bring the cached names up to date using the pedal's own per-preset checksum table: one 256-byte
+   * read says which slots changed since we cached them, and only those are re-read. A pedal whose bank
+   * hasn't been touched costs a single read instead of 128 (~35 s over Bluetooth).
+   *
+   * Falls back to a full sync when the pedal didn't give us a table (a dropped or corrupt handshake
+   * read) or when nothing is cached yet.
+   */
+  const deltaSync = useCallback(async () => {
+    const session = getSession();
+    if (!session) return;
+    const table = session.presetChecksums;
+    const cached = cachedPresetChecksums();
+    if (!table || Object.keys(cached).length === 0) {
+      await fullSync();
+      return;
+    }
+    const stale = staleSlots(table, cached);
+    if (stale.length === 0) return; // the cached bank already matches the pedal
+    setProgress(0);
+    setTotal(stale.length);
+    try {
+      const read = await readPresets(session, stale, (done) => setProgress(done));
+      const map = { ...pedalStore.getState().names };
+      for (const { slot: s, preset } of read) {
+        map[s] = preset.name?.trim() || `Preset ${s + 1}`;
+        noteSlotChecksum(s, presetChecksum(preset.raw));
+      }
+      pedalStore.getState().setNames(map);
+      setMsg(
+        `Updated ${stale.length} preset${stale.length === 1 ? "" : "s"} changed on the pedal.`,
+      );
+    } catch (e) {
+      setMsg(`Couldn't update names — ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setProgress(null);
+    }
+  }, [fullSync]);
+
+  // Reconcile with the pedal once per connection. This used to run only when NOTHING was cached, so a
+  // preset renamed at the pedal showed its old name forever; the checksum table makes reconciling cheap
+  // enough to do on every connect.
   const autoSynced = useRef(false);
   useEffect(() => {
     if (!ready) {
@@ -168,9 +221,9 @@ export default function Presets() {
     }
     if (!autoSynced.current) {
       autoSynced.current = true;
-      if (Object.keys(pedalStore.getState().names).length === 0) void syncNames();
+      void deltaSync();
     }
-  }, [ready, syncNames]);
+  }, [ready, deltaSync]);
 
   function onRowPress(item: number) {
     if (pending == null) {
@@ -228,7 +281,7 @@ export default function Presets() {
         </View>
       ) : (
         <Pressable
-          onPress={syncNames}
+          onPress={fullSync}
           disabled={!ready || progress != null}
           style={{
             backgroundColor: ready ? theme.panel : theme.bg,
@@ -242,7 +295,7 @@ export default function Presets() {
           }}
         >
           <Text style={{ color: theme.text }}>
-            {progress != null ? `Reading… ${progress}/128` : "Sync names from pedal"}
+            {progress != null ? `Reading… ${progress}/${total}` : "Sync names from pedal"}
           </Text>
         </Pressable>
       )}

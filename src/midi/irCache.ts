@@ -35,6 +35,14 @@
  * the rule the IR page applies after an upload is: drop every private record from the cache, then
  * re-file the crafted samples under the record the saved preset now points at. Library records are
  * left alone.
+ *
+ * ## One pedal at a time
+ *
+ * Record numbers are only meaningful for the pedal they were pulled from — record 260 on another Elite
+ * holds that pedal's cab. So the file records the OWNER's serial (`src/protocol/identity.ts`) and a load
+ * for a different pedal discards it rather than showing the wrong cabs, costing one Pull. Unlike the
+ * preset-name cache this keeps a single pedal's worth: 2,400 samples per record is far too big to hoard
+ * a device map of.
  */
 import { Platform } from "react-native";
 
@@ -47,15 +55,17 @@ type IrRecords = Record<number, { name: string; samples: Float64Array }>;
 
 interface CacheFile {
   version: number;
+  /** Serial of the pedal these records came from; absent in files written before it was recorded. */
+  serial?: string | null;
   records: Record<number, { name: string; samples: number[] }>;
 }
 
-/** Save the pulled IRs, keyed by record. Best-effort; no-op on web. */
-export async function saveIrCache(records: IrRecords): Promise<void> {
+/** Save the pulled IRs, keyed by record, tagged with the pedal they came from. Best-effort; no-op on web. */
+export async function saveIrCache(records: IrRecords, serial: string | null): Promise<void> {
   if (Platform.OS === "web") return;
   try {
     const { File, Paths } = await import("expo-file-system");
-    const data: CacheFile = { version: VERSION, records: {} };
+    const data: CacheFile = { version: VERSION, serial, records: {} };
     for (const [record, s] of Object.entries(records)) {
       data.records[Number(record)] = { name: s.name, samples: Array.from(s.samples) };
     }
@@ -71,14 +81,21 @@ export async function saveIrCache(records: IrRecords): Promise<void> {
   }
 }
 
-/** Load cached IRs by record, or null if none / unreadable / stale version. No-op on web. */
-export async function loadIrCache(): Promise<IrRecords | null> {
+/**
+ * Load cached IRs by record, or null if none / unreadable / stale version / another pedal's. Pass the
+ * connected pedal's serial; null (nothing connected yet, or a pedal that didn't report one) accepts
+ * whatever is cached — the same best-effort behavior as before serials were recorded.
+ */
+export async function loadIrCache(serial: string | null): Promise<IrRecords | null> {
   if (Platform.OS === "web") return null;
   try {
     const { File, Paths } = await import("expo-file-system");
     const buf = await new File(Paths.document, FILE).arrayBuffer(); // throws if missing
     const parsed = JSON.parse(new TextDecoder().decode(buf)) as CacheFile;
     if (parsed.version !== VERSION || !parsed.records) return null;
+    // Known to belong to a DIFFERENT pedal: its record numbers name that pedal's cabs, so showing them
+    // here would be the cross-pedal version of the sansapp#68 leak. An untagged file is adopted.
+    if (parsed.serial && serial && parsed.serial !== serial) return null;
     const out: IrRecords = {};
     for (const [record, s] of Object.entries(parsed.records)) {
       out[Number(record)] = { name: s.name, samples: Float64Array.from(s.samples) };

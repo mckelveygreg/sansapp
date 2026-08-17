@@ -10,7 +10,9 @@
  */
 
 import { PRESET_SIZE, PRESET_SLOT_COUNT } from "../protocol/constants";
+import { checksum14 } from "../protocol/messages";
 import type { PedalMessage } from "../protocol/messages";
+import { CHECKSUM_TABLE_BLOCK, SERIAL_BLOCK, SERIAL_OFFSET } from "../protocol/identity";
 import {
   PARAMS,
   TUNER_BLOB_OFFSET,
@@ -20,6 +22,9 @@ import {
 } from "../protocol/params";
 
 const EDIT_BUFFER_SLOT = 0x7f;
+
+/** The serial the emulated pedal reports — the observed shape, with no real unit's digits. */
+const EMULATED_SERIAL = "ELITE-PDL-01012026-000000";
 
 /** Live-set wire id of the Tuner param (index 0x34 → set-id 0x38). */
 const TUNER_SET_ID = liveSetId(TUNER_PARAM);
@@ -78,6 +83,38 @@ export class PedalModel {
   }
 
   /**
+   * A data block the app hasn't written, as the real pedal serves it. Two of the three the connect
+   * handshake reads carry real content on hardware, so a model that answered zeros made the emulator
+   * look like a pedal with no serial and an all-zero checksum table:
+   *
+   * - `0x0F` — the serial number field (synthetic here; the real one is per unit)
+   * - `0x03` — the per-preset checksum table, derived live from this model's own presets so it stays
+   *   truthful as writes land
+   *
+   * Everything else is zeros, matching what `tools/dump-blocks.ts` read off the pedal.
+   */
+  private synthesizeBlock(blockCode: number, index: number): Uint8Array {
+    const block = new Uint8Array(PRESET_SIZE);
+    if (blockCode !== 0x52) return block;
+    if (index === SERIAL_BLOCK) {
+      block.fill(0x20, SERIAL_OFFSET); // space-padded ASCII field
+      for (let i = 0; i < EMULATED_SERIAL.length; i++) {
+        block[SERIAL_OFFSET + i] = EMULATED_SERIAL.charCodeAt(i);
+      }
+      return block;
+    }
+    if (index === CHECKSUM_TABLE_BLOCK) {
+      this.presets.forEach((blob, slot) => {
+        const [hi, lo] = checksum14(blob);
+        block[slot * 2] = hi;
+        block[slot * 2 + 1] = lo;
+      });
+      return block;
+    }
+    return block;
+  }
+
+  /**
    * A staged dump just went out, so the applier at the tail of the drain runs: the recorded tuner
    * value becomes the audible one. Every dump-producing command is a nudge — including one for an
    * unrelated slot, which is why a tuner write left unpaired is a landmine.
@@ -101,7 +138,7 @@ export class PedalModel {
             kind: "block",
             blockCode,
             index: msg.index,
-            data: stored ? stored.slice() : new Uint8Array(PRESET_SIZE),
+            data: stored ? stored.slice() : this.synthesizeBlock(blockCode, msg.index),
             checksumOk: true,
           },
         ];

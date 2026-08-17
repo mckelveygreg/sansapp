@@ -344,15 +344,37 @@ same time; there is no separate bypass param — the footswitch bypass handlers 
 
 Read straight off the pedal via `tools/dump-blocks.ts` (config `05 6A`→`6B`, data `05 55`→`52`):
 
-| Block           | Contents                                                                            |
-| --------------- | ----------------------------------------------------------------------------------- |
-| data `0x00`     | **Settings** — Special Page Functions as boolean bytes (`7f 00 00 01 …`) ✅         |
-| data `0x01`     | **MIDI CC map** — 8 params → CC# (Drive/Low/Mid/High/Reverb/Gate/Filter/Level) ✅   |
-| data `0x02`     | **128-entry PC → preset map** (identity `00 01 … 7F`) ✅                            |
-| data `0x03`     | 256 B, 128 byte-pairs: even ~`0x2d` (flat), odd high-entropy — NOT a curve; role ❓ |
-| data `0x0F`     | mostly zero, sparse ❓                                                              |
-| data `0x10`     | a **preset blob** alias (`01 00 "Bass Driver" …`) ✅                                |
-| config `0x6B/0` | 256 spaces — a blank text field (device label?) ❓                                  |
+| Block           | Contents                                                                          |
+| --------------- | --------------------------------------------------------------------------------- |
+| data `0x00`     | **Settings** — Special Page Functions as boolean bytes (`7f 00 00 01 …`) ✅       |
+| data `0x01`     | **MIDI CC map** — 8 params → CC# (Drive/Low/Mid/High/Reverb/Gate/Filter/Level) ✅ |
+| data `0x02`     | **128-entry PC → preset map** (identity `00 01 … 7F`) ✅                          |
+| data `0x03`     | **Per-preset checksum table** — 128 × (MSB, LSB) 14-bit sums, slot order ✅       |
+| data `0x0F`     | zero except `0xE0`–`0xFF`: the **serial number**, space-padded ASCII ✅           |
+| data `0x10`     | a **preset blob** alias (`01 00 "Bass Driver" …`) ✅                              |
+| config `0x6B/0` | 256 spaces — a blank text field (device label?) ❓                                |
+
+### Data block `0x03` — per-preset checksum table ✅ (2026-08-17)
+
+128 consecutive `(MSB, LSB)` pairs, one per preset slot in order, each the **same 14-bit sum a preset
+dump carries in its own two-byte trailer** — `sum(blob[0..255]) & 0x3FFF`, split MSB/LSB 7-bit. Proved
+by decoding a 128-preset `.p3b` (each `05 41` dump's trailer) against a live block-`0x03` dump taken
+12 days earlier: **126/128 pairs matched exactly**, and the two that didn't (slots 49 and 127) are
+presets edited in between — so the table tracks edits rather than being a static factory artifact.
+
+Useful because it turns preset-bank freshness into **one 256-byte read**: compare each entry against
+the checksum of a locally cached blob and only re-pull the slots that differ, instead of a ~35 s
+128-preset Bluetooth walk. It's a plain sum, so treat a match as "unchanged" for list/librarian
+purposes, not as integrity proof — a byte swap or an offsetting ±1 pair is invisible to it.
+
+### Data block `0x0F` — serial number ✅ (2026-08-17)
+
+All zero except a 32-byte space-padded ASCII field at `0xE0`–`0xFF`, of the form
+`ELITE-PDL-MMDDYYYY-NNNNNN` (e.g. `ELITE-PDL-01012026-000000`; the observed unit's own digits are not
+reproduced here). The `ELITE-PDL` prefix is a string constant in the firmware image; the date + number
+tail is per-unit data in the pedal's flash. EliteControl formats the same value (`SERIAL: %s` in its
+binary). Read for free in the connect handshake, which already requests this block. Only one pedal has
+been observed, so per-unit **uniqueness is inferred**, not proved.
 
 All checksums valid. Codec: `src/protocol/settings.ts`; session `readBlock`/`writeBlock`.
 
@@ -572,11 +594,10 @@ user-IR upload transport + payload; the **Tuner** param `0x34` and its write-plu
 2. **MIDI / global config** (`0x59`–`0x64`): the param↔settings-block-byte mapping for Define
    Mapping, Thru, Patch Offset, CC Mode/Channel, Pot Display, Tuner Freq/Detune, Cabinet Bypass, Safe
    Level — do a clean one-at-a-time P1→P9 pass to label each byte.
-3. **Data block `0x03`** — 128 byte-pairs, role unknown.
-4. Role of the no-arg **`05 5B`** control message.
-5. **Reverb Mode `0x39`** — a 0–4 Room/Hall/Arena/Spring/Plate selector the ambience picker does
+3. Role of the no-arg **`05 5B`** control message.
+4. **Reverb Mode `0x39`** — a 0–4 Room/Hall/Arena/Spring/Plate selector the ambience picker does
    _not_ use; when (if ever) it applies is unclear.
-6. **IR playback rate & gain** — pin the exact playback sample rate so a designed high-pass corner
+5. **IR playback rate & gain** — pin the exact playback sample rate so a designed high-pass corner
    lands on an exact Hz, and calibrate custom-IR loudness against the factory cabs.
 
 New protocol findings should ship with a scrubbed capture fixture and a decode/round-trip test under

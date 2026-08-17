@@ -11,6 +11,12 @@ import type { PedalMessage } from "../protocol/messages";
 import { DEFAULT_PROTOCOL_VERSION, PROTOCOL_VERSIONS } from "../protocol/constants";
 import { decodePreset } from "../protocol/preset";
 import type { Preset } from "../protocol/preset";
+import {
+  CHECKSUM_TABLE_BLOCK,
+  SERIAL_BLOCK,
+  parseChecksumTable,
+  parseSerial,
+} from "../protocol/identity";
 import { SysExReassembler } from "./transport";
 import type { MidiIO } from "./transport";
 
@@ -24,6 +30,10 @@ export interface ParamNotifyEvent {
 }
 
 const EDIT_BUFFER_SLOT = 0x7f;
+
+// The data blocks the captured handshake reads, in the captured order: serial (0x0F), per-preset
+// checksum table (0x03), settings (0x00). Their replies are kept — see `handshakeBlocks`.
+const HANDSHAKE_DATA_BLOCKS = [SERIAL_BLOCK, CHECKSUM_TABLE_BLOCK, 0x00] as const;
 
 // A slot write is STAGED by `05 20` then persisted by the `05 50 0A 12 <slot>` commit; the pedal echoes
 // a `05 41 <slot>` dump on success. Over BLE that fire-and-forget commit can drop (write staged, never
@@ -149,6 +159,8 @@ export class DeviceSession {
   /** The version the pedal itself sent, once we've heard a version-bearing message from it. */
   private observedVersion: number | null = null;
   private readonly versionCbs = new Set<(firmware: number) => void>();
+  /** Data blocks the connect handshake read, kept by index (serial, checksum table, settings). */
+  private readonly handshakeBlocks = new Map<number, Uint8Array>();
 
   constructor(
     private readonly io: MidiIO,
@@ -183,6 +195,32 @@ export class DeviceSession {
   /** True while an exclusive bulk op (an IR upload/read) owns the link — see {@link onLinkBusy}. */
   get linkBusy(): boolean {
     return this.exclusive;
+  }
+
+  /**
+   * The pedal's serial number (`ELITE-PDL-…`), or null until the handshake has read it. Stable per
+   * unit, so it's the key a local cache of that pedal's preset bank is stored under.
+   */
+  get serial(): string | null {
+    const block = this.handshakeBlocks.get(SERIAL_BLOCK);
+    return block ? parseSerial(block) : null;
+  }
+
+  /**
+   * The pedal's 128 per-preset checksums as of the connect handshake, or null if that read didn't
+   * land. Compare against cached blobs to find the slots that actually changed — see
+   * {@link readPresetChecksums} for a fresh copy after a save.
+   */
+  get presetChecksums(): number[] | null {
+    const block = this.handshakeBlocks.get(CHECKSUM_TABLE_BLOCK);
+    return block ? parseChecksumTable(block) : null;
+  }
+
+  /** Re-read the per-preset checksum table (one 256-byte read) — the whole bank's freshness at once. */
+  async readPresetChecksums(): Promise<number[]> {
+    const block = await this.readBlock(0x55, CHECKSUM_TABLE_BLOCK);
+    this.handshakeBlocks.set(CHECKSUM_TABLE_BLOCK, block);
+    return parseChecksumTable(block);
   }
 
   private setExclusive(busy: boolean): void {
@@ -255,14 +293,22 @@ export class DeviceSession {
   /** Run the connect handshake: hello → config/data blocks → control(5B). */
   async connect(): Promise<void> {
     this.setState("connecting");
+    this.handshakeBlocks.clear();
     try {
       await this.helloWithVersionProbe();
-      for (const index of [0x0f, 0x03, 0x00]) {
+      for (const index of HANDSHAKE_DATA_BLOCKS) {
         await this.delay(this.sendGapMs);
-        await this.request(
+        const reply = await this.request(
           { kind: "requestBlock", reqCode: 0x55, index },
           (m) => m.kind === "block" && m.blockCode === 0x52 && m.index === index,
         );
+        // Keep what the handshake already paid for: block 0x0F carries the serial and 0x03 the
+        // per-preset checksum table, both of which let a cached preset bank be re-used instead of
+        // re-walked (src/protocol/identity.ts). Discarding them cost a ~35 s sync on every connect.
+        // Only a checksum-clean block: a corrupt checksum TABLE would mark changed presets "fresh"
+        // and keep serving stale cache. Failing the checksum just means no cache reuse this connect —
+        // the handshake itself still succeeds, as it did when these replies were dropped entirely.
+        if (reply.kind === "block" && reply.checksumOk) this.handshakeBlocks.set(index, reply.data);
       }
       await this.delay(this.sendGapMs);
       this.send({ kind: "control", code: 0x5b });
