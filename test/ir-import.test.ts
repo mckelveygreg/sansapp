@@ -297,10 +297,101 @@ describe("uploadCustomIr (per-preset import via copy-on-save-as)", () => {
     expect([staged[0x59], staged[0x5a], staged[0x4b]]).toEqual([0x01, 0x09, 1]);
   });
 
+  // The mirror of the test above, and the one that was missing. Uploading to slot 8 while slot 7
+  // holds the preset's own private IR is the ORDER A REAL USER HITS — slot 7 is the default, so it
+  // gets filled first and slot 8 second. Reported from hardware 2026-08-17: the slot-8 upload wiped
+  // slot 7's cab.
+  it("backs up slot 7 when the upload targets slot 8 (the order a user actually fills them)", async () => {
+    const s = new FakeSession();
+    // Destination preset already has a private slot-7 IR: pair7 = (0, 9), mode7 on.
+    const blob = presetBlob({ 0x57: 0x00, 0x58: 0x09, 0x4a: 1 });
+    await uploadCustomIr(s as never, [1], "MyCab", { slot: 8, program: 9, blob, ...fast });
+    expect(s.ops).toEqual([
+      "recall:127",
+      "read:[0,9]", // slot 7's record, read back before anything is written
+      "begin:[0,127]", // re-uploaded into program 127's slot-7 record
+      "begin:[1,127]", // then the slot-8 import proper
+      "save:127",
+      "paced:45=1,44=0",
+      "write:9",
+    ]);
+    // Slot 7's own pair/mode reach the staged blob untouched, so the pedal's save-as repoints it at
+    // the preset's own record instead of dropping it.
+    const staged = s.written[0]!.blob;
+    expect([staged[0x57], staged[0x58], staged[0x4a]]).toEqual([0x00, 0x09, 1]);
+  });
+
+  // The condition is the POINTER, not the pointer AND the mode. A private pointer means the record
+  // belongs to this preset; backing it up when it turns out not to have needed it costs one record
+  // round-trip, while skipping one that did need it destroys a user's IR. Not comparable — so the
+  // cheap direction is the one we take when unsure.
+  it("backs up an other slot pointing at this preset's own record even if its mode byte reads off", async () => {
+    // Program 9, slot 7's own record is 0·128 + 9 = 9. That is the record the save-as overwrites, so
+    // its contents are at risk whatever the (app-supplied, staleable) mode byte currently says.
+    const s = new FakeSession();
+    const blob = presetBlob({ 0x57: 0x00, 0x58: 0x09, 0x4a: 0 }); // own record, mode OFF
+    await uploadCustomIr(s as never, [1], "MyCab", { slot: 8, program: 9, blob, ...fast });
+    expect(s.ops).toContain("read:[0,9]");
+    expect(s.ops).toContain("begin:[0,127]");
+  });
+
+  it("does NOT read record 0 on a blank preset — a zeroed pair is not evidence of an IR", async () => {
+    // (0,0) is indistinguishable from a real pointer to record 0, so the own-record clause must not
+    // fire for a program that isn't 0. Otherwise every blank preset pays a ~3 s read.
+    const s = new FakeSession();
+    await uploadCustomIr(s as never, [1], "MyCab", {
+      slot: 8,
+      program: 9,
+      blob: presetBlob(),
+      ...fast,
+    });
+    expect(s.ops.filter((o) => o.startsWith("read:"))).toEqual([]);
+  });
+
+  it("reports otherSlotSurvived=false when the echo shows the other slot disabled", async () => {
+    const s = new FakeSession();
+    s.echoMangle = (echo) => {
+      echo[0x4a] = 0; // the pedal came back with slot 7 switched off
+      return echo;
+    };
+    const blob = presetBlob({ 0x57: 0x00, 0x58: 0x09, 0x4a: 1 });
+    const r = await uploadCustomIr(s as never, [1], "MyCab", {
+      slot: 8,
+      program: 9,
+      blob,
+      ...fast,
+    });
+    expect(r.otherSlotSurvived).toBe(false);
+    expect(r.otherSlot).toBe(7);
+  });
+
+  it("reports otherSlotSurvived=true on a clean save, and when there was nothing to lose", async () => {
+    const withIr = new FakeSession();
+    const r1 = await uploadCustomIr(withIr as never, [1], "MyCab", {
+      slot: 8,
+      program: 9,
+      blob: presetBlob({ 0x57: 0x00, 0x58: 0x09, 0x4a: 1 }),
+      ...fast,
+    });
+    expect(r1.otherSlotSurvived).toBe(true);
+
+    const empty = new FakeSession();
+    const r2 = await uploadCustomIr(empty as never, [1], "MyCab", {
+      slot: 8,
+      program: 9,
+      blob: presetBlob(), // slot 7 never had a private IR
+      ...fast,
+    });
+    expect(r2.otherSlotSurvived).toBe(true);
+  });
+
   it("skips the backup when the other slot points at the library (MSB 2) or its mode is off", async () => {
     for (const ir of [
       { 0x59: 0x02, 0x5a: 0x04, 0x4b: 1 }, // library pointer — nothing private to lose
-      { 0x59: 0x01, 0x5a: 0x09, 0x4b: 0 }, // private pointer but the slot is disabled
+      // Private pointer, slot disabled, AND aimed at a record that isn't this preset's own (slot 8's
+      // own record for program 5 is 1·128 + 5 = 133 = (0x01, 0x05), not (0x01, 0x09)). Nothing the
+      // save-as will overwrite, so there is nothing to preserve.
+      { 0x59: 0x01, 0x5a: 0x09, 0x4b: 0 },
     ]) {
       const s = new FakeSession();
       await uploadCustomIr(s as never, [1], "MyCab", {

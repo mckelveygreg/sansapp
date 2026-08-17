@@ -61,6 +61,18 @@ export interface CustomIrUploadResult {
    * NEXT import will overwrite — surface it so the flow can be verified on-device.
    */
   pointerConfirmed: boolean;
+  /**
+   * False when the OTHER user slot was carrying an active private IR before the save and the pedal's
+   * echo shows it did not come through — disabled, or pointing somewhere other than this preset's
+   * own record. True when it survived, and also true when there was nothing there to lose.
+   *
+   * Read from the save echo rather than from what the app believes it sent, because the hardware
+   * report this exists for (a slot-8 upload emptying slot 7) is not reproducible from the app-side
+   * sequence — so the only trustworthy witness is the pedal.
+   */
+  otherSlotSurvived: boolean;
+  /** Which slot {@link otherSlotSurvived} refers to — the one this upload did NOT target. */
+  otherSlot: 7 | 8;
 }
 
 export interface CustomIrUploadOptions {
@@ -121,7 +133,24 @@ export async function uploadCustomIr(
   const [oMsbOff, oLsbOff] = PAIR_OFFSET[other];
   const oMsb = blob[oMsbOff]!;
   const oLsb = blob[oLsbOff]!;
-  const otherIsPrivate = oMsb <= 0x01 && blob[MODE_OFFSET[other]] !== 0;
+  // Back up when the other slot's pointer is PRIVATE and the slot is either enabled or already
+  // pointing at this preset's own record.
+  //
+  // The mode byte alone used to decide it, and the asymmetry of that choice is the argument against
+  // it: backing up a slot that didn't need it costs one record round-trip, while skipping one that
+  // did destroys an IR the user uploaded, silently. Those are not comparable. The mode is also the
+  // fragile half of the test — the pointer comes straight off the pedal's own blob and is untouched
+  // by `buildPresetBlob` (deliberately not a modelled param, lab #57), while the mode arrives via the
+  // app's live value map, which can go stale between a recall and an upload.
+  //
+  // The own-record clause is what makes it tolerant of exactly that staleness: that record is the one
+  // the save-as will overwrite, so if the pointer names it, its contents are at risk whatever the
+  // mode byte currently says. And it stops short of "any private pointer", which would read record 0
+  // on every blank preset — a zeroed pair (0,0) is indistinguishable from a real pointer to record 0.
+  const oRecord = (oMsb << 7) | oLsb;
+  const otherIsPrivate =
+    oMsb <= 0x01 &&
+    (blob[MODE_OFFSET[other]] !== 0 || oRecord === IR_BANK[other] * 128 + (program & 0x7f));
   // Both uploads report through one progress range (11 frames each).
   const totalFrames = otherIsPrivate ? 22 : 11;
   let framesDone = 0;
@@ -193,5 +222,25 @@ export async function uploadCustomIr(
     echo[pMsbOff] === bank &&
     echo[pLsbOff] === (program & 0x7f) &&
     echo[MODE_OFFSET[slot]] !== 0;
-  return { pointerConfirmed };
+
+  // The other slot, checked against the same echo — the pedal's own account of what it just saved.
+  //
+  // Uploading to one slot must never cost the user the OTHER slot's cab, and on hardware it did
+  // (2026-08-17: a slot-8 upload left slot 7 empty). The app-side sequence models that case
+  // correctly and is tested in both directions, so the mechanism is not yet pinned down — which is
+  // precisely why this check reads the ECHO rather than re-asserting what we believe. Whatever the
+  // cause, a slot that went from enabled-and-private to disabled, or got repointed somewhere other
+  // than its own record, is reported instead of discovered later by ear.
+  //
+  // Reported, not thrown: the upload itself succeeded and the preset IS saved. Throwing here would
+  // imply otherwise and would strand the caller's cache update.
+  const otherWasActive = oMsb <= 0x01 && blob[MODE_OFFSET[other]] !== 0;
+  const otherRecord = IR_BANK[other] * 128 + (program & 0x7f);
+  const otherSurvived =
+    !otherWasActive ||
+    (echo.length === 256 &&
+      echo[MODE_OFFSET[other]] !== 0 &&
+      ((echo[oMsbOff]! << 7) | echo[oLsbOff]!) === otherRecord);
+
+  return { pointerConfirmed, otherSlotSurvived: otherSurvived, otherSlot: other };
 }
