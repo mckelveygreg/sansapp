@@ -621,6 +621,14 @@ export default function IrStudio() {
     sendParam(PARAMS[id].paramId ?? 0, wire);
     pedalStore.getState().setValueLocal(id, wire);
   };
+  // Which slot the pointer guard last refused to enable, and what it was aiming at. Held as its own
+  // state rather than folded into `status`: the status line renders dim, small, and at the very
+  // BOTTOM of a long scrolling page, while the switch that was just refused is near the top — so the
+  // one message the user needs most was the one they were least likely to see (reported 2026-08-17).
+  // Cleared by the next successful toggle and whenever a different preset loads.
+  const [blocked, setBlocked] = useState<{ slot: 7 | 8; record: number } | null>(null);
+  useEffect(() => setBlocked(null), [raw]);
+
   const setMode = (slot: 7 | 8, on: boolean) => {
     // Turning a user slot ON makes the pedal fetch whatever record this preset's pointer names, with no
     // bounds check of its own — so an out-of-range pointer would convolve arbitrary flash at an
@@ -631,13 +639,11 @@ export default function IrStudio() {
     if (on) {
       const ptr = readIrPointer(pedalStore.getState().raw, slot);
       if (ptr?.kind === "invalid") {
-        setStatus(
-          `Slot ${slot} has no IR stored for this preset (record ${ptr.record}) — upload one first. ` +
-            `Enabling it would play unstored data at an unpredictable level.`,
-        );
+        setBlocked({ slot, record: ptr.record });
         return;
       }
     }
+    setBlocked(null);
     const id = IR_MODE_ID[slot];
     sendParam(PARAMS[id].paramId ?? 0, on ? 1 : 0);
     pedalStore.getState().setValueLocal(id, on ? 1 : 0);
@@ -913,6 +919,26 @@ export default function IrStudio() {
             },
           }}
         />
+        {blocked ? (
+          <View
+            style={{
+              borderWidth: 1,
+              borderColor: theme.amber,
+              borderRadius: 8,
+              padding: 10,
+              gap: 4,
+            }}
+          >
+            <Text style={{ color: theme.amber, fontSize: 13, fontWeight: "600" }}>
+              {`Slot ${blocked.slot} has no cab of its own yet`}
+            </Text>
+            <Text style={{ color: theme.text, fontSize: 12, lineHeight: 17 }}>
+              {`This preset doesn't point slot ${blocked.slot} at a stored cab, so switching it on ` +
+                `would make the pedal play whatever happens to sit at that address, at a level ` +
+                `nobody can predict. Upload a cab to this slot and the switch comes on by itself.`}
+            </Text>
+          </View>
+        ) : null}
         <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
           Rows 7 & 8 are yours: the switch picks this preset&apos;s own uploaded cab (on) or the
           factory cab (off), and the dB trims your cab&apos;s level. Each row is named by whatever
