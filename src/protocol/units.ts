@@ -49,16 +49,18 @@ export const compThresholdLabel = (r: number): string => {
 };
 export const compRatio = (r: number): number => lin(r, 1, 20); // 1.0:1 … 20.0:1 (hardware-confirmed)
 export const compOutputDb = (r: number): number => lin(r, -30, 18); // −30.0 … +18.0 dB
-// ⚠️ UNRESOLVED, and left alone deliberately. The 2026-08-17 EliteControl reading put Attack's noon
-// at 261.4 ms — which is not merely a different taper, it is OUTSIDE the 1–100 ms range recorded
-// here, so one of the two is wrong about the ENDPOINTS and a midpoint can't tell us which.
+// Endpoints re-read off EliteControl 1.2 on 2026-08-17: **10 … 100 ms**, so the old 1 ms minimum was
+// wrong by a decade and the app read Attack far too fast at the bottom of its travel.
 //
-// 261.4 ms is also exactly what a square taper over 10–1000 ms gives, i.e. the same law and range as
-// both Release controls — so "all three time constants share one law" is the obvious reading. It is
-// also exactly the kind of inference that produced the bug this comment sits next to. Changing a
-// range on the strength of a single midpoint would repeat the two-point mistake in the other
-// direction. Needs Attack's own min and max read off EliteControl before it moves.
-export const compAttackMs = (r: number): number => logMap(r, 1, 100); // 1 … 100 ms (DISPUTED — see above)
+// ⚠️ The TAPER is still unconfirmed, and one earlier reading in that session is known bad: Attack's
+// noon was reported as 261.4 ms, which cannot be true of a 10–100 ms control at all. Do not treat
+// that number as evidence about Attack.
+//
+// Left on the log law rather than moved to sqMap with the two Release controls, because here the two
+// are nearly indistinguishable — noon is 31.9 ms under log and 32.9 ms under square, diverging by at
+// most 4.5 ms anywhere in the travel. That closeness cuts both ways: it is weak grounds to switch,
+// and it caps the cost of being wrong at a few ms of display error. One noon reading decides it.
+export const compAttackMs = (r: number): number => logMap(r, 10, 100); // 10 … 100 ms (taper unconfirmed)
 export const compReleaseMs = (r: number): number => sqMap(r, 10, 1000); // 10 … 1000 ms (hardware-confirmed)
 
 /* ── Gate (noise gate, on the Dynamics page) ─────────────────────────────────── */
