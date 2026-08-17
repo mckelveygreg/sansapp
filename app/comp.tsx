@@ -46,16 +46,21 @@ const sectionLabel = { color: theme.accent, fontWeight: "700", letterSpacing: 1 
 function ToggleRow({
   label,
   value,
+  disabled,
   onChange,
 }: {
   label: string;
   value: boolean;
+  disabled: boolean;
   onChange: (v: boolean) => void;
 }) {
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+    <View
+      style={{ flexDirection: "row", alignItems: "center", gap: 8, opacity: disabled ? 0.45 : 1 }}
+    >
       <Switch
         value={value}
+        disabled={disabled}
         onValueChange={onChange}
         trackColor={{ false: theme.panelEdge, true: theme.accent }}
         thumbColor="#fff"
@@ -134,6 +139,7 @@ export default function Compressor() {
             ghost={baseline.comp}
             display={compThresholdLabel(threshold)}
             onChange={setP("comp")}
+            disabled={!ready}
           />
           <Knob
             label="Ratio"
@@ -141,6 +147,7 @@ export default function Compressor() {
             ghost={baseline.ratio}
             display={`${compRatio(ratio).toFixed(1)}:1`}
             onChange={setP("ratio")}
+            disabled={!ready}
           />
           <Knob
             label="Output"
@@ -148,6 +155,7 @@ export default function Compressor() {
             ghost={baseline.compOutput}
             display={`${compOutputDb(compOutput).toFixed(0)}dB`}
             onChange={setP("compOutput")}
+            disabled={!ready}
           />
           <Knob
             label="Attack"
@@ -155,6 +163,7 @@ export default function Compressor() {
             ghost={baseline.compAttack}
             display={`${compAttackMs(compAttack).toFixed(0)}ms`}
             onChange={setP("compAttack")}
+            disabled={!ready}
           />
           <Knob
             label="Release"
@@ -162,6 +171,7 @@ export default function Compressor() {
             ghost={baseline.compRelease}
             display={`${compReleaseMs(compRelease).toFixed(0)}ms`}
             onChange={setP("compRelease")}
+            disabled={!ready}
           />
           <Knob
             label="Soft Clip"
@@ -169,11 +179,22 @@ export default function Compressor() {
             ghost={baseline.softClip}
             display={`${rawToPct(softClip)}%`}
             onChange={setP("softClip")}
+            disabled={!ready}
           />
         </View>
         <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
-          <ToggleRow label="AUTO GAIN" value={autoGain} onChange={toggleP("autoGain")} />
-          <ToggleRow label="LOOKAHEAD" value={lookahead} onChange={toggleP("lookahead")} />
+          <ToggleRow
+            label="AUTO GAIN"
+            value={autoGain}
+            disabled={!ready}
+            onChange={toggleP("autoGain")}
+          />
+          <ToggleRow
+            label="LOOKAHEAD"
+            value={lookahead}
+            disabled={!ready}
+            onChange={toggleP("lookahead")}
+          />
         </View>
       </View>
 
@@ -186,6 +207,7 @@ export default function Compressor() {
             ghost={baseline.gateThreshold}
             display={gateThresholdLabel(gateThreshold)}
             onChange={setP("gateThreshold")}
+            disabled={!ready}
           />
           <Knob
             label="Ratio"
@@ -193,6 +215,7 @@ export default function Compressor() {
             ghost={baseline.gateRatio}
             display={`${gateRatio(gateRatioVal).toFixed(1)}:1`}
             onChange={setP("gateRatio")}
+            disabled={!ready}
           />
           <Knob
             label="Attack"
@@ -200,6 +223,7 @@ export default function Compressor() {
             ghost={baseline.gateAttack}
             display={`${rawToPct(gateAttack)}%`}
             onChange={setP("gateAttack")}
+            disabled={!ready}
           />
           <Knob
             label="Release"
@@ -207,6 +231,7 @@ export default function Compressor() {
             ghost={baseline.gateRelease}
             display={`${gateReleaseMs(gateRelease).toFixed(0)} ms`}
             onChange={setP("gateRelease")}
+            disabled={!ready}
           />
         </View>
       </View>

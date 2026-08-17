@@ -76,18 +76,36 @@ export default function Editor() {
 
       <SectionBar />
 
-      <View style={{ gap: 16, opacity: ready ? 1 : 0.55 }}>
+      <View style={{ gap: 16 }}>
         <Section title="TONE SHAPER">
           <ToneShaper values={values} raw={raw} />
         </Section>
         <Section title="PREAMP · EQ">
-          <KnobPanel ids={PREAMP} values={values} baseline={baseline} onChange={setValue} />
+          <KnobPanel
+            ids={PREAMP}
+            values={values}
+            baseline={baseline}
+            onChange={setValue}
+            disabled={!ready}
+          />
         </Section>
         <Section title="MIX · OUTPUT">
-          <KnobPanel ids={OUTPUT} values={values} baseline={baseline} onChange={setValue} />
+          <KnobPanel
+            ids={OUTPUT}
+            values={values}
+            baseline={baseline}
+            onChange={setValue}
+            disabled={!ready}
+          />
         </Section>
         <Section title="RED ZONE" accent>
-          <KnobPanel ids={RED_ZONE} values={values} baseline={baseline} onChange={setValue} />
+          <KnobPanel
+            ids={RED_ZONE}
+            values={values}
+            baseline={baseline}
+            onChange={setValue}
+            disabled={!ready}
+          />
         </Section>
       </View>
     </KnobScroll>

@@ -100,6 +100,7 @@ export default function Chorus() {
           onValueChange={toggleOn}
           trackColor={{ false: theme.panelEdge, true: theme.accent }}
           thumbColor="#fff"
+          disabled={!ready}
         />
       </View>
 
@@ -127,6 +128,7 @@ export default function Chorus() {
               ghost={baseline[c.storeId]}
               display={c.fmt(v)}
               onChange={set(c.storeId, c.param)}
+              disabled={!ready}
             />
           );
         })}

@@ -124,6 +124,7 @@ export default function AutoFilter() {
             </Text>
             <Switch
               value={on}
+              disabled={!ready}
               onValueChange={(v) => setP("autoFilterOn")(v ? 1 : 0)}
               trackColor={{ false: theme.panelEdge, true: theme.accent }}
               thumbColor="#fff"
@@ -145,6 +146,7 @@ export default function AutoFilter() {
             ghost={baseline.filter}
             display={filterLevelLabel(level)}
             onChange={setP("filter")}
+            disabled={!ready}
           />
           <Knob
             label="Attack"
@@ -152,6 +154,7 @@ export default function AutoFilter() {
             ghost={baseline.filterAttack}
             display={`${filterTimePct(attack)}%`}
             onChange={setP("filterAttack")}
+            disabled={!ready}
           />
           <Knob
             label="Release"
@@ -159,6 +162,7 @@ export default function AutoFilter() {
             ghost={baseline.filterRelease}
             display={`${filterTimePct(release)}%`}
             onChange={setP("filterRelease")}
+            disabled={!ready}
           />
         </View>
       </View>
