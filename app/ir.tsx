@@ -743,11 +743,12 @@ export default function IrStudio() {
         irBlend: slotToValue(uploadSlot),
       };
       const blob = buildPresetBlob(st.raw, values, st.name ?? "", amb.typeDirty ? amb.type : null);
-      const { pointerConfirmed } = await uploadCustomIr(session, craft, irName().slice(0, 32), {
-        slot: uploadSlot,
-        program,
-        blob,
-      });
+      const { pointerConfirmed, otherSlotSurvived, otherSlot } = await uploadCustomIr(
+        session,
+        craft,
+        irName().slice(0, 32),
+        { slot: uploadSlot, program, blob },
+      );
       // The save-as parks the pedal on the destination program; recall it so the app state reloads
       // from the SAVED preset (slot enabled, IR selected, pointer repointed) and nothing reads dirty.
       // It also tells us WHICH record the preset ended up pointing at, which is the cache key below.
@@ -782,10 +783,16 @@ export default function IrStudio() {
         persist(kept); // keep the on-disk cache in step with the newly-written flash
         return kept;
       });
+      // The other slot losing its IR is worse news than the uploaded slot's pointer being unconfirmed,
+      // so it wins the status line — it means something the user already had is gone, rather than
+      // something they just made being fragile.
       setStatus(
-        pointerConfirmed
-          ? `Uploaded "${irName()}" → slot ${uploadSlot} and saved with preset ${program + 1}.`
-          : `Uploaded "${irName()}" → slot ${uploadSlot} of preset ${program + 1} — saved, but the ` +
+        !otherSlotSurvived
+          ? `Uploaded "${irName()}" → slot ${uploadSlot} of preset ${program + 1}, but slot ` +
+              `${otherSlot}'s custom IR did NOT survive the save — re-upload it. Please report this.`
+          : pointerConfirmed
+            ? `Uploaded "${irName()}" → slot ${uploadSlot} and saved with preset ${program + 1}.`
+            : `Uploaded "${irName()}" → slot ${uploadSlot} of preset ${program + 1} — saved, but the ` +
               `pedal didn't confirm the preset's own IR record; a later upload may replace it.`,
       );
     } catch (e) {
