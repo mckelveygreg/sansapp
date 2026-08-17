@@ -25,7 +25,7 @@ describe("unit calibration (measured vs EliteControl)", () => {
     expect(compRatio(127)).toBeCloseTo(20);
     expect(compOutputDb(0)).toBeCloseTo(-30);
     expect(compOutputDb(127)).toBeCloseTo(18);
-    expect(compAttackMs(0)).toBeCloseTo(10);
+    expect(compAttackMs(0)).toBeCloseTo(1);
     expect(compAttackMs(127)).toBeCloseTo(100);
     expect(compReleaseMs(0)).toBeCloseTo(10);
     expect(compReleaseMs(127)).toBeCloseTo(1000);
@@ -40,14 +40,24 @@ describe("unit calibration (measured vs EliteControl)", () => {
     expect(gateReleaseMs(64)).not.toBeCloseTo(101.8, 0);
   });
 
-  // Attack's endpoints re-read as 10–100 ms (EliteControl 1.2, 2026-08-17) — the old 1 ms minimum was
-  // out by a decade. Its noon is deliberately NOT asserted: the only midpoint reading taken that
-  // session was 261.4 ms, which cannot describe a 10–100 ms control, so there is no trustworthy
-  // evidence about the taper yet and an assertion here would just pin whichever law we guessed.
-  it("compressor Attack spans 10–100 ms, not 1–100", () => {
-    expect(compAttackMs(0)).toBeCloseTo(10, 5);
-    expect(compAttackMs(127)).toBeCloseTo(100, 5);
-    expect(compAttackMs(0)).not.toBeCloseTo(1, 5);
+  // Attack: 1.0 / 13.7 / 100.0 ms (EliteControl 1.2, 2026-08-17). The cube is fitted on the ENDPOINTS
+  // alone and predicts noon to 0.03 ms, which is why it beats the alternative that kept a 10 ms
+  // minimum and needed an exponent of 4.657 pulled through all three points.
+  it("compressor Attack is a CUBE over 1–100 ms — noon 13.7", () => {
+    expect(compAttackMs(0)).toBeCloseTo(1.0, 5);
+    expect(compAttackMs(64)).toBeCloseTo(13.7, 1);
+    expect(compAttackMs(127)).toBeCloseTo(100.0, 5);
+    // Not the laws it isn't: log noon = 10.2, square noon = 26.1.
+    expect(compAttackMs(64)).not.toBeCloseTo(10.2, 0);
+    expect(compAttackMs(64)).not.toBeCloseTo(26.1, 0);
+  });
+
+  // The three time constants do NOT share one law. That was the tempting inference once two of them
+  // came back square, and it is wrong — pinned so nobody "unifies" them later.
+  it("Attack's cube and the Releases' square are genuinely different laws", () => {
+    expect(compAttackMs(64)).toBeCloseTo(13.7, 1); // cube over 1–100
+    expect(compReleaseMs(64)).toBeCloseTo(261.4, 1); // square over 10–1000
+    expect(gateReleaseMs(64)).toBeCloseTo(261.4, 1); // square over 10–1000
   });
 
   it("compressor ratio + threshold sit near noon at their EliteControl mid read-outs", () => {
