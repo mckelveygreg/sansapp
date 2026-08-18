@@ -40,7 +40,13 @@ import { PEDAL_IR_RATE, cabCurveDb, cabResponseAt } from "../src/dsp/tone";
 import { pickFileBytes, saveAndShare } from "../src/midi/exportFile";
 import { loadIrCache, saveIrCache } from "../src/midi/irCache";
 import { uploadCustomIr } from "../src/midi/irImport";
-import { IR_READ_AB, USER_IR_SLOTS, readIr } from "../src/midi/irRead";
+import {
+  IR_READ_AB,
+  type IrRecordState,
+  USER_IR_SLOTS,
+  probeIrRecord,
+  readIr,
+} from "../src/midi/irRead";
 import { sendParam } from "../src/midi/liveParam";
 import { getController, getSession, pedalCacheKey, pedalStore } from "../src/midi/pedal";
 import { buildPresetBlob } from "../src/protocol/buildPreset";
@@ -136,6 +142,44 @@ interface Pulled {
   db: number[];
   ir: Float64Array;
 }
+
+/**
+ * Why the pointer guard refused to switch a user slot on — see `setMode`. Three reasons rather than
+ * one because the advice differs: "nothing is stored there" and "I couldn't find out" must not read the
+ * same, or a link hiccup would tell someone to go upload over a cab they already have.
+ */
+type BlockReason = "invalid" | "unwritten" | "unreadable";
+
+/** The refusal text, rendered beside the switch that was refused. */
+const blockCopy = (why: BlockReason, slot: 7 | 8): { title: string; body: string } => {
+  switch (why) {
+    case "invalid":
+      return {
+        title: `Slot ${slot} has no cab of its own yet`,
+        body:
+          `This preset doesn't point slot ${slot} at a stored cab, so switching it on would make ` +
+          `the pedal play whatever happens to sit at that address, at a level nobody can predict. ` +
+          `Upload a cab to this slot and the switch comes on by itself.`,
+      };
+    case "unwritten":
+      return {
+        title: `Slot ${slot}'s cab never finished uploading`,
+        body:
+          `This preset points slot ${slot} at one of your own cab records, but nothing was ever ` +
+          `stored there — an upload that stops partway leaves the reference behind. Switching it on ` +
+          `would play empty memory, which comes out loud and unpredictable rather than silent. ` +
+          `Upload a cab to this slot and the switch comes on by itself.`,
+      };
+    case "unreadable":
+      return {
+        title: `Couldn't check slot ${slot}'s cab`,
+        body:
+          `SansApp reads a cab off the pedal before switching this slot on, and that read didn't ` +
+          `come back — so it can't tell whether there is really a cab there. The switch has been ` +
+          `left off rather than guessing. Check the connection and try again.`,
+      };
+  }
+};
 
 // The pedal-IR display convention (nominal rate + normalize band) is shared with the editor's
 // Tone Shaper — src/dsp/tone.ts owns it.
@@ -626,21 +670,53 @@ export default function IrStudio() {
   // BOTTOM of a long scrolling page, while the switch that was just refused is near the top — so the
   // one message the user needs most was the one they were least likely to see (reported 2026-08-17).
   // Cleared by the next successful toggle and whenever a different preset loads.
-  const [blocked, setBlocked] = useState<{ slot: 7 | 8; record: number } | null>(null);
+  const [blocked, setBlocked] = useState<{ slot: 7 | 8; record: number; why: BlockReason } | null>(
+    null,
+  );
+  /** Which slot is mid-probe, so its switch can say so instead of looking dead for ~3 s. */
+  const [checkingSlot, setCheckingSlot] = useState<7 | 8 | null>(null);
   useEffect(() => setBlocked(null), [raw]);
 
-  const setMode = (slot: 7 | 8, on: boolean) => {
+  const setMode = async (slot: 7 | 8, on: boolean) => {
     // Turning a user slot ON makes the pedal fetch whatever record this preset's pointer names, with no
-    // bounds check of its own — so an out-of-range pointer would convolve arbitrary flash at an
-    // unpredictable level. 27 factory presets carry the unused default pair (64,64) = record 8256, which
-    // is exactly that case; they are harmless only while their mode stays off. Refuse instead of
-    // enabling. See {@link readIrPointer}. Turning a slot OFF is always safe — the pointer stops being
-    // read at all — so the guard is one-directional.
+    // bounds check of its own — so a bad pointer convolves arbitrary flash at an unpredictable level.
+    // Turning a slot OFF is always safe (the pointer stops being read at all), so the guard is
+    // one-directional. There are two ways the pointer can be bad, and the address only reveals one:
+    //
+    //  1. OUT OF RANGE. 27 factory presets carry the unused default pair (64,64) = record 8256. Cheap
+    //     to spot — it's in the bytes — so it's refused without touching the pedal.
+    //  2. IN RANGE BUT NEVER WRITTEN. An upload that fails partway can leave a private pointer naming
+    //     a record nothing was ever stored at (issue #95); erased flash reads as 0xFF samples with a
+    //     gain field of ≈2.0. The address cannot show this, so the record itself has to be probed.
     if (on) {
       const ptr = readIrPointer(pedalStore.getState().raw, slot);
       if (ptr?.kind === "invalid") {
-        setBlocked({ slot, record: ptr.record });
+        setBlocked({ slot, record: ptr.record, why: "invalid" });
         return;
+      }
+      // Library records (256–263) are the eight factory cabs — always written, never probed.
+      // A cache hit is sound evidence on its own: `pulled` only ever takes a record that DECODED on a
+      // pull, or one an upload just wrote, so it cannot vouch for an unwritten record. That matters for
+      // more than speed — it keeps the common case off the ~3 s exclusive BLE read.
+      if (ptr?.kind === "private" && !pulled[ptr.record]) {
+        const session = getSession();
+        if (!session) {
+          setBlocked({ slot, record: ptr.record, why: "unreadable" });
+          return;
+        }
+        setCheckingSlot(slot);
+        let state: IrRecordState;
+        try {
+          state = await probeIrRecord(session, ptr.record >> 7, ptr.record & 0x7f);
+        } catch {
+          state = "unreadable";
+        } finally {
+          setCheckingSlot(null);
+        }
+        if (state !== "written") {
+          setBlocked({ slot, record: ptr.record, why: state });
+          return;
+        }
       }
     }
     setBlocked(null);
@@ -914,17 +990,22 @@ export default function IrStudio() {
             7: {
               modeOn: irMode7,
               gainDb: gainDbOf(7),
-              onToggle: (v) => setMode(7, v),
+              onToggle: (v) => void setMode(7, v),
               onGainStep: (d) => setGain(7, gainDbOf(7) + d),
             },
             8: {
               modeOn: irMode8,
               gainDb: gainDbOf(8),
-              onToggle: (v) => setMode(8, v),
+              onToggle: (v) => void setMode(8, v),
               onGainStep: (d) => setGain(8, gainDbOf(8) + d),
             },
           }}
         />
+        {checkingSlot ? (
+          <Text style={{ color: theme.textDim, fontSize: 12, lineHeight: 17 }}>
+            {`Checking slot ${checkingSlot}'s cab on the pedal…`}
+          </Text>
+        ) : null}
         {blocked ? (
           <View
             style={{
@@ -936,12 +1017,10 @@ export default function IrStudio() {
             }}
           >
             <Text style={{ color: theme.amber, fontSize: 13, fontWeight: "600" }}>
-              {`Slot ${blocked.slot} has no cab of its own yet`}
+              {blockCopy(blocked.why, blocked.slot).title}
             </Text>
             <Text style={{ color: theme.text, fontSize: 12, lineHeight: 17 }}>
-              {`This preset doesn't point slot ${blocked.slot} at a stored cab, so switching it on ` +
-                `would make the pedal play whatever happens to sit at that address, at a level ` +
-                `nobody can predict. Upload a cab to this slot and the switch comes on by itself.`}
+              {blockCopy(blocked.why, blocked.slot).body}
             </Text>
           </View>
         ) : null}
