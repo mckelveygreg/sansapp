@@ -10,6 +10,7 @@ New:
 Fixed:
 • Compressor and gate timing read-outs were wrong through the middle of their travel — Release showed roughly a third of the real time, and Attack was out too. All three now match the pedal.
 • Soft Clip is a switch on the pedal, not an amount, so it is now a switch in the app instead of a percentage knob that appeared to do nothing.
+• The Dynamics page stays inside its panels. The Soft Clip, Auto Gain and Lookahead switches ran off the right-hand edge, the gate's four knobs crowded past it, and a longer read-out could spill over the rim of its dial.
 • Controls no longer move when no pedal is connected. Device Settings in particular used to show a set of values that were not read from your pedal at all.
 • Uploading a custom IR to one user slot no longer blanks the other slot's cab in the IR display. Nothing was ever lost on the pedal, but the app stopped showing it.
 • The Studio's Low-pass preview is readable again instead of pinning the low end to the top of the graph.
