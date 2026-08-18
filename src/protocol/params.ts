@@ -365,6 +365,22 @@ export const KNOB_LAYER_NOTIFY_PARAM = 0x4d;
  */
 export const RED_ZONE_TOGGLE_PARAMS: readonly ParamId[] = ["autoFilterOn", "chorusOn"];
 
+/**
+ * The value to write when switching **Soft Clip** on.
+ *
+ * Soft Clip is a switch, not an amount. Its handler stores the wire value at `0xFF807F23` and the one
+ * instruction that reads it back is a zero test (`ffa02b52: R0 = B[P3]; CC = R0 == 0x0`) gating a call
+ * — the magnitude never reaches the callee, so 1 and 127 are indistinguishable to the pedal. Confirmed
+ * statically, present at the same file offset in both the 1.1 and 1.2 images, and corroborated by a
+ * listening test that heard no difference at any setting (lab #33).
+ *
+ * 64 rather than 1 because that is what the pedal itself uses: a census of all 128 stored presets read
+ * off the hardware found **exactly one distinct value, 64, on every preset**. Writing 64 keeps a
+ * switch-off-then-on a true byte-level round trip instead of quietly rewriting the preset to a value no
+ * factory preset carries.
+ */
+export const SOFT_CLIP_ON_VALUE = 64;
+
 /** First firmware version whose red footswitch force-sets {@link RED_ZONE_TOGGLE_PARAMS}. */
 export const RED_ZONE_TOGGLE_MIN_FIRMWARE = 1.1;
 
