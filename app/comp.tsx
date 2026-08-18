@@ -55,10 +55,21 @@ function ToggleRow({
   disabled: boolean;
   onChange: (v: boolean) => void;
 }) {
+  // Full-width label-left / switch-right (the Auto Filter row's shape), stacked rather than three
+  // across: side by side, the three labels are wider than any phone and ran off the card's edge.
   return (
     <View
-      style={{ flexDirection: "row", alignItems: "center", gap: 8, opacity: disabled ? 0.45 : 1 }}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        opacity: disabled ? 0.45 : 1,
+      }}
     >
+      <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1, flexShrink: 1 }}>
+        {label}
+      </Text>
       <Switch
         value={value}
         disabled={disabled}
@@ -66,7 +77,6 @@ function ToggleRow({
         trackColor={{ false: theme.panelEdge, true: theme.accent }}
         thumbColor="#fff"
       />
-      <Text style={{ color: theme.textDim, fontSize: 12, letterSpacing: 1 }}>{label}</Text>
     </View>
   );
 }
@@ -133,7 +143,15 @@ export default function Compressor() {
           gap: 16,
         }}
       >
-        <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 12 }}>
+        <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            justifyContent: "center",
+            gap: 12,
+            rowGap: 20,
+          }}
+        >
           <Knob
             label="Threshold"
             value={threshold}
@@ -175,7 +193,7 @@ export default function Compressor() {
             disabled={!ready}
           />
         </View>
-        <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
+        <View style={{ gap: 12 }}>
           {/* Soft Clip is a switch on the pedal, not an amount — see SOFT_CLIP_ON_VALUE. It was a
               0–127 knob showing raw %, which advertised a resolution the hardware does not have. */}
           <ToggleRow
@@ -201,7 +219,17 @@ export default function Compressor() {
 
       <View style={card}>
         <Text style={sectionLabel}>GATE / EXPANDER</Text>
-        <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
+        {/* Wraps like the compressor row above: four knobs are wider than the card on every phone,
+            and un-wrapped they overflowed its padding instead of reflowing onto a second line. */}
+        <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            justifyContent: "center",
+            gap: 12,
+            rowGap: 20,
+          }}
+        >
           <Knob
             label="Threshold"
             value={gateThreshold}

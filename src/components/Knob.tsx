@@ -36,6 +36,16 @@ export interface KnobProps {
 
 const TICKS = 11;
 const TAP_SLOP = 5; // px of movement below which a gesture counts as a tap, not a drag
+/**
+ * The readout sits inside the dial, so it gets a box narrower than the dial (a circle has no room
+ * at its rim) and a type size computed to fit that box: 13pt when it can, down to 9pt for the long
+ * calibrated strings ("−89.2 dB"). CHAR_W is a digit's advance width in the bold system face as a
+ * fraction of the type size — near enough to size text without measuring it.
+ */
+const READOUT_SIZE = 13;
+const READOUT_MIN_SIZE = 9;
+const READOUT_BOX = 0.78; // of the dial
+const CHAR_W = 0.58;
 /** Opacity for a knob with nothing on the other end. */
 const DISABLED_OPACITY = 0.45;
 
@@ -141,6 +151,14 @@ export function Knob({
   const angle = valueToAngle(value);
   const dial = size * 0.66;
   const readout = display ?? toDisplay(value).toFixed(1);
+  // Size the readout to its box up front rather than leaning on `adjustsFontSizeToFit`, which is a
+  // no-op on web and, given only a maxWidth, shrank the long strings to the full width of the dial —
+  // rim to rim, glyph bearings spilling over the ring.
+  const readoutBox = dial * READOUT_BOX;
+  const readoutSize = Math.max(
+    READOUT_MIN_SIZE,
+    Math.min(READOUT_SIZE, Math.floor(readoutBox / (Math.max(readout.length, 1) * CHAR_W))),
+  );
   // Ghost = the preset's value for this knob. When the live value has moved off it, mark the knob
   // "changed" (amber label) and show a faint tick where the preset was — the delta at a glance.
   const changed = ghost != null && value !== ghost;
@@ -267,14 +285,18 @@ export function Knob({
               }}
             />
           </View>
+          {/* A DEFINITE width, not maxWidth — `adjustsFontSizeToFit` scales to the laid-out frame,
+              and with only a max the frame stays intrinsic, so nothing bounded the readout. It stays
+              on as the native backstop for a face wider than CHAR_W assumes. */}
           <Text
             numberOfLines={1}
             adjustsFontSizeToFit
+            minimumFontScale={0.6}
             style={{
               color: theme.text,
-              fontSize: 13,
+              fontSize: readoutSize,
               fontWeight: "700",
-              maxWidth: dial * 0.86,
+              width: readoutBox,
               textAlign: "center",
             }}
           >
