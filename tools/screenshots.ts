@@ -94,6 +94,28 @@ async function main() {
     ];
     simctl("status_bar", udid, "override", ...statusBar);
 
+    // Terminate before capturing so the run starts from a COLD launch on the editor tab.
+    //
+    // `SCREENS[0]` is `route: ""`, which is not a navigation — deep-linking the bare scheme leaves an
+    // already-running app exactly where it was. That is invisible on a clean run (a fresh launch lands
+    // on the editor anyway) and silently wrong on any run where the app was already open on another
+    // screen: every capture shifts and `01_editor.png` gets whatever was on screen. Reproduced
+    // 2026-08-17 after an interrupted run left the app on the amp page, which then shipped as the
+    // editor screenshot. Terminating makes the first capture deterministic instead of incidental.
+    try {
+      simctl("terminate", udid, BUNDLE_ID);
+    } catch {
+      /* not running — nothing to terminate, which is the state we want anyway */
+    }
+    await sleep(500);
+    // Then LAUNCH it normally before any deep link. Cold-starting via `openurl` instead makes iOS
+    // open the app to handle the URL, and the linked route comes up as a sheet over an empty root —
+    // every screenshot then carries a rounded card inset below the status bar, which reads as a
+    // rendering fault on the App Store listing. Launching first gives the normal full-screen root,
+    // and the deep links navigate inside it.
+    simctl("launch", udid, BUNDLE_ID);
+    await sleep(2000);
+
     console.log("Loading demo state…");
     simctl("openurl", udid, `${SCHEME}://connect?demo=1`);
     await sleep(DEMO_WAIT_MS);
