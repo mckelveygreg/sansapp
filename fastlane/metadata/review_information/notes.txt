@@ -6,6 +6,14 @@ Without a pedal connected, the app launches to a "Connect" screen and every scre
 (the editor, IR page, presets, backup and settings all render). The app needs no account or login
 and collects no data.
 
+Please note that on those screens the knobs and switches are intentionally shown dimmed and do not
+respond to touch while no pedal is connected, and Device Settings shows "—" in place of values. This
+is deliberate, not a fault: those controls send their value to the hardware as you move them, so with
+nothing connected a moving control would be reporting a change that never happened. Each page states
+the connection status at the top. Tapping a knob still opens its detail page, and the graphs, preset
+list, backup and settings screens are all fully viewable, so the app can be navigated end to end
+without the hardware.
+
 This is an independent, unofficial project. The Tech 21 / SansAmp / Bass Driver names are used
 nominatively to describe hardware compatibility. Source and full description:
 https://github.com/mckelveygreg/sansapp
