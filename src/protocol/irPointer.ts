@@ -28,8 +28,16 @@
  * pointer is {@link IrPointerKind} `"invalid"`. See `app/ir.tsx`'s mode toggle.
  *
  * A private pointer (MSB 0/1) is a legitimate, firmware-supported configuration — it is what
- * `uploadCustomIr` creates — so it is **allowed**, not blocked. Whether an *unwritten* private record
- * is distinguishable on read is still open (lab #60); until then a private pointer is trusted.
+ * `uploadCustomIr` creates — so its *address* is in range and this classifier calls it `"private"`
+ * rather than `"invalid"`.
+ *
+ * ⚠️ **`"private"` does not mean "safe to enable".** Being in range says nothing about whether
+ * anything was ever stored there, and an upload that fails partway can leave a pointer naming a record
+ * that was never written (issue #95). Enabling that aims the pedal at erased flash — `0xFF` samples
+ * with a gain field of ≈2.0, the same hazard class disclosed as #72. This was once trusted because
+ * whether an unwritten record is distinguishable on read was open; **lab #60 closed it** — it is, and
+ * {@link probeIrRecord} is the test. So a private pointer must be *probed* before its slot is enabled,
+ * never trusted on its address alone. `app/ir.tsx`'s mode toggle does exactly that.
  */
 
 /** Blob offsets of each user slot's IR record pair, `[MSB, LSB]` — bytes 0x57–0x5A. */

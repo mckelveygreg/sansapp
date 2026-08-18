@@ -121,6 +121,37 @@ export async function readIrDat(
   return packed ? irStreamToDat(packed) : null;
 }
 
+/** What record `(a, b)` turned out to hold — see {@link probeIrRecord}. */
+export type IrRecordState = "written" | "unwritten" | "unreadable";
+
+/**
+ * Is there really an IR stored at record `(a, b)`? The written/unwritten test the pointer guard needs.
+ *
+ * Hardware-proved on firmware 1.2 (lab #60, `tools/probe-ir-record.ts`): the pedal serves **any**
+ * private address with no bank test and no bounds check, so "it answered" says nothing about whether
+ * anything was ever stored there. An erased record and a written one produce the **identical 11-frame
+ * envelope on the wire** — which is why reading the raw frames could never settle this and decoding
+ * can: an unwritten record comes back as 2436 bytes of `0xFF` and fails {@link irStreamToDat}'s
+ * `01 00` magic, while a real one decodes.
+ *
+ * Three outcomes, not two, because the guard's advice differs:
+ * - `written` — a real IR decoded. Safe to play.
+ * - `unwritten` — the pedal answered and there is nothing there. Playing it convolves erased flash
+ *   (`0xFF` samples with a gain field of `0xFFFF/32768 ≈ 2.0` — the loud case, not the quiet one).
+ * - `unreadable` — no complete stream came back. Says nothing either way, so callers must still
+ *   refuse, but "couldn't check" is the honest thing to tell the user rather than "nothing is there".
+ */
+export async function probeIrRecord(
+  session: DeviceSession,
+  a: number,
+  b: number,
+  timeoutMs = 6000,
+): Promise<IrRecordState> {
+  const packed = await readIrPacked(session, a, b, timeoutMs);
+  if (!packed) return "unreadable";
+  return irStreamToDat(packed) ? "written" : "unwritten";
+}
+
 /** Read the IR in slot 1..8 using {@link IR_READ_AB} (null for an out-of-range slot). */
 export function readIrSlot(session: DeviceSession, slot: number): Promise<DecodedIr | null> {
   const ab = IR_READ_AB[slot];
