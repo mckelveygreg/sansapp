@@ -147,8 +147,9 @@ export default function Backup() {
 
       <Card title="Back up">
         <Text style={{ color: theme.textDim, fontSize: 12, lineHeight: 18 }}>
-          Reads all 128 presets and exports a `.p3b`. IRs are a shared library on the pedal, not
-          part of a preset — browse, design and upload them on the IR page.
+          Reads all 128 presets and exports a `.p3b`. This backs up presets only — your uploaded
+          custom IRs are stored separately on the pedal and are NOT included, so keep your own copy
+          of any cab you crafted (the IR page can export one as a `.wav`).
         </Text>
         <Button
           label="Export all presets (.p3b)"
@@ -160,8 +161,9 @@ export default function Backup() {
 
       <Card title="Restore">
         <Text style={{ color: theme.textDim, fontSize: 12, lineHeight: 18 }}>
-          Writes presets from a `.p3b` back to the pedal (and replays any IR data the file
-          contains). Overwrites current presets.
+          Writes presets from a `.p3b` back to the pedal, overwriting the current ones. A preset
+          that referenced a custom IR comes back pointing at it, but the cab itself is only there if
+          it is still on the pedal — restoring cannot recreate one.
         </Text>
         <Button
           label="Restore from .p3b…"
