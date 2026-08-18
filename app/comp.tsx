@@ -7,8 +7,9 @@
  * the upper-right (right dot = threshold, angle = ratio); the gate is the lower-left. RN app surface.
  *
  * Displayed units are hardware-calibrated (src/protocol/units.ts, measured against EliteControl):
- * Threshold −0.5…−60 dB (Bypass at the floor), Ratio 1–20:1, Output −30…+18 dB, Attack 1–100 ms,
- * Release 10–1000 ms.
+ * Threshold −0.5…−60 dB (Bypass at the floor), Ratio 1–20:1, Output −30…+18 dB, Attack 1–100 ms
+ * (cube taper), Release 10–1000 ms (square). Soft Clip is a SWITCH, not an amount — see
+ * SOFT_CLIP_ON_VALUE.
  */
 import { Switch, Text, useWindowDimensions, View } from "react-native";
 import { useStore } from "zustand";
@@ -19,7 +20,7 @@ import { FootNote, GraphCard, IntroNote } from "../src/components/panels";
 import { radius, theme } from "../src/components/theme";
 import { rawToPct, sendParam } from "../src/midi/liveParam";
 import { pedalStore } from "../src/midi/pedal";
-import { PARAMS, type ParamId } from "../src/protocol/params";
+import { PARAMS, SOFT_CLIP_ON_VALUE, type ParamId } from "../src/protocol/params";
 import {
   compAttackMs,
   compOutputDb,
@@ -82,7 +83,7 @@ export default function Compressor() {
   const compOutput = useStore(pedalStore, (s) => s.values.compOutput) ?? 64;
   const compAttack = useStore(pedalStore, (s) => s.values.compAttack) ?? 64;
   const compRelease = useStore(pedalStore, (s) => s.values.compRelease) ?? 64;
-  const softClip = useStore(pedalStore, (s) => s.values.softClip) ?? 127;
+  const softClipOn = (useStore(pedalStore, (s) => s.values.softClip) ?? 0) > 0;
   const gateThreshold = useStore(pedalStore, (s) => s.values.gateThreshold) ?? 64;
   const gateRatioVal = useStore(pedalStore, (s) => s.values.gateRatio) ?? 64;
   const gateAttack = useStore(pedalStore, (s) => s.values.gateAttack) ?? 0;
@@ -173,16 +174,16 @@ export default function Compressor() {
             onChange={setP("compRelease")}
             disabled={!ready}
           />
-          <Knob
-            label="Soft Clip"
-            value={softClip}
-            ghost={baseline.softClip}
-            display={`${rawToPct(softClip)}%`}
-            onChange={setP("softClip")}
-            disabled={!ready}
-          />
         </View>
         <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
+          {/* Soft Clip is a switch on the pedal, not an amount — see SOFT_CLIP_ON_VALUE. It was a
+              0–127 knob showing raw %, which advertised a resolution the hardware does not have. */}
+          <ToggleRow
+            label="SOFT CLIP"
+            value={softClipOn}
+            disabled={!ready}
+            onChange={(on) => setP("softClip")(on ? SOFT_CLIP_ON_VALUE : 0)}
+          />
           <ToggleRow
             label="AUTO GAIN"
             value={autoGain}
