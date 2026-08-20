@@ -284,6 +284,47 @@ predicted offset).
 The compressor block, gate/expander, Auto-Filter Attack/Release, Ambience Decay/Time, IR Mode/Gain
 toggles, and Preset Level are all mapped the same way — see `docs/PARAM-MAP.md` and `params.ts`.
 
+### Live state is write-only — and how to read it anyway ✅ (hardware, 2026-08-19)
+
+The pedal's **live** parameter array — what you are hearing after turning knobs, before saving — is
+not readable. Every read path resolves to flash: `05 55 <idx>` is "read flash page `0x3f0 + idx`" and
+`05 40 <slot>` is "read flash page `slot + 1024`". Exactly **one** live byte is exposed anywhere in
+the read surface: **settings block 0 byte 0**, the active program, hand-patched from RAM. That is why
+an editor always shows the right preset _number_ while the values beside it may be stale, and Tech
+21's own EliteControl has the identical blind spot (verified: it displays stale values after on-pedal
+tweaks).
+
+But a **bare commit — the save command with no `05 20` stage** — makes the pedal build its flash blob
+from the **live array** and echo it back:
+
+```
+F0 00 51 21 05 50 <ver> 12 <active slot> F7   ; no stage first
+F0 00 51 21 05 41 <ver> <slot> <256 bytes+ck> F7   ; the echo IS live state
+```
+
+So live state can be read by asking the pedal to write it down, then putting the slot back. SansApp's
+**Read from Pedal** does exactly that (`src/device/readFromPedal.ts`); the reasoning, the rejected
+alternatives and the consequences are in
+[`docs/adr/0001-read-live-state-by-laundering-through-flash.md`](adr/0001-read-live-state-by-laundering-through-flash.md).
+Three properties of the mechanism are worth stating here, all confirmed on hardware:
+
+- **A `05 20` stage refreshes the live array from the staged blob.** So putting the slot back also
+  reverts the sound, and the captured values must be **re-applied** as live params afterwards or the
+  operation destroys what it recovered. (Verified twice by _laundering a second time_: the values a
+  fresh bare commit reports after the re-apply matched the first capture — 68/68, then 69/69 with IR
+  select included.)
+- **The pedal never acknowledges an app-originated live set.** `05 51` echoes were seen for **0 of
+  68** writes, though it does notify knob turns made at the pedal. Re-apply therefore cannot confirm
+  itself without paying for a third flash write; SansApp instead paces the writes at **≥ 120 ms** and
+  reports its confidence to the user. At 30 ms, 2–3 of 69 writes were silently dropped, and a
+  different 2–3 on a re-run.
+- **Use the ACTIVE slot.** A save to any other slot moves the pedal's active program onto that slot,
+  which would switch the rig mid-session.
+
+Two params are never re-applied: the **Tuner** (`0x34`, it would mute or bypass the rig) and the
+**user-IR address words** (`0x35`–`0x38`, which would repoint IR records). IR select (`0x0E`) _is_
+re-applied — it round-trips, and the address words provably don't move when it does.
+
 ### The Tuner param needs a nudge ✅ (index `0x34`, set-id `0x38`)
 
 The tuner/mute switch is a writable live param — `0`, `1` (Mute), `2` (Bypass) — and it is the one
@@ -585,7 +626,8 @@ Handshake + checksum; `setParam`/`recall`/`read`/`write` (`0x20`) commands; the 
 framing; **all 15 knob param ids** (8 main + 7 Red Zone) and the read-vs-write (+4) rule; blob
 offsets for every mapped param (`= index + 0x22`); the **settings write** command (`05 52` block
 write, ack `05 53`); amp/ambience selection = live-set param bundles; IR select = param `0x0E`;
-user-IR upload transport + payload; the **Tuner** param `0x34` and its write-plus-nudge requirement.
+user-IR upload transport + payload; the **Tuner** param `0x34` and its write-plus-nudge requirement;
+**live state is write-only, and a bare commit is how to read it** (see above, and `docs/adr/0001`).
 
 ## Open questions ❓
 

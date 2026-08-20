@@ -5,7 +5,6 @@ import {
   DISENGAGE_POTS_INVERSE_OFFSET,
   isSettingOn,
   parsePcMap,
-  SETTINGS_MARKER,
   SPECIAL_FN_OFFSETS,
   SPECIAL_FUNCTIONS,
   TUNER_DETUNE,
@@ -26,7 +25,8 @@ const BLOCK0 = (() => {
 
 describe("settings block", () => {
   it("reads flags at their offsets", () => {
-    expect(BLOCK0[0]).toBe(SETTINGS_MARKER);
+    // byte 0 is the pedal's ACTIVE PROGRAM — this capture was taken on program 128 (docs/adr/0001)
+    expect(BLOCK0[0]).toBe(0x7f);
     expect(isSettingOn(BLOCK0, 7)).toBe(true); // disengage pots (byte 7, confirmed 2026-07-06)
     expect(isSettingOn(BLOCK0, 3)).toBe(false);
   });

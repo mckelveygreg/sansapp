@@ -18,8 +18,13 @@ export const CC_MAP_BLOCK = 0x01;
 export const PC_MAP_BLOCK = 0x02;
 export const BLOCK_SIZE = 256;
 
-/** block0[0] — a constant marker seen in every dump. */
-export const SETTINGS_MARKER = 0x7f;
+/**
+ * block0[0] is **the pedal's ACTIVE PROGRAM**, patched from RAM on every read — the only live value
+ * anywhere in the read surface (docs/adr/0001), which is why the app can always show the right preset
+ * number while the values beside it may be stale. It was once modelled here as a constant `0x7F`
+ * marker; the captured dump that came from simply had the pedal sitting on program 128 at the time.
+ * There is nothing to export: `session.readBlock(0x55, SETTINGS_BLOCK)[0]` is the whole interface.
+ */
 
 export type SettingKind = "toggle" | "channel" | "tunerFreq" | "tunerDetune";
 

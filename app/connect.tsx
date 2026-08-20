@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { useStore } from "zustand";
 import { ConnectionPill } from "../src/components/ConnectionPill";
+import { ReadFromPedalCard } from "../src/components/ReadFromPedal";
 import { radius, theme } from "../src/components/theme";
 import { connectPedal, disconnectPedal, loadDemoState, pedalStore } from "../src/midi/pedal";
 import { DEFAULT_PROTOCOL_VERSION } from "../src/protocol/constants";
@@ -70,6 +71,8 @@ export default function Connect() {
         </Text>
       </Pressable>
       {error ? <Text style={{ color: theme.accent }}>{error}</Text> : null}
+
+      <ReadFromPedalCard />
 
       {connection === "ready" ? (
         <Pressable

@@ -84,4 +84,4 @@ Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `read
 
 ### Domain docs
 
-Single-context — root `CONTEXT.md` + `docs/adr/` (not yet created). See `docs/agents/domain.md`.
+Single-context — root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.

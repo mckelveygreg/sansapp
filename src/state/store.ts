@@ -5,6 +5,8 @@
  */
 
 import { createStore } from "zustand/vanilla";
+import { readFromPedal, restoreStoredPreset } from "../device/readFromPedal";
+import type { ReadFromPedalOptions, ReadFromPedalResult } from "../device/readFromPedal";
 import type { ConnectionState, DeviceSession } from "../device/session";
 import { AMBIENCE_BUNDLES, AMBIENCE_PROFILE_WIRES, detectAmbienceType } from "../protocol/ambience";
 import {
@@ -19,11 +21,29 @@ import {
   type ParamId,
   type TunerMode,
 } from "../protocol/params";
-import type { Preset } from "../protocol/preset";
+import { decodePreset, type Preset } from "../protocol/preset";
 import { ambienceStore } from "./ambience";
 
 /** Which physical-knob layer the pedal is on: primary, or the red "SHIFT" (Red Zone) layer. */
 export type KnobLayer = "primary" | "red";
+
+/**
+ * How much the app can claim about its own values.
+ *
+ * `known` — the app has been continuously attached since the last moment truth was established (a
+ * recall, a preset change at the pedal, or a Read from Pedal), and the pedal notifies every knob
+ * turn, so what's on screen is what you're hearing.
+ *
+ * `stale` — it might not be. The app cannot detect drift: the only way to check is to perform a Read
+ * from Pedal (docs/adr/0001), so this is a statement about the app's knowledge, never a claim that
+ * anything is actually wrong. A connect starts here — the pedal serves a preset read from flash, so
+ * tweaks made before the app arrived are invisible — and any link drop returns here, because a missed
+ * notify is undetectable.
+ *
+ * Scoped to SOUNDING parameters. The tuner is changed by footswitch with nothing on the wire, so it
+ * can never be claimed either way and is not part of this.
+ */
+export type Freshness = "known" | "stale";
 
 export interface PedalState {
   connection: ConnectionState;
@@ -76,6 +96,8 @@ export interface PedalState {
   raw: Uint8Array | null;
   /** Unsaved edits since the last recall/save. */
   dirty: boolean;
+  /** Whether the values on screen are known to be what the pedal is playing — see {@link Freshness}. */
+  freshness: Freshness;
   /** Recent human-readable MIDI log lines (ring buffer). */
   log: string[];
 
@@ -84,6 +106,7 @@ export interface PedalState {
   setLayer: (layer: KnobLayer) => void;
   setTuner: (tuner: TunerMode) => void;
   setLinkBusy: (linkBusy: boolean) => void;
+  setFreshness: (freshness: Freshness) => void;
   loadPreset: (
     slot: number | null,
     values: Partial<Record<ParamId, number>>,
@@ -93,6 +116,18 @@ export interface PedalState {
   setNames: (names: Record<number, string>) => void;
   setValueLocal: (id: ParamId, value: number) => void;
   noteExternal: (id: ParamId, value: number) => void;
+  /**
+   * Land values recovered by a Read from Pedal: `values` is what the pedal is playing, `baseline` is
+   * what its slot stores. They become **unsaved edits** — the `•` lights up and the existing
+   * unsaved-changes guard protects them — because the player deliberately hadn't saved.
+   */
+  adoptLive: (
+    slot: number,
+    values: Partial<Record<ParamId, number>>,
+    baseline: Partial<Record<ParamId, number>>,
+    name: string | null,
+    raw: Uint8Array,
+  ) => void;
   pushLog: (line: string) => void;
   clearLog: () => void;
   /** Mark the current sound saved: clears dirty + the ambience typeDirty flag, and (when the written
@@ -117,6 +152,10 @@ export function createPedalStore() {
     baseline: {},
     raw: null,
     dirty: false,
+    // Nothing has proved what the pedal is playing yet — and a connect whose loadCurrent FAILS stays
+    // connected (src/midi/pedal.ts), so a hopeful default would claim the most exactly when the app
+    // knows the least. A recall or a Read from Pedal is what earns "known".
+    freshness: "stale",
     log: [],
 
     setConnection: (connection) => set({ connection }),
@@ -124,6 +163,7 @@ export function createPedalStore() {
     setLayer: (layer) => set({ layer }),
     setTuner: (tuner) => set({ tuner }),
     setLinkBusy: (linkBusy) => set({ linkBusy }),
+    setFreshness: (freshness) => set({ freshness }),
     loadPreset: (slot, values, name = null, raw = null) =>
       set((s) => ({
         slot,
@@ -151,6 +191,23 @@ export function createPedalStore() {
     setValueLocal: (id, value) =>
       set((s) => ({ values: { ...s.values, [id]: value }, dirty: true })),
     noteExternal: (id, value) => set((s) => ({ values: { ...s.values, [id]: value } })),
+    adoptLive: (slot, values, baseline, name, raw) =>
+      set((s) => ({
+        // The slot comes from the PEDAL (its active program), so this also corrects a store that had
+        // drifted onto the wrong preset — the same reason loadPreset takes one.
+        slot,
+        name,
+        names: name != null ? { ...s.names, [slot]: name } : s.names,
+        values: { ...values },
+        baseline: { ...baseline },
+        raw,
+        dirty: PARAM_IDS.some((id) => values[id] !== baseline[id]),
+        // The pedal re-derives its Red Zone state from the values a preset LOAD pushes into the live
+        // array — and the restore's `05 20` stage is such a load, of the STORED blob. The re-apply
+        // that follows sets params individually and re-derives nothing. So the pedal is sitting on
+        // the stored preset's derivation, not the recovered values'.
+        layer: redZoneEngagedFor(baseline, s.firmware) ? "red" : "primary",
+      })),
     pushLog: (line) => set((s) => ({ log: [...s.log.slice(-(LOG_CAP - 1)), line] })),
     clearLog: () => set({ log: [] }),
     markSaved: (raw) => {
@@ -167,6 +224,15 @@ export interface PedalController {
   recall: (slot: number) => Promise<Preset>;
   /** Read the pedal's current edit buffer into the store WITHOUT changing the pedal (for connect). */
   loadCurrent: () => Promise<Preset>;
+  /**
+   * **Read from Pedal**: recover the player's unsaved on-pedal tweaks into the store as unsaved
+   * edits. Briefly writes to the active slot and puts it back — see `src/device/readFromPedal.ts`
+   * and docs/adr/0001 for why a read has to write. Resolves with what happened; a non-null
+   * `problem` means the values were recovered but something afterwards needs the user's attention.
+   */
+  readLive: (opts?: ReadFromPedalOptions) => Promise<ReadFromPedalResult>;
+  /** Retry a restore that failed — write a kept backup blob back to its slot. Throws on failure. */
+  restoreBackup: (slot: number, stored: Uint8Array) => Promise<void>;
   dispose: () => void;
 }
 
@@ -253,8 +319,37 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     store.getState().loadPreset(slot, preset.values, name, preset.raw);
     syncAmbienceType(preset);
     syncTunerFromPreset(store, preset.raw); // the backstop path follows a real preset change
+    // A preset READ serves flash. If the player turned knobs before the app arrived, those tweaks are
+    // in the pedal's live array and nowhere in this blob — and nothing here can tell. Say so.
+    store.getState().setFreshness("stale");
     store.getState().pushLog(`● loaded current preset${slot != null ? ` (${slot + 1})` : ""}`);
     return preset;
+  };
+
+  /**
+   * Read from Pedal — the controller half. `readFromPedal` does the wire work; this lands the result:
+   * the recovered values as unsaved edits over the stored preset's baseline, the ambience engine
+   * re-detected from the LIVE blob, and the freshness claim set from whether the re-apply landed
+   * (that is the step that decides whether the pedal is playing what the app now shows — a failed
+   * *restore* leaves the slot wrong, but not the sound).
+   */
+  const readLive = async (opts?: ReadFromPedalOptions): Promise<ReadFromPedalResult> => {
+    const result = await readFromPedal(session, opts);
+    const live = decodePreset(result.live);
+    const stored = decodePreset(result.stored);
+    store
+      .getState()
+      .adoptLive(result.slot, live.values, stored.values, live.name?.trim() || null, live.raw);
+    syncAmbienceType(live);
+    store.getState().setFreshness(result.reapplied ? "known" : "stale");
+    store
+      .getState()
+      .pushLog(
+        result.problem
+          ? `⤓ read from pedal (${result.slot + 1}) — ${result.problem}`
+          : `⤓ read from pedal (${result.slot + 1}): ${store.getState().dirty ? "recovered unsaved edits" : "no unsaved edits to recover"}`,
+      );
+    return result;
   };
 
   let reloading = false; // avoid overlapping reloads from repeated slot notifications
@@ -264,7 +359,11 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
       // A link that dies mid-IR-transfer never delivers the exclusive window's release (the controller
       // is disposed first), which would leave the tuner bar disabled forever. The disconnect is the
       // release.
-      if (s === "disconnected") store.getState().setLinkBusy(false);
+      if (s === "disconnected") {
+        store.getState().setLinkBusy(false);
+        // A missed notify is undetectable, so anything the pedal did while we were away is unknown.
+        store.getState().setFreshness("stale");
+      }
     }),
     session.onFirmwareVersion((firmware) => {
       store.getState().setFirmware(firmware);
@@ -277,6 +376,9 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
       store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null, preset.raw);
       syncAmbienceType(preset);
       syncTunerFromPreset(store, preset.raw); // the recall behind this push reloaded its tuner byte
+      // The recall behind this push reloaded the pedal's whole live array from this very blob, so
+      // right now the app and the pedal provably agree.
+      store.getState().setFreshness("known");
       store.getState().pushLog(`⤺ pedal → preset ${slot + 1}: ${preset.name.trim()}`);
     }),
     session.onSlotChange((slot) => {
@@ -346,10 +448,17 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
       store.getState().loadPreset(slot, preset.values, preset.name?.trim() || null, preset.raw);
       syncAmbienceType(preset); // highlighted engine, from this preset's blob
       syncTunerFromPreset(store, preset.raw); // every recall reloads the tuner from the preset
+      store.getState().setFreshness("known"); // a recall reloads live state from this blob
       store.getState().pushLog(`▶ recalled ${slot}: ${preset.name}`);
       return preset;
     },
     loadCurrent,
+    readLive,
+    async restoreBackup(slot, stored) {
+      const { ok, problem } = await restoreStoredPreset(session, slot, stored);
+      if (!ok) throw new Error(problem ?? `preset ${slot + 1} could not be restored`);
+      store.getState().pushLog(`↩ restored preset ${slot + 1} from the backup`);
+    },
     dispose() {
       for (const u of unsubs) u();
     },

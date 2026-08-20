@@ -8,6 +8,7 @@ import { liveSetId, type TunerMode } from "../protocol/params";
 import { buildPresetBlob } from "../protocol/buildPreset";
 import { encodePreset, withName } from "../protocol/preset";
 import { ambienceStore } from "../state/ambience";
+import { readPedalStore } from "../state/readPedal";
 import {
   DEMO_AMBIENCE_TYPE,
   DEMO_NAME,
@@ -161,6 +162,9 @@ export async function connectPedal(portMatch?: string): Promise<void> {
   // sessions on one MIDIInput — double listeners, two request queues colliding, and the OLD session's
   // eventual disconnect handler tearing down the NEW one (the module refs point at the successor).
   teardownSession();
+  // A new connection knows nothing about what the pedal has been doing, so re-offer Read from Pedal
+  // (a pending restore from a link that died mid-operation survives — see newConnection).
+  readPedalStore.getState().newConnection();
   // Android: bring the WIDI Jack (BLE) online so it enumerates as a MIDI port. No-op on iOS/web and
   // for wired USB — best-effort, so a failure here still lets the wired MD1 be found below.
   await ensureBluetoothMidi(portMatch);
@@ -249,6 +253,10 @@ export function loadDemoState(): void {
   st.loadPreset(DEMO_SLOT, DEMO_VALUES, DEMO_NAME);
   st.setNames({ ...st.names, ...DEMO_NAMES });
   ambienceStore.getState().patch({ type: DEMO_AMBIENCE_TYPE, typeDirty: false });
+  // Synthetic state is by definition what the (absent) pedal is playing — so no "may be stale" mark
+  // and no Read from Pedal offer in a screenshot.
+  st.setFreshness("known");
+  readPedalStore.getState().dismissOffer();
   st.setConnection("ready");
   st.pushLog("● demo state loaded (no hardware)");
 }

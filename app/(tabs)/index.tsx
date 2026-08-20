@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "zustand";
 import { ToneShaper } from "../../src/components/ToneShaper";
 import { KnobPanel } from "../../src/components/KnobPanel";
+import { ReadFromPedalOffer } from "../../src/components/ReadFromPedal";
 import { Section } from "../../src/components/Section";
 import { SectionBar } from "../../src/components/SectionBar";
 import { radius, theme } from "../../src/components/theme";
@@ -27,6 +28,9 @@ const setValue = (id: ParamId, v: number) => getController()?.setValue(id, v);
 export default function Editor() {
   const insets = useSafeAreaInsets();
   const connection = useStore(pedalStore, (s) => s.connection);
+  // The pedal ignores parameter writes while an exclusive operation owns the link (an IR transfer, a
+  // Read from Pedal), so the knobs go dead rather than lying about what they're doing.
+  const linkBusy = useStore(pedalStore, (s) => s.linkBusy);
   const values = useStore(pedalStore, (s) => s.values);
   const baseline = useStore(pedalStore, (s) => s.baseline);
   // The loaded preset's blob: the Tone Shaper's cab overlay reads THIS preset's IR-record pointers
@@ -34,6 +38,7 @@ export default function Editor() {
   const raw = useStore(pedalStore, (s) => s.raw);
   const [error, setError] = useState<string | null>(null);
   const ready = connection === "ready";
+  const editable = ready && !linkBusy;
 
   // Clear a stale connect error the moment we're actually connected — no matter how the connection
   // was (re)established (this screen, the Connect modal, or a reconnect). Fixes the banner lingering
@@ -74,6 +79,8 @@ export default function Editor() {
       ) : null}
       {error ? <Text style={{ color: theme.accent }}>{error}</Text> : null}
 
+      <ReadFromPedalOffer />
+
       <SectionBar />
 
       <View style={{ gap: 16 }}>
@@ -86,7 +93,7 @@ export default function Editor() {
             values={values}
             baseline={baseline}
             onChange={setValue}
-            disabled={!ready}
+            disabled={!editable}
           />
         </Section>
         <Section title="MIX · OUTPUT">
@@ -95,7 +102,7 @@ export default function Editor() {
             values={values}
             baseline={baseline}
             onChange={setValue}
-            disabled={!ready}
+            disabled={!editable}
           />
         </Section>
         <Section title="RED ZONE" accent>
@@ -104,7 +111,7 @@ export default function Editor() {
             values={values}
             baseline={baseline}
             onChange={setValue}
-            disabled={!ready}
+            disabled={!editable}
           />
         </Section>
       </View>
