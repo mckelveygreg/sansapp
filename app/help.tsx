@@ -14,7 +14,7 @@ interface Section {
 
 // In-progress, personal feature gated off in the public app (same flag the Recipes route uses).
 const RECIPES_SECTION: Section = {
-  title: "6 · Recipes",
+  title: "7 · Recipes",
   lines: [
     "The Recipes page has curated starting points for specific songs and sounds, mapped to this pedal's controls. Tap Apply to load one into the live edit buffer, then tune by ear and Save it if you like it.",
   ],
@@ -65,6 +65,16 @@ const GUIDE: Section[] = [
       "- The buttons show what the app last asked for. If you engage the tuner with the pedal's own footswitch, the app can't tell (the pedal sends nothing), so they can read Off while the pedal is muted — changing preset clears it either way.",
       "- Saving a preset while the tuner is engaged makes the pedal store it silent. If that happens, SansApp turns the tuner off and saves again, and says so in the MIDI log.",
       "- The buttons grey out during an IR upload: the pedal ignores a tuner change while it's writing IR data.",
+    ],
+  },
+  {
+    title: "6 · Read from Pedal",
+    lines: [
+      "Turned knobs on the pedal itself and haven't saved? SansApp can't see those — the pedal reports the preset it's on, but not the sound it's actually making. Read from Pedal (on the Connect screen) brings them in.",
+      "It takes about 10 seconds and works by asking the pedal to write its current sound down: it briefly saves over the preset you're on, then puts that preset back exactly as it was and checks it landed. That's the only way the pedal will report what it's playing — leave the pedal alone while it runs.",
+      "What comes back arrives as unsaved edits, so the • lights up beside the preset name and nothing is saved until you save it.",
+      "- An amber ? beside the preset name means the values on screen might not be what the pedal is playing — after a fresh connect, or after the link dropped. It's not a fault, just what the app can honestly claim. Tap it to jump to the Connect screen, where Read from Pedal lives.",
+      "- Engaging the tuner with the footswitch is silent on the wire, so Read from Pedal can't recover that (it turns the tuner off before it starts).",
     ],
   },
   ...(FEATURES.recipes ? [RECIPES_SECTION] : []),

@@ -744,11 +744,73 @@ describe("PedalModel behavior (batch 5)", () => {
     expect([...model.editBuffer]).toEqual([...before]); // the stage was discarded — nothing changed
   });
 
-  it("still writes a numbered slot (0x7D) on a writePreset", () => {
+  it("still writes a numbered slot (0x7D) — the stage stages, the commit persists", () => {
     const model = new PedalModel(makePresets());
+    const before = model.presets[0x7d]![0x27];
     const blob = new Uint8Array(256);
     blob[0x27] = 0x66;
     model.handle({ kind: "writePreset", slot: 0x7d, blob, checksumOk: true });
-    expect(model.presets[0x7d]![0x27]).toBe(0x66);
+    expect(model.presets[0x7d]![0x27]).toBe(before); // a stage alone doesn't reach flash…
+    model.handle({ kind: "setParam", param: 0x12, value: 0x7d });
+    expect(model.presets[0x7d]![0x27]).toBe(0x66); // …the commit does
+  });
+});
+
+// ── live state: write-only over the wire, readable only by asking the pedal to write it down ─────
+describe("PedalModel live parameter array", () => {
+  it("a preset read serves FLASH, so an on-pedal tweak is invisible to it", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    wireModel(devIO, model);
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    await session.recallPreset(3);
+
+    session.setLiveParam(liveSetId(0x05), 0x42); // turn Drive at the pedal
+    await new Promise((r) => setTimeout(r, 60));
+
+    expect(model.live[0x05]).toBe(0x42); // the pedal hears it…
+    expect((await session.readPreset(3)).raw[0x27]).toBe(3); // …and reports the stored byte anyway
+  });
+
+  it("a BARE commit builds the blob from live state and echoes it (the launder)", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    wireModel(devIO, model);
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    await session.recallPreset(3);
+
+    session.setLiveParam(liveSetId(0x05), 0x42); // Drive
+    session.setLiveParam(liveSetId(0x47), 0x11); // Blend — a deep param, set on 0x4B
+    await new Promise((r) => setTimeout(r, 60));
+
+    const echo = await session.commitLive(3);
+    expect(echo[0x27]).toBe(0x42); // Drive, from live state
+    expect(echo[0x69]).toBe(0x11); // Blend, at wireId + 0x22
+    expect(model.presets[3]![0x27]).toBe(0x42); // and it really did reach flash
+  });
+
+  it("a stage refreshes the live array, so a restore reverts the pedal's live state", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    wireModel(devIO, model);
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const stored = (await session.readPreset(3)).raw;
+
+    session.setLiveParam(liveSetId(0x05), 0x42);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(model.live[0x05]).toBe(0x42);
+
+    await session.writePreset(3, stored); // put the slot back — and the live array with it
+    expect(model.live[0x05]).toBe(3); // reverted to the stored value. This is why re-apply exists.
+  });
+
+  it("ignores a live set aimed at a command id (0x10/0x11/0x13)", async () => {
+    const model = new PedalModel(makePresets());
+    const before = [...model.live];
+    for (const param of [0x10, 0x11, 0x13]) model.handle({ kind: "setParam", param, value: 0x7f });
+    expect([...model.live]).toEqual(before);
   });
 });

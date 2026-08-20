@@ -14,6 +14,30 @@ import { SevenSegment } from "./SevenSegment";
 import { theme } from "./theme";
 import { recallWithUnsavedGuard } from "./unsavedGuard";
 
+/**
+ * Shown beside the preset name when the app can't claim its values are what the pedal is playing —
+ * on a fresh connect, and after any link drop. Deliberately a question mark, not a warning: the app
+ * cannot detect drift, so this is about what it *knows*, never a claim that something is wrong. Tapping
+ * it goes to the Connection screen, where Read from Pedal explains itself and can settle the question.
+ */
+function FreshnessMark() {
+  const stale = useStore(pedalStore, (s) => s.freshness) === "stale";
+  const ready = useStore(pedalStore, (s) => s.connection) === "ready";
+  if (!stale || !ready) return null;
+  return (
+    <Link href="/connect" asChild>
+      <Pressable
+        hitSlop={8}
+        style={{ paddingHorizontal: 2 }}
+        accessibilityRole="button"
+        accessibilityLabel="Values may be stale — read from the pedal"
+      >
+        <Ionicons name="help-circle-outline" size={15} color={theme.amber} />
+      </Pressable>
+    </Link>
+  );
+}
+
 export function TransportTitle() {
   const slot = useStore(pedalStore, (s) => s.slot);
   const name = useStore(pedalStore, (s) => s.name);
@@ -43,11 +67,12 @@ export function TransportTitle() {
       </Pressable>
       <Text
         numberOfLines={1}
-        style={{ color: theme.text, fontSize: 15, fontWeight: "800", maxWidth: 120, marginLeft: 4 }}
+        style={{ color: theme.text, fontSize: 15, fontWeight: "800", maxWidth: 110, marginLeft: 4 }}
       >
         {name ?? "SansApp"}
         {dirty ? <Text style={{ color: theme.accent }}> •</Text> : null}
       </Text>
+      <FreshnessMark />
     </View>
   );
 }

@@ -5,7 +5,7 @@ import { DeviceSession } from "../src/device/session";
 import { createLoopback, type MidiIO } from "../src/device/transport";
 import { AMBIENCE_BUNDLES } from "../src/protocol/ambience";
 import { PROTOCOL_V1_0, PROTOCOL_V1_1, PROTOCOL_V1_2 } from "../src/protocol/constants";
-import { PARAMS, TUNER_BLOB_OFFSET } from "../src/protocol/params";
+import { PARAMS, TUNER_BLOB_OFFSET, liveSetId } from "../src/protocol/params";
 import { ambienceStore } from "../src/state/ambience";
 import { applyAmbienceType, bindSession, createPedalStore } from "../src/state/store";
 import { angleToValue, dragToValue, toDisplay, valueToAngle } from "../src/ui/knobMath";
@@ -463,5 +463,92 @@ describe("ambience type → store single source of truth", () => {
     expect(store.getState().dirty).toBe(false);
     expect(store.getState().raw).toBe(written); // saved blob becomes the base for the next save
     expect(ambienceStore.getState().typeDirty).toBe(false);
+  });
+});
+
+describe("Read from Pedal → store", () => {
+  /** A connected controller sitting on `slot`, with a bank whose presets have known values. */
+  async function attached(slot: number) {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(
+      Array.from({ length: 128 }, (_, i) => {
+        const b = new Uint8Array(256);
+        b[0] = 0x01;
+        b[PARAMS.drive.blobOffset] = 20;
+        b[PARAMS.level.blobOffset] = 64;
+        b.set([0x53, 0x4c, 0x4f, 0x54, 0x20 + i], 0x02); // a name, so the store gets one
+        return b;
+      }),
+    );
+    wireModel(devIO, model);
+    const session = new DeviceSession(appIO, 500);
+    const store = createPedalStore();
+    await session.connect();
+    const controller = bindSession(session, store);
+    await controller.recall(slot);
+    return { model, session, store, controller };
+  }
+
+  it("lands recovered values as UNSAVED edits over the stored preset's baseline", async () => {
+    const { model, session, store, controller } = await attached(3);
+    expect(store.getState().freshness).toBe("known"); // the recall proved it
+    // The player turns Drive at the pedal while we're… pretending not to be listening.
+    await session.setParamsPaced([{ param: liveSetId(PARAMS.drive.paramId!), value: 111 }]);
+
+    const result = await controller.readLive({ gapMs: 0, settleMs: 0 });
+
+    expect(result.problem).toBeNull();
+    expect(store.getState().values.drive).toBe(111); // what you're hearing
+    expect(store.getState().baseline.drive).toBe(20); // what the slot stores
+    expect(store.getState().dirty).toBe(true); // so the • lights up and the guard protects it
+    expect(store.getState().freshness).toBe("known");
+    expect(store.getState().raw?.[PARAMS.drive.blobOffset]).toBe(111); // saving persists the truth
+    expect(model.presets[3]![PARAMS.drive.blobOffset]).toBe(20); // …but nothing is saved yet
+  });
+
+  it("stays clean when there was nothing to recover", async () => {
+    const { controller, store } = await attached(5);
+    const result = await controller.readLive({ gapMs: 0, settleMs: 0 });
+    expect(result.problem).toBeNull();
+    expect(store.getState().dirty).toBe(false);
+  });
+
+  it("only claims the values are known once the re-apply landed", async () => {
+    const { session, store, controller } = await attached(3);
+    // Let the forced tuner-Off through, then break the wire so only the RE-APPLY fails.
+    const realSets = session.setParamsPaced.bind(session);
+    let sends = 0;
+    session.setParamsPaced = (batch, minGapMs) =>
+      ++sends === 1
+        ? realSets(batch, minGapMs)
+        : Promise.reject(new Error("destination not found"));
+
+    const result = await controller.readLive({ gapMs: 0, settleMs: 0 });
+
+    expect(result.reapplied).toBe(false);
+    expect(result.problem).toMatch(/what you were hearing/);
+    expect(store.getState().freshness).toBe("stale");
+  });
+
+  it("a connect can't claim to know live state; a link drop takes the claim back", async () => {
+    const { session, store, controller } = await attached(3);
+    await controller.loadCurrent();
+    expect(store.getState().freshness).toBe("stale"); // a preset read serves flash
+    await controller.recall(3);
+    expect(store.getState().freshness).toBe("known");
+    session.disconnect();
+    expect(store.getState().freshness).toBe("stale");
+  });
+
+  it("restoreBackup writes a kept backup back to its slot", async () => {
+    const { model, controller } = await attached(3);
+    const backup = model.presets[3]!.slice();
+    const wrecked = backup.slice();
+    wrecked[PARAMS.drive.blobOffset] = 99;
+    model.presets[3] = wrecked;
+
+    await controller.restoreBackup(3, backup);
+
+    expect([...model.presets[3]!]).toEqual([...backup]);
   });
 });

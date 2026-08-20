@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { liveSetId, PARAMS } from "../src/protocol/params";
+import { liveSetId, liveSetIndex, PARAMS } from "../src/protocol/params";
 
 // Live-set wire id == iPlug index for the shallow range 0x00-0x0F, index+4 for 0x10-0x49, and
 // 0x4A-0x4D wrap to 0x10-0x13. The notify/read path keeps the raw index; only SET maps through here.
@@ -40,5 +40,22 @@ describe("liveSetId — index → live-set wire id", () => {
   it("resolves Blend's set id from its stored index", () => {
     expect(PARAMS.blend.paramId).toBe(0x47);
     expect(liveSetId(PARAMS.blend.paramId!)).toBe(0x4b);
+  });
+});
+
+describe("liveSetIndex — live-set wire id → index (the inverse)", () => {
+  it("round-trips every index in the firmware's table", () => {
+    for (let idx = 0; idx <= 0x4d; idx++) expect(liveSetIndex(liveSetId(idx))).toBe(idx);
+  });
+
+  it("undoes the +4 and the 0x10-0x13 wrap", () => {
+    expect(liveSetIndex(0x4b)).toBe(0x47); // Blend
+    expect(liveSetIndex(0x14)).toBe(0x10); // Reverb Room Size
+    expect(liveSetIndex(0x12)).toBe(0x4c); // the save-to-slot command's own index
+    expect(liveSetIndex(0x00)).toBe(0x00);
+  });
+
+  it("leaves ids outside 0x00-0x4D untouched", () => {
+    expect(liveSetIndex(0x4e)).toBe(0x4e);
   });
 });

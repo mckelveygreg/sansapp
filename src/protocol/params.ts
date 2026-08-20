@@ -183,6 +183,36 @@ export const liveSetId = (index: number): number => {
 };
 
 /**
+ * The inverse of {@link liveSetId}: a live-set wire id back to the iPlug index it addresses. The
+ * mapping is a bijection over 0x00–0x4D, so this is exact — and it is what a *pedal-side* reader
+ * needs (the emulator, which has to decide which live param a `05 50` write lands on).
+ *
+ * Note 0x12 → index 0x4C: the save-to-slot command is a plain set of that index, so anything routing
+ * writes through here must special-case the command ids before consulting it.
+ */
+export const liveSetIndex = (setId: number): number => {
+  if (setId >= 0x10 && setId <= 0x13) return setId + 0x3a; // 0x10..0x13 -> 0x4A..0x4D
+  return setId >= 0x14 && setId <= 0x4d ? setId - 4 : setId;
+};
+
+/**
+ * The last iPlug index that lives in a preset blob (at `LIVE_PARAM_LAST_INDEX + 0x22` = 0x6B). The
+ * live param array runs 0x00–0x4D, but 0x4A–0x4D are commands (preset up/down, save, red zone) and
+ * have no stored byte — so this range is what a blob can carry, and what can be re-applied from one.
+ */
+export const LIVE_PARAM_LAST_INDEX = 0x49;
+
+/**
+ * The "User IR 7/8 Preset" address words (indices 0x35–0x38, live-set ids 0x39–0x3C) — the flat
+ * 14-bit record selectors an IR upload sets before streaming its data (src/midi/irUpload.ts).
+ *
+ * Named here because they are the other params that must never be blind-written as ordinary live
+ * values: they take the pedal's special addressing path, and re-pointing an IR record is not a tone
+ * change but a change to which cab a preset owns. See src/device/readFromPedal.ts.
+ */
+export const USER_IR_ADDRESS_PARAMS: readonly number[] = Object.freeze([0x35, 0x36, 0x37, 0x38]);
+
+/**
  * Deep Compressor-page paramIds (the `05 50` param byte). The main-panel **COMP knob (0x0A) is the
  * compressor THRESHOLD**; Ratio/Output Gain/Attack/Release are the Compressor block (0x19-0x1c);
  * Auto Gain/Lookahead are toggles. Ratio 0x19 sweeps 1:1→20:1 (compression) — distinct from the

@@ -118,7 +118,7 @@ interface LiveParam {
  * silence the save. (It also de-corrupts a preset that arrived that way, and stops a recall of it from
  * muting the rig — see {@link TUNER_BLOB_OFFSET}.) Returns a copy; the caller's array is never touched.
  */
-function withTunerCleared(blob: Uint8Array): Uint8Array {
+export function withTunerCleared(blob: Uint8Array): Uint8Array {
   if (blob[TUNER_BLOB_OFFSET] === 0) return blob;
   const safe = blob.slice();
   safe[TUNER_BLOB_OFFSET] = 0;
@@ -151,8 +151,10 @@ export class DeviceSession {
   private readonly tombstones: Tombstone[] = [];
   /** Per-param live-set coalescing state (keyed by the wire set-id). */
   private readonly liveParams = new Map<number, LiveParam>();
-  /** True while a withExclusive block owns the link — the heartbeat probe suspends for its duration. */
-  private exclusive = false;
+  /** Nesting depth of the exclusive/busy windows that own the link — the heartbeat probe suspends
+   * while it is non-zero. A counter rather than a flag so an inner window's exit can't release an
+   * outer one (an IR read taken inside a longer busy block). */
+  private exclusiveDepth = 0;
   /** Byte 6 we put on the wire: the pedal's firmware version × 10. Starts at the newest firmware,
    * gets corrected by the connect probe and by whatever the pedal actually replies with. */
   private version: number = DEFAULT_PROTOCOL_VERSION;
@@ -192,9 +194,10 @@ export class DeviceSession {
     return this.version;
   }
 
-  /** True while an exclusive bulk op (an IR upload/read) owns the link — see {@link onLinkBusy}. */
+  /** True while an exclusive bulk op (an IR upload/read, a Read from Pedal) owns the link — see
+   * {@link onLinkBusy}. */
   get linkBusy(): boolean {
-    return this.exclusive;
+    return this.exclusiveDepth > 0;
   }
 
   /**
@@ -223,10 +226,16 @@ export class DeviceSession {
     return parseChecksumTable(block);
   }
 
-  private setExclusive(busy: boolean): void {
-    if (busy === this.exclusive) return;
-    this.exclusive = busy;
-    for (const cb of this.busyCbs) cb(busy);
+  /** Take the link (see {@link exclusiveDepth}); paired with {@link exitExclusive} in a finally. */
+  private enterExclusive(): void {
+    if (this.exclusiveDepth++ === 0) for (const cb of this.busyCbs) cb(true);
+  }
+
+  /** Release one level of the link; the last one out announces that the link is free again. */
+  private exitExclusive(): void {
+    if (this.exclusiveDepth > 0 && --this.exclusiveDepth === 0) {
+      for (const cb of this.busyCbs) cb(false);
+    }
   }
 
   /** Fires when the pedal's firmware version becomes known or changes (argument: 1.0, 1.1, …). */
@@ -440,18 +449,24 @@ export class DeviceSession {
    * paces its sends). A single setParam is fine; a rapid run like the 10-param ambience profile loses
    * most messages without this gap. `param` is the already-live-set-mapped wire id.
    */
-  async setParamsPaced(sets: readonly { param: number; value: number }[]): Promise<void> {
+  async setParamsPaced(
+    sets: readonly { param: number; value: number }[],
+    /** Floor for the gap, when a caller knows its burst needs more room than the transport default
+     * (Read from Pedal's re-apply: 120 ms — at 30 ms the pedal silently dropped writes). */
+    minGapMs = 0,
+  ): Promise<void> {
+    const gap = Math.max(this.sendGapMs, minGapMs);
     for (let i = 0; i < sets.length; i++) {
       if (i === 0) {
         // Pace the FIRST send off the last outbound byte too (exactly like request()) — otherwise the
         // batch boundary lands in the same BLE connection interval as whatever preceded it (e.g.
         // setAmbienceType's 10th send right before recipes fires this) and the pedal drops it.
-        if (this.sendGapMs > 0) {
+        if (gap > 0) {
           const sinceSend = Date.now() - this.lastSendAt;
-          if (sinceSend < this.sendGapMs) await this.delay(this.sendGapMs - sinceSend);
+          if (sinceSend < gap) await this.delay(gap - sinceSend);
         }
       } else {
-        await this.delay(this.sendGapMs);
+        await this.delay(gap);
       }
       this.send({ kind: "setParam", param: sets[i]!.param, value: sets[i]!.value & 0x7f });
     }
@@ -480,7 +495,7 @@ export class DeviceSession {
    * write would be silently swallowed (the UI disables the control for the same reason).
    */
   async setTunerMode(mode: TunerMode, nudgeSlot: number): Promise<void> {
-    if (this.exclusive) {
+    if (this.linkBusy) {
       throw new Error("busy with an IR transfer — the pedal ignores a tuner change during one");
     }
     // setParamsPaced, NOT setLiveParam: the live throttle can hold a value for up to LIVE_THROTTLE_MS
@@ -489,6 +504,23 @@ export class DeviceSession {
     await this.setParamsPaced([{ param: TUNER_SET_ID, value: mode }]);
     for (const cb of this.tunerCbs) cb(mode);
     await this.readPreset(nudgeSlot);
+  }
+
+  /**
+   * Write Tuner = Off and nothing else — the unpaired half of {@link setTunerMode}, for a caller that
+   * is about to produce a dump of its own and so supplies the nudge itself.
+   *
+   * Read from Pedal needs this: committing with the tuner engaged makes the pedal zero the *live*
+   * Level before building the blob, so the echo would report a dead rig as the truth about live state.
+   * The app cannot read tuner state, so it makes the precondition true rather than trusting its
+   * optimistic mirror — and the commit that follows is the dump that applies it (docs/adr/0001).
+   *
+   * Unlike setTunerMode this does NOT refuse while the link is busy: it runs *inside* Read from Pedal's
+   * own busy window, and the same-window commit is what applies it.
+   */
+  async forceTunerOff(): Promise<void> {
+    await this.setParamsPaced([{ param: TUNER_SET_ID, value: 0 }]);
+    for (const cb of this.tunerCbs) cb(0);
   }
 
   /**
@@ -531,6 +563,33 @@ export class DeviceSession {
       { kind: "writePreset", slot: s, blob, checksumOk: true },
       (m) => m.kind === "writeAck" && m.code === 0x21,
     );
+    return this.commit(s);
+  }
+
+  /**
+   * **Bare commit** — the save command with NO preceding `05 20` stage, returning the pedal's echo.
+   *
+   * With nothing staged the pedal builds the flash blob from its **live** parameter array, so the echo
+   * is its own report of what you are hearing: the only way to read live state, which is otherwise
+   * write-only over the wire. It is a genuine flash write to `slot`, so the caller owns putting the
+   * slot back — see `readFromPedal`, and `docs/adr/0001` for why a read has to write at all.
+   */
+  async commitLive(slot: number): Promise<Uint8Array> {
+    if (slot > MAX_WRITABLE_SLOT) {
+      throw new Error(
+        `invalid preset slot 0x${slot.toString(16)} — 0x7E/0x7F are not writable slots`,
+      );
+    }
+    return this.commit(slot & 0x7f);
+  }
+
+  /**
+   * Send `05 50 <ver> 12 <slot>` and await the pedal's `05 41 <slot>` echo, re-sending the commit if
+   * it doesn't arrive. EliteControl fires-and-forgets over its reliable USB link; over BLE the commit
+   * can silently drop, leaving a staged write never persisted (the copy/save-didn't-stick bug).
+   * Re-committing is idempotent — it re-saves the same source bytes — so a retry is always safe.
+   */
+  private async commit(s: number): Promise<Uint8Array> {
     for (let attempt = 0; attempt < COMMIT_ATTEMPTS; attempt++) {
       try {
         // Require checksumOk (like readPreset): a garbled echo must not confirm the save — the retry
@@ -589,11 +648,11 @@ export class DeviceSession {
    */
   withExclusive<T>(fn: () => Promise<T>): Promise<T> {
     const run = async (): Promise<T> => {
-      this.setExclusive(true);
+      this.enterExclusive();
       try {
         return await fn();
       } finally {
-        this.setExclusive(false);
+        this.exitExclusive();
         this.lastSendAt = Date.now(); // recent activity — keep the heartbeat backed off one more window
       }
     };
@@ -603,6 +662,26 @@ export class DeviceSession {
       () => undefined,
     );
     return result;
+  }
+
+  /**
+   * Run `fn` with the link marked BUSY — the heartbeat probe suspends and the UI disables what the
+   * pedal would ignore — but **without** chaining on the request queue. That is the difference from
+   * {@link withExclusive}, and it is what lets the body use the ordinary `request()` path: chaining
+   * here would deadlock, since every request inside would wait on the very promise it is part of.
+   *
+   * So: raw multi-second streams that bypass the queue use `withExclusive`; multi-step round-trip
+   * sequences that go *through* the queue (Read from Pedal) use this. Both suspend the heartbeat,
+   * which is the protection that matters — a probe firing into a long operation is the hazard.
+   */
+  async withBusy<T>(fn: () => Promise<T>): Promise<T> {
+    this.enterExclusive();
+    try {
+      return await fn();
+    } finally {
+      this.exitExclusive();
+      this.lastSendAt = Date.now(); // recent activity — keep the heartbeat backed off one more window
+    }
   }
 
   /**
@@ -792,7 +871,7 @@ export class DeviceSession {
    * "connected" dot. Only runs when constructed with heartbeatMs > 0 (the app; not tests/tools).
    */
   private async heartbeat(): Promise<void> {
-    if (this.state !== "ready" || this.pending.size > 0 || this.exclusive) return;
+    if (this.state !== "ready" || this.pending.size > 0 || this.linkBusy) return;
     // Recent traffic in EITHER direction = link alive, so skip this probe. Outbound: setParam
     // knob-moves and IR sends are fire-and-forget (no pending entry) — probing into that saturated TX
     // can time out and falsely disconnect. Inbound: a passive IR receive stream (also no pending

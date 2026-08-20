@@ -4,6 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { HeaderConnection, TransportTitle } from "../src/components/AppHeader";
 import { ErrorBoundary } from "../src/components/ErrorBoundary";
+import { ReadFromPedalOverlay } from "../src/components/ReadFromPedal";
 import { theme } from "../src/components/theme";
 
 // Knob-heavy deep pages are pushed as CARDS with the swipe gesture OFF — a modal's swipe-down-to-
@@ -66,6 +67,9 @@ export default function RootLayout() {
           <Stack.Screen name="recipes" options={{ title: "Recipes" }} />
           <Stack.Screen name="help" options={{ title: "Help" }} />
         </Stack>
+        {/* Above the whole stack: Read from Pedal must hold the app for its ~10 s, wherever it was
+            started from and whatever the user navigates to. */}
+        <ReadFromPedalOverlay />
       </ErrorBoundary>
     </SafeAreaProvider>
   );
