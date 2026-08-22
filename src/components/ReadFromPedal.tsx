@@ -22,7 +22,12 @@ import { useStore } from "zustand";
 import type { ReadFromPedalProgress } from "../device/readFromPedal";
 import { getController, pedalStore } from "../midi/pedal";
 import { loadPrefs, savePrefs } from "../midi/prefs";
-import { readPedalStore, retryPendingRestore, runReadFromPedal } from "../state/readPedal";
+import {
+  readPedalStore,
+  retryPendingRestore,
+  runReadFromPedal,
+  visibleNotice,
+} from "../state/readPedal";
 import { radius, theme } from "./theme";
 
 const DISCLOSURE =
@@ -63,6 +68,29 @@ function confirmFirstRun(): Promise<boolean> {
   });
 }
 
+/**
+ * What the app actually knows, said plainly.
+ *
+ * The old wording asserted the preset "is still holding what you were playing" — which the verifier
+ * cannot establish. A mismatched read-back also happens when the write landed fine and a byte the
+ * pedal rewrites on save disagrees, or when the read raced the commit that preceded it. Both are
+ * false alarms, and overstating them turned "one byte differed" into "your preset is gone".
+ */
+function problemText(problem: string, pending: { slot: number } | null): string {
+  return pending
+    ? `SansApp couldn't confirm preset ${pending.slot + 1} went back (${problem}). Your backup is safe — put it back below.`
+    : problem;
+}
+
+/**
+ * The Red Zone advisory. Not a failure and not retryable: `0x4d` is pedal→app only, so the app cannot
+ * set this state and a footswitch press is the entire remedy.
+ */
+const RED_ZONE_TEXT: Record<"engage" | "disengage", string> = {
+  engage: "Your Red Zone was on and came back off — press the red footswitch once to get it back.",
+  disengage: "Your Red Zone came back on — press the red footswitch once to turn it off.",
+};
+
 /** Everything the three surfaces below share: whether the action can run, and how to start it. */
 function useReadFromPedal() {
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
@@ -70,6 +98,9 @@ function useReadFromPedal() {
   const running = useStore(readPedalStore, (s) => s.running);
   const problem = useStore(readPedalStore, (s) => s.problem);
   const pendingRestore = useStore(readPedalStore, (s) => s.pendingRestore);
+  const redZoneNeedsPress = useStore(readPedalStore, (s) => s.redZoneNeedsPress);
+  const noticeDismissed = useStore(readPedalStore, (s) => s.noticeDismissed);
+  const dismissNotice = useStore(readPedalStore, (s) => s.dismissNotice);
 
   const start = useCallback(async () => {
     const controller = getController();
@@ -90,11 +121,17 @@ function useReadFromPedal() {
   // linkBusy covers our own run too (the operation takes the link), so `running` is only for labels.
   // Deliberately NOT gated on the store knowing a slot: the operation reads the active program from
   // the pedal itself, so it works — and corrects the store — even when a connect couldn't.
+  const notice = visibleNotice({ problem, redZoneNeedsPress, noticeDismissed, pendingRestore });
+
   return {
     ready,
     canRun: ready && !linkBusy,
     running,
-    problem,
+    problem: notice.problem,
+    redZone: notice.redZone,
+    // Nothing owed means the notice is safe to wave away; a parked backup keeps it on screen.
+    canDismiss: !pendingRestore,
+    dismissNotice,
     pendingRestore,
     start,
     retry,
@@ -103,7 +140,18 @@ function useReadFromPedal() {
 
 /** The action, on the Connection screen: button + permanent disclosure + any outstanding problem. */
 export function ReadFromPedalCard() {
-  const { ready, canRun, running, problem, pendingRestore, start, retry } = useReadFromPedal();
+  const {
+    ready,
+    canRun,
+    running,
+    problem,
+    redZone,
+    canDismiss,
+    dismissNotice,
+    pendingRestore,
+    start,
+    retry,
+  } = useReadFromPedal();
   if (!ready) return null;
 
   return (
@@ -141,10 +189,16 @@ export function ReadFromPedalCard() {
       <Text style={{ color: theme.textDim, lineHeight: 20 }}>{DISCLOSURE}</Text>
       {problem ? (
         <Text style={{ color: theme.accent, lineHeight: 20 }}>
-          {pendingRestore
-            ? `Preset ${pendingRestore.slot + 1} is still holding what you were playing — SansApp couldn't put it back (${problem}).`
-            : problem}
+          {problemText(problem, pendingRestore)}
         </Text>
+      ) : null}
+      {redZone ? (
+        <Text style={{ color: theme.amber, lineHeight: 20 }}>{RED_ZONE_TEXT[redZone]}</Text>
+      ) : null}
+      {(problem || redZone) && canDismiss ? (
+        <Pressable onPress={dismissNotice} hitSlop={8} style={{ alignSelf: "flex-start" }}>
+          <Text style={{ color: theme.textDim, fontWeight: "700" }}>Dismiss</Text>
+        </Pressable>
       ) : null}
       {pendingRestore ? (
         <Pressable
@@ -200,7 +254,17 @@ function Banner({ accent, children }: { accent: boolean; children: React.ReactNo
  * preset wasn't put back. It is not dismissible while a restore is owed.
  */
 export function ReadFromPedalOffer() {
-  const { canRun, running, problem, pendingRestore, start, retry } = useReadFromPedal();
+  const {
+    canRun,
+    running,
+    problem,
+    redZone,
+    canDismiss,
+    dismissNotice,
+    pendingRestore,
+    start,
+    retry,
+  } = useReadFromPedal();
   const stale = useStore(pedalStore, (s) => s.freshness) === "stale";
   const dismissed = useStore(readPedalStore, (s) => s.offerDismissed);
 
@@ -209,15 +273,31 @@ export function ReadFromPedalOffer() {
       <Banner accent>
         <Ionicons name="alert-circle-outline" size={18} color={theme.accent} />
         <Text style={{ color: theme.accent, flex: 1, lineHeight: 18 }}>
-          {pendingRestore
-            ? `Preset ${pendingRestore.slot + 1} is still holding what you were playing — SansApp couldn't put it back (${problem}).`
-            : problem}
+          {problemText(problem, pendingRestore)}
         </Text>
         {pendingRestore ? (
           <Pressable onPress={() => void retry()} disabled={running} hitSlop={8}>
             <Text style={{ color: theme.accent, fontWeight: "700" }}>Retry</Text>
           </Pressable>
+        ) : canDismiss ? (
+          <Pressable onPress={dismissNotice} hitSlop={8}>
+            <Text style={{ color: theme.textDim, fontWeight: "700" }}>Dismiss</Text>
+          </Pressable>
         ) : null}
+      </Banner>
+    );
+  }
+  // Advisory only — no restore is owed, so it sits below the failure case and above the offer.
+  if (redZone) {
+    return (
+      <Banner accent={false}>
+        <Ionicons name="footsteps-outline" size={18} color={theme.amber} />
+        <Text style={{ color: theme.textDim, flex: 1, lineHeight: 18 }}>
+          {RED_ZONE_TEXT[redZone]}
+        </Text>
+        <Pressable onPress={dismissNotice} hitSlop={8}>
+          <Text style={{ color: theme.textDim, fontWeight: "700" }}>OK</Text>
+        </Pressable>
       </Banner>
     );
   }

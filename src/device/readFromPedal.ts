@@ -25,15 +25,26 @@
  * capture is in hand the operation is committed: it never throws after that, and reports what went
  * wrong in {@link ReadFromPedalResult.problem} while still handing back the values it recovered.
  *
+ * **Known limitation — the Red Zone does not survive.** Step 4's stage is a preset load, and a load is
+ * the one moment the pedal re-derives its Red Zone state, from the blob being loaded. Step 5 restores
+ * the underlying enables but cannot restore that state: `0x4d` is pedal→app only, so no write for it
+ * exists. Confirmed on hardware. There is no reordering that helps either — any load that would
+ * re-derive the state overwrites the live array step 5 just rebuilt. So the sequence detects the
+ * divergence and asks the player to stomp once; see {@link ReadFromPedalResult.redZoneNeedsPress}.
+ *
  * Framework-free: no React/React Native imports.
  */
 
 import { PARAM_REGION_START } from "../protocol/constants";
 import {
   LIVE_PARAM_LAST_INDEX,
+  PARAMS,
   TUNER_PARAM,
   USER_IR_ADDRESS_PARAMS,
   liveSetId,
+  redZoneEngagedFor,
+  redZoneStateParamsFor,
+  type ParamId,
 } from "../protocol/params";
 import { SETTINGS_BLOCK } from "../protocol/settings";
 import { MAX_WRITABLE_SLOT, withTunerCleared, type DeviceSession } from "./session";
@@ -53,6 +64,32 @@ const REAPPLY_GAP_MS = 120;
  * immediately precedes them.
  */
 const REAPPLY_SETTLE_MS = 800;
+
+/**
+ * Quiet window after the restore's commit before the read-back that verifies it, and what each further
+ * attempt adds on top.
+ *
+ * Borrowed from {@link REAPPLY_SETTLE_MS} rather than measured separately, because it is the same
+ * hazard that constant exists for: traffic landing in the same BLE connection interval as the commit
+ * it follows. The original loop had **no** window at all — it fired the read the instant `writePreset`
+ * resolved, then retried immediately — so every attempt raced identically. That is the leading
+ * explanation for a hardware run which reported four consecutive "didn't read back as written"
+ * failures on a preset that then verified fine twice in a row: a read answered from before the commit
+ * landed returns the laundered live blob, which is exactly what the check is looking for and exactly
+ * what it must not see.
+ *
+ * ⚠️ **UNVERIFIED for this path.** The 800 ms is proven for live sets after a commit, not for a
+ * read-back. If a mismatch recurs, the offsets now in {@link RestoreOutcome.diff} say what actually
+ * differed — read those before adjusting this.
+ */
+const VERIFY_SETTLE_MS = REAPPLY_SETTLE_MS;
+const VERIFY_BACKOFF_MS = 400;
+
+/** Write-and-verify attempts before giving up and parking the backup for the user. */
+const VERIFY_ATTEMPTS = 2;
+
+/** How many differing offsets a problem string names before it says "and N more". */
+const MAX_REPORTED_DIFFS = 4;
 
 /**
  * Params never re-applied, settled by two hardware runs:
@@ -92,6 +129,8 @@ export interface ReadFromPedalOptions {
   gapMs?: number;
   /** Settle window before the re-apply. Defaults to {@link REAPPLY_SETTLE_MS}; tests pass 0. */
   settleMs?: number;
+  /** Pacing for the restore's own verify — see {@link RestoreOptions}. Tests pass zeroes. */
+  restore?: RestoreOptions;
   onProgress?: (progress: ReadFromPedalProgress) => void;
 }
 
@@ -110,15 +149,75 @@ export interface ReadFromPedalResult {
   reapplied: boolean;
   /** What went wrong after the capture, phrased for a person, or null. */
   problem: string | null;
+  /**
+   * The pedal's Red Zone ended up the opposite of what the player had, and **the app cannot put it
+   * back** — so this asks them to stomp once. `"engage"` = they had it on and it came back off,
+   * `"disengage"` = the reverse. Null when it matched, which is the common case.
+   *
+   * Why it can happen at all: the restore's `05 20` stage is a preset load, and a load is the one
+   * moment the pedal re-derives this state — from the blob being loaded, i.e. the STORED preset. It is
+   * never re-derived afterwards ({@link redZoneEngagedFor} documents exactly this). The re-apply then
+   * moves `0x3c`/`0x41`/`0x08` to their live values but cannot move the state byte, because
+   * `KNOB_LAYER_NOTIFY_PARAM` (`0x4d`) is pedal→app only: there is no write for it. On firmware ≤ 1.1
+   * the audible ambience drop rides that byte inside the DSP, so a player who had the Red Zone engaged
+   * loses their reverb even though `0x08` was re-applied correctly.
+   *
+   * A restore whose stage never landed leaves the state untouched, making this a false positive — but
+   * the cost is one unnecessary footswitch press, against silently losing someone's reverb. Same trade
+   * the restore verifier makes, for the same reason.
+   */
+  redZoneNeedsPress: null | "engage" | "disengage";
 }
 
 const delay = (ms: number): Promise<void> =>
   ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
 
-const sameBytes = (a: Uint8Array, b: Uint8Array): boolean =>
-  a.length === b.length && a.every((v, i) => v === b[i]);
-
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/**
+ * Offsets where a read-back disagrees with what we meant to write — the evidence a boolean comparison
+ * throws away. A length mismatch reports every offset past the shorter blob, so the caller's count is
+ * still meaningful.
+ */
+function byteDiff(got: Uint8Array, want: Uint8Array): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < Math.max(got.length, want.length); i++) {
+    if (got[i] !== want[i]) out.push(i);
+  }
+  return out;
+}
+
+/** A bounded, human-readable account of a read-back mismatch, for the problem string and the log. */
+function describeDiff(got: Uint8Array, want: Uint8Array, offsets: readonly number[]): string {
+  const hex = (v: number | undefined): string =>
+    v === undefined ? "–" : v.toString(16).padStart(2, "0");
+  const shown = offsets
+    .slice(0, MAX_REPORTED_DIFFS)
+    .map((i) => `0x${i.toString(16)} want ${hex(want[i])} got ${hex(got[i])}`)
+    .join(", ");
+  const more =
+    offsets.length > MAX_REPORTED_DIFFS ? `, and ${offsets.length - MAX_REPORTED_DIFFS} more` : "";
+  const len = got.length === want.length ? "" : ` (length ${got.length}, expected ${want.length})`;
+  const count = offsets.length === 1 ? "1 byte differs" : `${offsets.length} bytes differ`;
+  return `${count}${len}: ${shown}${more}`;
+}
+
+/**
+ * The Red Zone params read out of a preset blob, in the shape {@link redZoneEngagedFor} wants — so the
+ * pedal's derivation rule keeps exactly one home rather than being re-implemented here.
+ */
+function redZoneValues(
+  blob: Uint8Array,
+  firmware: number | null,
+): Partial<Record<ParamId, number>> {
+  const out: Partial<Record<ParamId, number>> = {};
+  // ParamId is a NAME ("autoFilterOn"), not a wire id, so the blob index comes from each param's own
+  // declared blobOffset — the map's single source for it — rather than any arithmetic here.
+  for (const id of redZoneStateParamsFor(firmware)) {
+    out[id] = blob[PARAMS[id].blobOffset] ?? 0;
+  }
+  return out;
+}
 
 /** The pedal's active program — byte 0 of data block 0, the one live value it will report. */
 async function activeSlot(session: DeviceSession): Promise<number> {
@@ -131,6 +230,26 @@ async function activeSlot(session: DeviceSession): Promise<number> {
     );
   }
   return slot;
+}
+
+/** Pacing for the restore's verify, so tests don't pay {@link VERIFY_SETTLE_MS} per attempt. */
+export interface RestoreOptions {
+  /** Quiet window after the commit, before the verifying read. Defaults to {@link VERIFY_SETTLE_MS};
+   * tests pass 0. */
+  settleMs?: number;
+  /** Added to the window per further attempt. Defaults to {@link VERIFY_BACKOFF_MS}. */
+  backoffMs?: number;
+}
+
+/** What a restore attempt ended up doing, and the evidence if it did not verify. */
+export interface RestoreOutcome {
+  /** The blob was written back AND read back matching, byte for byte, tuner byte aside. */
+  ok: boolean;
+  /** What went wrong, phrased for a person, or null. */
+  problem: string | null;
+  /** Blob offsets that disagreed on the last attempt. Empty when {@link ok}, or when the attempt threw
+   * before a comparison happened. */
+  diff: readonly number[];
 }
 
 /**
@@ -147,25 +266,38 @@ async function activeSlot(session: DeviceSession): Promise<number> {
  * parked on a *different* program lets the save repoint a user-IR pointer, which is a legitimate
  * difference this will still flag. A false failure only costs the user a retry; a false success would
  * leave their preset overwritten and say it was fine.
+ *
+ * Because false failures are expected, a mismatch **keeps the evidence**: {@link RestoreOutcome.diff}
+ * names the offsets that disagreed and the problem string quotes the first few. Before this, the
+ * comparison collapsed to a boolean and a failure told nobody anything — which left a real hardware
+ * failure undiagnosable and its cause a guess.
  */
 export async function restoreStoredPreset(
   session: DeviceSession,
   slot: number,
   stored: Uint8Array,
-): Promise<{ ok: boolean; problem: string | null }> {
+  { settleMs = VERIFY_SETTLE_MS, backoffMs = VERIFY_BACKOFF_MS }: RestoreOptions = {},
+): Promise<RestoreOutcome> {
   const expected = withTunerCleared(stored);
   let problem: string | null = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  let diff: readonly number[] = [];
+  for (let attempt = 0; attempt < VERIFY_ATTEMPTS; attempt++) {
     try {
       await session.writePreset(slot, stored);
+      // Let the commit clear the link before asking about it — see VERIFY_SETTLE_MS for why a read
+      // fired too early can answer with the laundered blob and fail a restore that actually worked.
+      await delay(settleMs + attempt * backoffMs);
       const back = await session.readPreset(slot);
-      if (sameBytes(back.raw, expected)) return { ok: true, problem: null };
-      problem = `preset ${slot + 1} didn't read back as written`;
+      const offsets = byteDiff(back.raw, expected);
+      if (offsets.length === 0) return { ok: true, problem: null, diff: [] };
+      diff = offsets;
+      problem = `preset ${slot + 1} didn't read back as written — ${describeDiff(back.raw, expected, offsets)}`;
     } catch (e) {
       problem = message(e);
+      diff = [];
     }
   }
-  return { ok: false, problem };
+  return { ok: false, problem, diff };
 }
 
 /**
@@ -177,7 +309,12 @@ export async function readFromPedal(
   session: DeviceSession,
   opts: ReadFromPedalOptions = {},
 ): Promise<ReadFromPedalResult> {
-  const { gapMs = REAPPLY_GAP_MS, settleMs = REAPPLY_SETTLE_MS, onProgress } = opts;
+  const {
+    gapMs = REAPPLY_GAP_MS,
+    settleMs = REAPPLY_SETTLE_MS,
+    restore: restoreOpts,
+    onProgress,
+  } = opts;
   // The pedal ignores parameter writes during an IR transfer and crowding its flash write is the
   // historical brick vector — so refuse rather than half-run.
   if (session.linkBusy) {
@@ -204,7 +341,7 @@ export async function readFromPedal(
       // A commit that never confirmed may still have LANDED — the echo is what dropped, and from
       // here we can't tell which. So put the slot back before giving up, rather than risk walking
       // away from a preset quietly holding what the player was playing.
-      const undo = await restoreStoredPreset(session, slot, stored);
+      const undo = await restoreStoredPreset(session, slot, stored, restoreOpts);
       throw new Error(
         undo.ok
           ? `Couldn't read what the pedal is playing (${message(e)}). Preset ${slot + 1} is untouched.`
@@ -215,7 +352,7 @@ export async function readFromPedal(
     // ⚠️ From here the slot holds live values. Everything below runs to completion, errors and all.
 
     report("restore");
-    const restore = await restoreStoredPreset(session, slot, stored);
+    const restore = await restoreStoredPreset(session, slot, stored, restoreOpts);
     let problem = restore.problem;
 
     // Re-apply even when the restore failed: a restore that got as far as its `05 20` stage has
@@ -238,7 +375,24 @@ export async function readFromPedal(
       problem ??= `couldn't put the pedal back to what you were hearing (${message(e)})`;
     }
 
+    // Whether the player has to stomp to get their Red Zone back — see
+    // ReadFromPedalResult.redZoneNeedsPress. Derived from the two blobs we already hold, so it costs
+    // no wire traffic; and it must be computed from `stored` (what the restore staged, and therefore
+    // what the pedal derived from) against `live` (what the player actually had).
+    const firmware = session.firmwareVersion;
+    const wanted = redZoneEngagedFor(redZoneValues(live, firmware), firmware);
+    const landed = redZoneEngagedFor(redZoneValues(stored, firmware), firmware);
+    const redZoneNeedsPress = wanted === landed ? null : wanted ? "engage" : "disengage";
+
     report("done");
-    return { slot, live, stored, restored: restore.ok, reapplied, problem };
+    return {
+      slot,
+      live,
+      stored,
+      restored: restore.ok,
+      reapplied,
+      problem,
+      redZoneNeedsPress,
+    };
   });
 }

@@ -455,8 +455,17 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
     loadCurrent,
     readLive,
     async restoreBackup(slot, stored) {
-      const { ok, problem } = await restoreStoredPreset(session, slot, stored);
-      if (!ok) throw new Error(problem ?? `preset ${slot + 1} could not be restored`);
+      const { ok, problem, diff } = await restoreStoredPreset(session, slot, stored);
+      if (!ok) {
+        // Log the offsets even though the throw carries the summary: a mismatch is the one failure here
+        // whose cause is not self-evident, and the log is what survives to be read afterwards.
+        if (diff.length > 0) {
+          store
+            .getState()
+            .pushLog(`⚠ restore of preset ${slot + 1} mismatched at ${diff.length} offset(s)`);
+        }
+        throw new Error(problem ?? `preset ${slot + 1} could not be restored`);
+      }
       store.getState().pushLog(`↩ restored preset ${slot + 1} from the backup`);
     },
     dispose() {

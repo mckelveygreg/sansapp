@@ -10,6 +10,7 @@ import {
   createReadPedalStore,
   retryPendingRestore,
   runReadFromPedal,
+  visibleNotice,
 } from "../src/state/readPedal";
 
 const result = (over: Partial<ReadFromPedalResult> = {}): ReadFromPedalResult => ({
@@ -19,6 +20,7 @@ const result = (over: Partial<ReadFromPedalResult> = {}): ReadFromPedalResult =>
   restored: true,
   reapplied: true,
   problem: null,
+  redZoneNeedsPress: null,
   ...over,
 });
 
@@ -152,5 +154,76 @@ describe("readPedalStore", () => {
     store.getState().newConnection();
     expect(store.getState().offerDismissed).toBe(false);
     expect(store.getState().pendingRestore).not.toBeNull();
+  });
+
+  it("carries the Red Zone advisory through to the screens, and resets it on the next run", async () => {
+    const store = createReadPedalStore();
+    await runReadFromPedal(
+      stubController({ readLive: () => Promise.resolve(result({ redZoneNeedsPress: "engage" })) }),
+      store,
+    );
+    expect(store.getState().redZoneNeedsPress).toBe("engage");
+
+    await runReadFromPedal(stubController(), store); // a clean run owes nothing
+    expect(store.getState().redZoneNeedsPress).toBeNull();
+  });
+
+  it("clears a dismissal when a new run starts — the notice was about the last one", async () => {
+    const store = createReadPedalStore();
+    await runReadFromPedal(
+      stubController({ readLive: () => Promise.resolve(result({ redZoneNeedsPress: "engage" })) }),
+      store,
+    );
+    store.getState().dismissNotice();
+    expect(store.getState().noticeDismissed).toBe(true);
+
+    await runReadFromPedal(
+      stubController({
+        readLive: () => Promise.resolve(result({ redZoneNeedsPress: "disengage" })),
+      }),
+      store,
+    );
+    expect(store.getState().noticeDismissed).toBe(false);
+    expect(visibleNotice(store.getState()).redZone).toBe("disengage");
+  });
+});
+
+describe("visibleNotice", () => {
+  const base = {
+    problem: null as string | null,
+    redZoneNeedsPress: null as null | "engage" | "disengage",
+    noticeDismissed: false,
+    pendingRestore: null as { slot: number; stored: Uint8Array } | null,
+  };
+
+  it("shows what the last run reported", () => {
+    expect(visibleNotice({ ...base, problem: "nope", redZoneNeedsPress: "engage" })).toEqual({
+      problem: "nope",
+      redZone: "engage",
+    });
+  });
+
+  it("hides both once dismissed, when nothing is owed", () => {
+    expect(
+      visibleNotice({
+        ...base,
+        problem: "nope",
+        redZoneNeedsPress: "engage",
+        noticeDismissed: true,
+      }),
+    ).toEqual({ problem: null, redZone: null });
+  });
+
+  it("keeps a failure on screen while a backup is still owed, dismissed or not", () => {
+    // The notice carries the only control that puts the preset back, so dismissing must not orphan it.
+    const pending = { slot: 2, stored: new Uint8Array(8) };
+    expect(
+      visibleNotice({
+        ...base,
+        problem: "didn't read back",
+        noticeDismissed: true,
+        pendingRestore: pending,
+      }),
+    ).toEqual({ problem: "didn't read back", redZone: null });
   });
 });

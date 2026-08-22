@@ -55,7 +55,9 @@ async function tweakAtPedal(
 }
 
 const P = (blob: Uint8Array, index: number): number => blob[PARAM_REGION_START + index]!;
-const FAST = { gapMs: 0, settleMs: 0 };
+// `restore` zeroes the verify's own settle/backoff too — without it every failing-restore case below
+// pays VERIFY_SETTLE_MS twice, which cost the suite ~11 s.
+const FAST = { gapMs: 0, settleMs: 0, restore: { settleMs: 0, backoffMs: 0 } };
 
 describe("readFromPedal", () => {
   it("recovers live state, puts the slot back, and leaves the pedal hearing the tweaks", async () => {
@@ -250,5 +252,69 @@ describe("readFromPedal", () => {
     expect(result.restored).toBe(false);
     expect(result.problem).toMatch(/preset 4/);
     expect(model.presets[3]).toBeDefined();
+  });
+
+  it("names the bytes that disagreed, so a mismatch is diagnosable after the fact", async () => {
+    // The whole point: before this, a mismatch collapsed to a boolean and the failure told nobody
+    // which byte moved — leaving a real hardware failure impossible to diagnose.
+    const { session } = await attach(3);
+    const realRead = session.readPreset.bind(session);
+    let reads = 0;
+    session.readPreset = async (slot) => {
+      const p = await realRead(slot);
+      if (++reads === 1) return p; // the backup read is honest
+      const corrupt = p.raw.slice();
+      corrupt[0x27] = (p.raw[0x27]! ^ 0xff) & 0x7f;
+      return { ...p, raw: corrupt };
+    };
+
+    const result = await readFromPedal(session, FAST);
+
+    expect(result.restored).toBe(false);
+    expect(result.problem).toMatch(/1 byte differs: 0x27 want [0-9a-f]+ got [0-9a-f]+/);
+  });
+
+  it("survives a single stale verify read — the second attempt settles and passes", async () => {
+    // A read that answers from before the commit landed returns the laundered live blob, which looks
+    // exactly like the failure the verify hunts for. One of those must not doom the restore.
+    const { session } = await attach(3);
+    await tweakAtPedal(session, [[0x05, 90]]);
+    const realRead = session.readPreset.bind(session);
+    let reads = 0;
+    session.readPreset = async (slot) => {
+      const p = await realRead(slot);
+      if (++reads !== 2) return p; // 1 = backup, 2 = first verify, 3 = the retry's verify
+      const stale = p.raw.slice();
+      stale[0x27] = 90; // what the launder left in the slot a moment earlier
+      return { ...p, raw: stale };
+    };
+
+    const result = await readFromPedal(session, FAST);
+
+    expect(result.restored).toBe(true);
+    expect(result.problem).toBeNull();
+    expect(reads).toBe(3); // it really did take the retry
+  });
+
+  it("asks for a footswitch press when the Red Zone can't survive the restore", async () => {
+    // The stored preset has every Red Zone param at 0, so the restore's stage makes the pedal derive
+    // *disengaged* — while the player had Auto Filter on. 0x4d is notify-only, so all we can do is say.
+    const { session } = await attach(3);
+    await tweakAtPedal(session, [[0x3c, 1]]);
+
+    const result = await readFromPedal(session, FAST);
+
+    expect(P(result.live, 0x3c)).toBe(1);
+    expect(P(result.stored, 0x3c)).toBe(0);
+    expect(result.redZoneNeedsPress).toBe("engage");
+  });
+
+  it("says nothing about the Red Zone when it lands the same either way", async () => {
+    const { session } = await attach(3);
+    await tweakAtPedal(session, [[0x05, 90]]);
+
+    const result = await readFromPedal(session, FAST);
+
+    expect(result.redZoneNeedsPress).toBeNull();
   });
 });

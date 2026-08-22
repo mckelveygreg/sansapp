@@ -39,3 +39,17 @@ There is no alternative. Every claim below is observed behaviour of the pedal, c
 - There is a **~1–2 s interruption window** in which the stored preset holds live values. A crash there
   leaves the preset holding the player's own tweaks — benign, but a saved preset changed without being
   asked. Mitigated by re-reading the blob immediately beforehand and verifying the restore.
+- **The Red Zone does not survive, and cannot be made to.** The restore's `05 20` stage is a preset
+  load, and a load is the one moment the pedal re-derives its Red Zone state — from the blob being
+  loaded, i.e. the _stored_ preset. It is never re-derived afterwards. The re-apply restores the
+  underlying enables (`0x3c`, `0x41`, `0x08`) but cannot restore that state byte, because `0x4d` is
+  pedal→app only: no write for it exists. On firmware ≤ 1.1 the audible ambience drop rides that byte
+  inside the DSP, so a player who had the Red Zone engaged loses their reverb even though `0x08` came
+  back correctly. Reordering does not help — any load that would re-derive the state overwrites the
+  live array the re-apply just rebuilt. Observed on hardware 2026-08-22. The operation therefore
+  **detects the divergence and asks the player to stomp once**; see `redZoneNeedsPress`.
+- **A failed verify is not proof the preset was lost.** The read-back is compared strictly, so a
+  mismatch also fires when the write landed and a byte the pedal rewrites on save disagrees, or when
+  the read raced the commit that preceded it. Both are false alarms, so the mismatching offsets are
+  reported rather than discarded, and the wording says what is actually known. The strictness stays:
+  a false failure costs a retry, a false success would leave a preset overwritten and call it fine.
