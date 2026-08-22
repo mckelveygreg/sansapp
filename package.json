@@ -1,6 +1,6 @@
 {
   "name": "sansapp",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Unofficial open-source mobile editor for the Tech 21 SansAmp Programmable Bass Driver DI Elite bass pedal",
   "license": "GPL-3.0-only",
