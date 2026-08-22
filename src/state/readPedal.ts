@@ -34,8 +34,21 @@ interface ReadPedalState {
    * is final until the next connect.
    */
   offerDismissed: boolean;
+  /**
+   * Set when the last run left the pedal's Red Zone the opposite of what the player had. Advisory, not
+   * a failure: it asks for one footswitch press. See `ReadFromPedalResult.redZoneNeedsPress` — the app
+   * physically cannot set this state, so telling the player is the whole remedy.
+   */
+  redZoneNeedsPress: null | "engage" | "disengage";
+  /**
+   * The notice has been acknowledged and should stop being shown. Deliberately **separate from
+   * clearing `pendingRestore`**: a dismissed notice must never discard the only copy of someone's
+   * preset, so the backup outlives the banner and stays offered while it exists.
+   */
+  noticeDismissed: boolean;
 
   dismissOffer: () => void;
+  dismissNotice: () => void;
   /**
    * A new connection: re-offer, and drop the previous link's in-flight state.
    *
@@ -56,13 +69,41 @@ export function createReadPedalStore() {
     problem: null,
     pendingRestore: null,
     offerDismissed: false,
+    redZoneNeedsPress: null,
+    noticeDismissed: false,
 
     dismissOffer: () => set({ offerDismissed: true }),
+    dismissNotice: () => set({ noticeDismissed: true }),
     newConnection: () => set({ running: false, progress: null, offerDismissed: false }),
   }));
 }
 
 export const readPedalStore = createReadPedalStore();
+
+/** Just the fields {@link visibleNotice} needs, so callers can pass a slice or a whole state. */
+export type NoticeInput = Pick<
+  ReadPedalState,
+  "problem" | "redZoneNeedsPress" | "noticeDismissed" | "pendingRestore"
+>;
+
+/**
+ * What the surfaces should actually show. Lives here rather than in the component so the rule has one
+ * home and can be tested without a renderer.
+ *
+ * A dismissed notice hides — **except** while a backup is still owed, because the failure notice
+ * carries the only control that can put the preset back. Dismissing must never orphan someone's
+ * preset, so a pending restore outranks the dismissal.
+ */
+export function visibleNotice(s: NoticeInput): {
+  problem: string | null;
+  redZone: null | "engage" | "disengage";
+} {
+  const hide = s.noticeDismissed && !s.pendingRestore;
+  return {
+    problem: hide ? null : s.problem,
+    redZone: s.noticeDismissed ? null : s.redZoneNeedsPress,
+  };
+}
 
 export type ReadPedalStoreApi = ReturnType<typeof createReadPedalStore>;
 
@@ -76,13 +117,21 @@ export async function runReadFromPedal(
   store: ReadPedalStoreApi = readPedalStore,
 ): Promise<void> {
   if (store.getState().running) return;
-  store.setState({ running: true, problem: null, progress: null });
+  // A fresh run earns a fresh notice: whatever the user dismissed last time was about the last run.
+  store.setState({
+    running: true,
+    problem: null,
+    progress: null,
+    redZoneNeedsPress: null,
+    noticeDismissed: false,
+  });
   try {
     const result = await controller.readLive({
       onProgress: (progress) => store.setState({ progress }),
     });
     store.setState({
       problem: result.problem,
+      redZoneNeedsPress: result.redZoneNeedsPress,
       pendingRestore: nextPending(store.getState().pendingRestore, result),
       offerDismissed: true, // the offer has been taken; don't keep asking
     });
