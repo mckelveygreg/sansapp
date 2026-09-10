@@ -19,13 +19,13 @@ export interface Prefs {
    * Off, a preset change discards the app's unsaved edits without asking — which is what a player
    * deliberately experimenting wants, and what nobody else does. Hence: on unless turned off.
    */
-  unsavedGuard: boolean;
+  unsavedEditsGuard: boolean;
 }
 
 /** Bumped only when a field's *meaning* changes. Adding a field doesn't qualify — see `parsePrefs`. */
 export const PREFS_VERSION = 1;
 
-export const DEFAULTS: Prefs = { readFromPedalConfirmed: false, unsavedGuard: true };
+export const DEFAULTS: Prefs = { readFromPedalConfirmed: false, unsavedEditsGuard: true };
 
 /** The saved prefs in `text`, with defaults for anything missing, malformed, or from another version. */
 export function parsePrefs(text: string): Prefs {
@@ -49,11 +49,16 @@ export function parsePrefs(text: string): Prefs {
     // every prefs.json written before it existed — must read as ON. Coerced the other way, upgrading
     // from 1.2.1 would silently drop the guard for everyone who ever accepted the Read from Pedal
     // disclosure. Anything that isn't literally `false` therefore means guarded: the safe direction.
-    unsavedGuard: file.unsavedGuard !== false,
+    unsavedEditsGuard: file.unsavedEditsGuard !== false,
   };
 }
 
-/** `patch` merged over `current`, stamped and serialised for writing back. */
-export function serializePrefs(current: Prefs, patch: Partial<Prefs>): string {
-  return JSON.stringify({ ...current, ...patch, version: PREFS_VERSION });
+/** `patch` applied over `current`. */
+export function mergePrefs(current: Prefs, patch: Partial<Prefs>): Prefs {
+  return { ...current, ...patch };
+}
+
+/** `prefs` stamped with the version and serialised for writing. */
+export function serializePrefs(prefs: Prefs): string {
+  return JSON.stringify({ ...prefs, version: PREFS_VERSION });
 }

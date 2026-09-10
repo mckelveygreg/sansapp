@@ -1,51 +1,67 @@
 /**
- * Small persisted app preferences — the RN file surface: one JSON file in the document directory.
- * What a preference *means* (defaults, versioning, how an absent field reads) lives in
- * `src/state/prefs.ts`, where the gate can test it; this module only moves the bytes.
+ * Small persisted app preferences — the RN surface: one JSON file in the document directory, and the
+ * in-memory copy of it. What a preference *means* (defaults, versioning, how an absent field reads)
+ * lives in `src/state/prefs.ts`, where the gate can test it; this module owns only the reading, the
+ * writing, and the copy in between.
  *
- * It also keeps the loaded value in memory, so a preference can be read from a *synchronous* code
- * path — the unsaved-edits guard runs on the preset-step button, where awaiting a file read per
- * press would both cost IO and let two quick presses resolve out of order.
+ * That copy is what lets a preference be read from a *synchronous* code path: the unsaved-edits
+ * guard runs on the preset-step button, where awaiting a file read per press would both cost IO and
+ * let two quick presses resolve out of order, leaving the pedal on the wrong slot.
  *
  * RN app surface (expo-file-system). No-op on web, where the defaults apply every launch.
  */
 import { Platform } from "react-native";
-import { DEFAULTS, parsePrefs, type Prefs, serializePrefs } from "../state/prefs";
+import { DEFAULTS, mergePrefs, parsePrefs, type Prefs, serializePrefs } from "../state/prefs";
 
 const FILE = "prefs.json";
 
-/** Last known prefs. Defaults until the first load lands — i.e. guarded, the safe direction. */
+/** Last known prefs. Defaults until the first read lands — i.e. guarded, the safe direction. */
 let cache: Prefs = { ...DEFAULTS };
 
+/** The first (and only) read of the file. See `loadPrefs`. */
+let hydration: Promise<void> | null = null;
+
 /**
- * The prefs as last loaded, with no waiting. For code that cannot await — see the note above. Before
- * hydration (the first few hundred ms of a launch) this is the defaults.
+ * The prefs as last read, with no waiting. For code that cannot await — see the note above. Before
+ * hydration (the first moments of a launch) this is the defaults.
  */
 export function getPrefs(): Prefs {
   return cache;
 }
 
-/** Read the saved prefs, falling back to defaults for anything missing / unreadable / on web. */
-export async function loadPrefs(): Promise<Prefs> {
-  if (Platform.OS === "web") return cache;
+/**
+ * The saved prefs, waiting for the first read if it hasn't landed yet.
+ *
+ * The file is read **once**. This app is its only writer, so once the cache exists it *is* the saved
+ * state, and a second read could only lose a write still on its way to disk — which is exactly how a
+ * toggle made during a slow launch would get silently reverted.
+ */
+export function loadPrefs(): Promise<Prefs> {
+  hydration ??= read();
+  return hydration.then(getPrefs);
+}
+
+async function read(): Promise<void> {
+  if (Platform.OS === "web") return;
   try {
     const { File, Paths } = await import("expo-file-system");
     const buf = await new File(Paths.document, FILE).arrayBuffer(); // throws if missing
     cache = parsePrefs(new TextDecoder().decode(buf));
   } catch {
-    cache = { ...DEFAULTS };
+    cache = { ...DEFAULTS }; // no file yet, or unreadable
   }
-  return cache;
 }
 
 /**
- * Merge `patch` into the saved prefs. The in-memory value updates immediately — so the change takes
- * effect on the very next read, and on web (where nothing is written) it still holds for the
- * session. Best-effort on disk.
+ * Merge `patch` into the saved prefs. Best-effort on disk; the in-memory copy updates either way, so
+ * the change takes effect on the next read and still holds for the session on web.
  */
 export async function savePrefs(patch: Partial<Prefs>): Promise<void> {
-  const merged = serializePrefs(cache, patch);
-  cache = parsePrefs(merged);
+  // Merge onto what was SAVED, never onto the defaults. A write that beat hydration — the Read from
+  // Pedal disclosure accepted during a slow launch, say — would otherwise stamp a default over a
+  // preference the user had already set, silently restoring a guard they had turned off.
+  await loadPrefs();
+  cache = mergePrefs(cache, patch);
   if (Platform.OS === "web") return;
   try {
     const { File, Paths } = await import("expo-file-system");
@@ -55,12 +71,12 @@ export async function savePrefs(patch: Partial<Prefs>): Promise<void> {
     } catch {
       // already exists — write() overwrites
     }
-    file.write(new TextEncoder().encode(merged));
+    file.write(new TextEncoder().encode(serializePrefs(cache)));
   } catch {
     // a write failure just means the preference isn't remembered next launch
   }
 }
 
-// Hydrate on import. The first preference read that matters is many seconds away — you have to
-// connect to a pedal before you can change preset — so nothing needs to await this.
+// Start the read at import. Nothing needs to await it: the first preference that matters is many
+// seconds away — you have to connect to a pedal before you can change preset.
 void loadPrefs();

@@ -39,7 +39,7 @@ export function recallWithUnsavedGuard(target: number): void {
 
   // Guard lowered: switch now and let the edits go, which is what was asked for. Not silent, though —
   // the log is what turns "the app ate my sound" into something anyone can diagnose afterwards.
-  if (!getPrefs().unsavedGuard) {
+  if (!getPrefs().unsavedEditsGuard) {
     st.pushLog(`✂ discarded unsaved edits to ${label} → preset ${target + 1}`);
     doRecall();
     return;

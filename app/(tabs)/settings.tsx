@@ -64,18 +64,18 @@ function LinkRow({
 function BehaviourCard() {
   // The cache is already warm by the time anyone taps this tab; the load is for the cold start that
   // lands here directly. `touched` keeps that late answer from overwriting a toggle made meanwhile.
-  const [guard, setGuard] = useState(() => getPrefs().unsavedGuard);
+  const [guard, setGuard] = useState(() => getPrefs().unsavedEditsGuard);
   const touched = useRef(false);
   useEffect(() => {
     void loadPrefs().then((p) => {
-      if (!touched.current) setGuard(p.unsavedGuard);
+      if (!touched.current) setGuard(p.unsavedEditsGuard);
     });
   }, []);
 
   const onChange = (v: boolean) => {
     touched.current = true;
     setGuard(v);
-    void savePrefs({ unsavedGuard: v });
+    void savePrefs({ unsavedEditsGuard: v });
   };
 
   return (
