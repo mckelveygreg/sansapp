@@ -3,9 +3,10 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Application from "expo-application";
 import Constants from "expo-constants";
 import { Link } from "expo-router";
-import type { ReactNode } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { radius, theme } from "../../src/components/theme";
+import { getPrefs, loadPrefs, savePrefs } from "../../src/midi/prefs";
 
 function Card({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -56,6 +57,47 @@ function LinkRow({
   );
 }
 
+/**
+ * App behaviour the player can change. Distinct from Device Settings, which writes to the pedal —
+ * nothing here leaves the phone.
+ */
+function BehaviourCard() {
+  // The cache is already warm by the time anyone taps this tab; the load is for the cold start that
+  // lands here directly. `touched` keeps that late answer from overwriting a toggle made meanwhile.
+  const [guard, setGuard] = useState(() => getPrefs().unsavedEditsGuard);
+  const touched = useRef(false);
+  useEffect(() => {
+    void loadPrefs().then((p) => {
+      if (!touched.current) setGuard(p.unsavedEditsGuard);
+    });
+  }, []);
+
+  const onChange = (v: boolean) => {
+    touched.current = true;
+    setGuard(v);
+    void savePrefs({ unsavedEditsGuard: v });
+  };
+
+  return (
+    <Card title="Behaviour">
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: theme.text }}>Confirm before switching presets</Text>
+          <Text style={{ color: theme.textDim, fontSize: 12, marginTop: 2, lineHeight: 17 }}>
+            Ask what to do with unsaved edits when you change preset. Off: edits are discarded.
+          </Text>
+        </View>
+        <Switch
+          value={guard}
+          onValueChange={onChange}
+          trackColor={{ false: theme.panelEdge, true: theme.accent }}
+          thumbColor="#ffffff"
+        />
+      </View>
+    </Card>
+  );
+}
+
 export default function Settings() {
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 14 }}>
@@ -65,6 +107,7 @@ export default function Settings() {
       <LinkRow href="/backup" icon="save-outline" label="Backup & Restore" />
       <LinkRow href="/diagnostics" icon="pulse-outline" label="MIDI Log" />
       <LinkRow href="/help" icon="help-circle-outline" label="Help & Guide" />
+      <BehaviourCard />
       <Card title="SansApp">
         <Text style={{ color: theme.textDim, lineHeight: 20 }}>
           A free, open-source editor for the SansAmp Programmable Bass Driver DI Elite. Tweak your

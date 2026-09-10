@@ -21,7 +21,7 @@ import { ActivityIndicator, Alert, Modal, Pressable, Text, View } from "react-na
 import { useStore } from "zustand";
 import type { ReadFromPedalProgress } from "../device/readFromPedal";
 import { getController, pedalStore } from "../midi/pedal";
-import { loadPrefs, savePrefs } from "../midi/prefs";
+import { getPrefs, savePrefs } from "../midi/prefs";
 import {
   readPedalStore,
   retryPendingRestore,
@@ -105,8 +105,7 @@ function useReadFromPedal() {
   const start = useCallback(async () => {
     const controller = getController();
     if (!controller) return;
-    const prefs = await loadPrefs();
-    if (!prefs.readFromPedalConfirmed) {
+    if (!getPrefs().readFromPedalConfirmed) {
       if (!(await confirmFirstRun())) return;
       void savePrefs({ readFromPedalConfirmed: true });
     }
