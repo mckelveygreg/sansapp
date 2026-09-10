@@ -26,6 +26,18 @@ Distinct from the app's own unsaved edits (the `•` beside the preset name), wh
 _in the app_ and not yet saved. Both are "unsaved", but one originates at the pedal and one in the
 app.
 
+## Unsaved-edits guard
+
+The confirmation raised before a preset change while the app is holding unsaved edits — save them,
+discard them, or stay. It guards the app's edits only: **unsaved pedal edits** are invisible to it,
+and no **stored preset** is ever at risk from switching away.
+
+A guard the player can lower. Experimenting means throwing sounds away on purpose, and a guard that
+cannot be lowered is friction rather than safety.
+
+_Avoid_: "unsaved-changes guard" — "changes" reads as either side's edits, and this one only ever
+sees the app's.
+
 ## Read from Pedal
 
 The user-initiated action that recovers **live state** into the app. Named for its direction:
