@@ -1,58 +1,66 @@
 /**
- * Small persisted app preferences — things the app must remember about the *user*, not about a pedal
- * (those live in deviceCache.ts, keyed by serial). One JSON file in the document directory.
+ * Small persisted app preferences — the RN file surface: one JSON file in the document directory.
+ * What a preference *means* (defaults, versioning, how an absent field reads) lives in
+ * `src/state/prefs.ts`, where the gate can test it; this module only moves the bytes.
+ *
+ * It also keeps the loaded value in memory, so a preference can be read from a *synchronous* code
+ * path — the unsaved-edits guard runs on the preset-step button, where awaiting a file read per
+ * press would both cost IO and let two quick presses resolve out of order.
  *
  * RN app surface (expo-file-system). No-op on web, where the defaults apply every launch.
  */
 import { Platform } from "react-native";
+import { DEFAULTS, parsePrefs, type Prefs, serializePrefs } from "../state/prefs";
 
 const FILE = "prefs.json";
-const VERSION = 1;
 
-export interface Prefs {
-  /**
-   * The user has been shown, and accepted, what Read from Pedal does — that it briefly writes to the
-   * preset they are on. Asked once; the action's own subtitle discloses it permanently after that.
-   */
-  readFromPedalConfirmed: boolean;
-}
+/** Last known prefs. Defaults until the first load lands — i.e. guarded, the safe direction. */
+let cache: Prefs = { ...DEFAULTS };
 
-const DEFAULTS: Prefs = { readFromPedalConfirmed: false };
-
-interface PrefsFile extends Partial<Prefs> {
-  version: number;
+/**
+ * The prefs as last loaded, with no waiting. For code that cannot await — see the note above. Before
+ * hydration (the first few hundred ms of a launch) this is the defaults.
+ */
+export function getPrefs(): Prefs {
+  return cache;
 }
 
 /** Read the saved prefs, falling back to defaults for anything missing / unreadable / on web. */
 export async function loadPrefs(): Promise<Prefs> {
-  if (Platform.OS === "web") return { ...DEFAULTS };
+  if (Platform.OS === "web") return cache;
   try {
     const { File, Paths } = await import("expo-file-system");
     const buf = await new File(Paths.document, FILE).arrayBuffer(); // throws if missing
-    const parsed = JSON.parse(new TextDecoder().decode(buf)) as PrefsFile;
-    if (parsed.version !== VERSION) return { ...DEFAULTS };
-    return {
-      readFromPedalConfirmed: parsed.readFromPedalConfirmed === true,
-    };
+    cache = parsePrefs(new TextDecoder().decode(buf));
   } catch {
-    return { ...DEFAULTS };
+    cache = { ...DEFAULTS };
   }
+  return cache;
 }
 
-/** Merge `patch` into the saved prefs. Best-effort; no-op on web. */
+/**
+ * Merge `patch` into the saved prefs. The in-memory value updates immediately — so the change takes
+ * effect on the very next read, and on web (where nothing is written) it still holds for the
+ * session. Best-effort on disk.
+ */
 export async function savePrefs(patch: Partial<Prefs>): Promise<void> {
+  const merged = serializePrefs(cache, patch);
+  cache = parsePrefs(merged);
   if (Platform.OS === "web") return;
   try {
     const { File, Paths } = await import("expo-file-system");
-    const merged: PrefsFile = { ...(await loadPrefs()), ...patch, version: VERSION };
     const file = new File(Paths.document, FILE);
     try {
       file.create({ overwrite: true });
     } catch {
       // already exists — write() overwrites
     }
-    file.write(new TextEncoder().encode(JSON.stringify(merged)));
+    file.write(new TextEncoder().encode(merged));
   } catch {
     // a write failure just means the preference isn't remembered next launch
   }
 }
+
+// Hydrate on import. The first preference read that matters is many seconds away — you have to
+// connect to a pedal before you can change preset — so nothing needs to await this.
+void loadPrefs();
