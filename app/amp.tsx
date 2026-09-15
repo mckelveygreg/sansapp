@@ -1,6 +1,7 @@
 /**
- * Amp — the AMPLIFIER page. An "amp model" is a recipe: it writes 8 voicing bytes (Pre-Amp, Drive,
- * Presence + the hidden Buzz/Punch/Punch-Freq/Punch-Q + a level-match). This page exposes all of them
+ * Amp — the AMPLIFIER page. An "amp model" is a recipe: it writes 7 voicing bytes (Pre-Amp, Drive,
+ * Presence + the hidden Buzz/Punch/Punch-Freq/Punch-Q) plus a few fixed extras. It does NOT write the
+ * preset's output level — see ampApplySets. This page exposes all of them
  * as live knobs so the factory models are re-voiceable starting points — and lets you SAVE the
  * current voicing as your own custom amp (persisted, shown beside the factory models). Cabs/IRs live
  * on the dedicated IR page. RN app surface.
@@ -16,9 +17,9 @@ import { Knob } from "../src/components/Knob";
 import { KnobScroll } from "../src/components/KnobScroll";
 import { radius, theme } from "../src/components/theme";
 import {
-  AMP_BUNDLE_OFFSETS,
   AMP_BUNDLES,
-  ampApplyExtras,
+  ampApplyIsNoop,
+  ampApplySets,
   bundleMatches,
   detectAmpModel,
   hasAmpBundle,
@@ -60,6 +61,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 function Chip({
   label,
   active,
+  edited,
   dim,
   accent,
   disabled,
@@ -68,6 +70,11 @@ function Chip({
 }: {
   label: string;
   active: boolean;
+  /**
+   * Active, but the voicing has been moved off this model — drawn outlined rather than filled, with
+   * the reason spelled out. A filled chip promises "you are on this"; only an unedited match can.
+   */
+  edited?: boolean;
   dim?: boolean;
   accent?: boolean;
   /** No pedal: selecting a model can't apply, but a long-press (delete a saved amp) still can. */
@@ -75,11 +82,15 @@ function Chip({
   onPress: () => void;
   onLongPress?: () => void;
 }) {
+  const filled = active && !edited;
   const border = active ? theme.accent : accent ? theme.amber : theme.panelEdge;
   return (
     <Pressable
       onPress={disabled ? undefined : onPress}
       onLongPress={onLongPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      accessibilityLabel={edited ? `${label}, edited` : label}
       style={{
         paddingHorizontal: 13,
         paddingVertical: 9,
@@ -89,10 +100,21 @@ function Chip({
         alignItems: "center",
         opacity: disabled || dim ? 0.5 : 1,
         borderColor: border,
-        backgroundColor: active ? theme.accent : theme.panel,
+        backgroundColor: filled ? theme.accent : theme.panel,
       }}
     >
-      <Text style={{ color: active ? "#fff" : theme.textDim, fontSize: 13 }}>{label}</Text>
+      <Text
+        style={{
+          color: filled ? "#fff" : active ? theme.accent : theme.textDim,
+          fontSize: 13,
+          fontWeight: active ? "600" : "400",
+        }}
+      >
+        {label}
+      </Text>
+      {edited ? (
+        <Text style={{ color: theme.textDim, fontSize: 10, marginTop: 1 }}>edited</Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -107,11 +129,21 @@ export default function Amp() {
   // Which model/custom the live voicing matches — derived from the store, so it's correct on the
   // first render after a preset loads AND updates the moment a knob moves. A saved custom (exact
   // voicing) wins over the looser factory character-match it may be built on.
-  const active = useMemo<string | null>(() => {
+  // `edited` is the honest half: the name says which model the voicing came FROM, and `edited` says
+  // the knobs have since moved off it — so tapping that same chip is not the no-op the filled
+  // highlight used to imply. Both halves come from ampApplySets, so they describe one apply.
+  const active = useMemo<{ name: string; edited: boolean } | null>(() => {
     const blob = new Uint8Array(0x63);
     for (const { id } of AMP_KNOBS) blob[PARAMS[id].blobOffset] = (values[id] ?? 0) & 0x7f;
     const custom = customs.find((c) => bundleMatches(blob, c.bytes));
-    return custom ? custom.name : detectAmpModel(blob);
+    const name = custom ? custom.name : detectAmpModel(blob);
+    if (name == null) return null;
+    const bytes = custom ? custom.bytes : (AMP_BUNDLES[name] ?? []);
+    const valueAt = (index: number) => {
+      const id = PARAM_BY_INDEX.get(index);
+      return id ? values[id] : undefined;
+    };
+    return { name, edited: bytes.length > 0 && !ampApplyIsNoop(name, bytes, valueAt) };
   }, [values, customs]);
 
   const set = (id: ParamId, wire: number) => (v: number) => {
@@ -136,16 +168,13 @@ export default function Amp() {
       setStatus(`No captured bundle for "${name}".`);
       return;
     }
-    // Every param this apply sets, keyed by wire INDEX (== paramId): the 8 AMP_BUNDLE_OFFSETS bytes
-    // plus the fixed voicing extras (Buzz Q = 64, Crunch Q = 0, Mid → 0 for VT Bass / Para Driver) —
-    // PROTOCOL-MAP §5. Preset Level (offset 0x62) is in the bundle, so it's recorded/set here too.
-    const sets: { index: number; value: number }[] = [
-      ...AMP_BUNDLE_OFFSETS.map((off, i) => ({ index: off - 0x22, value: (vals[i] ?? 0) & 0x7f })),
-      ...ampApplyExtras(name),
-    ];
+    // Every param this apply sets, keyed by wire INDEX (== paramId). Defined once in the protocol
+    // layer so the highlight above and this apply can never describe different things again — and so
+    // Preset Level stays out of it: it's a per-preset output level, not part of the amp's identity.
+    const sets = ampApplySets(name, vals);
     // Reflect into the store immediately (local, no wire) so the UI updates at once AND a later SAVE
-    // records what the pedal is now playing (Preset Level / Buzz Q / Crunch Q / Mid included) instead
-    // of the loaded preset's old bytes.
+    // records what the pedal is now playing (Buzz Q / Crunch Q / Mid included) instead of the loaded
+    // preset's old bytes. Preset Level is left alone, so the preset keeps the level you set.
     for (const { index, value } of sets) {
       const id = PARAM_BY_INDEX.get(index);
       if (id) pedalStore.getState().setValueLocal(id, value);
@@ -251,7 +280,8 @@ export default function Amp() {
             <Chip
               key={name}
               label={name}
-              active={active === name}
+              active={active?.name === name}
+              edited={active?.name === name && active.edited}
               dim={!hasAmpBundle(name)}
               disabled={!ready}
               onPress={() => void applyBundle(name, AMP_BUNDLES[name] ?? [])}
@@ -259,13 +289,22 @@ export default function Amp() {
           ))}
         </View>
 
+        {active?.edited ? (
+          <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
+            This preset is voiced from {active.name}, but its knobs have been moved off it. Tapping{" "}
+            {active.name} again resets the whole voicing to the factory recipe — it won&apos;t give
+            you this sound back.
+          </Text>
+        ) : null}
+
         {customs.length > 0 ? (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
             {customs.map((c) => (
               <Chip
                 key={c.name}
                 label={c.name}
-                active={active === c.name}
+                active={active?.name === c.name}
+                edited={active?.name === c.name && active.edited}
                 accent
                 disabled={!ready}
                 onPress={() => void applyBundle(c.name, c.bytes)}

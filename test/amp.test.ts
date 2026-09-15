@@ -4,12 +4,15 @@ import {
   AMP_BUNDLE_OFFSETS,
   AMP_BUNDLES,
   ampApplyExtras,
+  ampApplyIsNoop,
+  ampApplySets,
   applyAmpBundle,
   bundleMatches,
   detectAmpModel,
   hasAmpBundle,
   readAmpBundle,
 } from "../src/protocol/amp";
+import { PARAM_REGION_START } from "../src/protocol/constants";
 
 // Offset positions that are NOT part of a model's voicing identity: Pre-Amp(0), Presence(3),
 // Drive(4) are front-panel knobs a preset tweaks; Preset Level(7) is a per-preset output level.
@@ -111,5 +114,76 @@ describe("amp model bundles", () => {
     expect(bundleMatches(blob, saved)).toBe(true);
     blob[AMP_BUNDLE_OFFSETS[4]!] = (saved[4]! + 10) & 0x7f; // but a Drive change breaks it
     expect(bundleMatches(blob, saved)).toBe(false);
+  });
+});
+
+/**
+ * What an apply actually writes, and whether the page may claim you are "on" a model.
+ *
+ * Reported from a rehearsal as "the amp sim buttons don't seem to match — if I tap out, and then
+ * back, it is very different from the preset." It was: detection compared four character bytes while
+ * the apply wrote eleven params, so a lit chip named a family rather than a preset and tapping the
+ * already-lit chip was never the no-op it looked like. Both now derive from `ampApplySets`.
+ */
+describe("amp apply", () => {
+  const PRESET_LEVEL_INDEX = AMP_BUNDLE_OFFSETS[7]! - PARAM_REGION_START; // 0x40
+  const byIndex = (sets: { index: number; value: number }[]) =>
+    new Map(sets.map((s) => [s.index, s.value]));
+
+  it("never writes Preset Level — that is the preset's output level, not the amp's identity", () => {
+    for (const [name, vals] of Object.entries(AMP_BUNDLES)) {
+      const written = byIndex(ampApplySets(name, vals));
+      expect(written.has(PRESET_LEVEL_INDEX)).toBe(false);
+      // and every other bundle byte IS written, so dropping level didn't drop the voicing with it
+      for (const [i, off] of AMP_BUNDLE_OFFSETS.slice(0, -1).entries()) {
+        expect(written.get(off - PARAM_REGION_START)).toBe(vals[i]);
+      }
+    }
+  });
+
+  it("would have silenced the pedal on VT Bass — the byte that made this audible", () => {
+    // AMP_BUNDLES["VT Bass"] ends in 0. Applying that as Preset Level dropped output to nothing;
+    // tapping back to Bass Driver set it to 127, whatever the preset had. Pin the trap byte so a
+    // future "just apply the whole bundle" change has to confront it.
+    expect(AMP_BUNDLES["VT Bass"]![7]).toBe(0);
+    expect(byIndex(ampApplySets("VT Bass", AMP_BUNDLES["VT Bass"]!)).has(PRESET_LEVEL_INDEX)).toBe(
+      false,
+    );
+  });
+
+  it("carries the fixed extras, including Mid → 0 for the two DI models", () => {
+    const vt = byIndex(ampApplySets("VT Bass", AMP_BUNDLES["VT Bass"]!));
+    expect(vt.get(0x2c)).toBe(64); // Buzz Q
+    expect(vt.get(0x2e)).toBe(0); // Crunch Q
+    expect(vt.get(0x0c)).toBe(0); // Mid forced flat
+    expect(byIndex(ampApplySets("Flip", AMP_BUNDLES["Flip"]!)).has(0x0c)).toBe(false);
+  });
+
+  it("is a no-op only when every param it writes already holds that value", () => {
+    const vals = AMP_BUNDLES["Blackface"]!;
+    const at = new Map(ampApplySets("Blackface", vals).map((s) => [s.index, s.value]));
+    expect(ampApplyIsNoop("Blackface", vals, (i) => at.get(i))).toBe(true);
+
+    // Drive moved off the template: the chip still detects (character bytes are untouched) but the
+    // apply is no longer a no-op — which is exactly the "edited" state the page now draws.
+    const driveIdx = AMP_BUNDLE_OFFSETS[4]! - PARAM_REGION_START;
+    const edited = new Map(at);
+    edited.set(driveIdx, (at.get(driveIdx)! + 10) & 0x7f);
+    expect(ampApplyIsNoop("Blackface", vals, (i) => edited.get(i))).toBe(false);
+    expect(detectAmpModel(applyAmpBundle(new Uint8Array(256), "Blackface"))).toBe("Blackface");
+  });
+
+  it("counts an unknown param as a mismatch rather than promising nothing will change", () => {
+    const vals = AMP_BUNDLES["1970s"]!;
+    expect(ampApplyIsNoop("1970s", vals, () => undefined)).toBe(false);
+  });
+
+  it("a Preset Level difference alone no longer makes a model look edited", () => {
+    // The whole point of option 1: two presets voiced identically but at different output levels are
+    // both simply "1980s", not "1980s, edited".
+    const vals = AMP_BUNDLES["1980s"]!;
+    const at = new Map(ampApplySets("1980s", vals).map((s) => [s.index, s.value]));
+    at.set(PRESET_LEVEL_INDEX, 12); // nothing like the template's 127
+    expect(ampApplyIsNoop("1980s", vals, (i) => at.get(i))).toBe(true);
   });
 });
