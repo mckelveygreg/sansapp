@@ -4,7 +4,16 @@ import { PedalModel } from "../src/device/pedalModel";
 import { DeviceSession } from "../src/device/session";
 import { createLoopback, type MidiIO } from "../src/device/transport";
 import { AMBIENCE_BUNDLES } from "../src/protocol/ambience";
-import { PROTOCOL_V1_0, PROTOCOL_V1_1, PROTOCOL_V1_2 } from "../src/protocol/constants";
+import {
+  NAME_LENGTH,
+  NAME_OFFSET,
+  PRESET_SIZE,
+  PROTOCOL_V1_0,
+  PROTOCOL_V1_1,
+  PROTOCOL_V1_2,
+} from "../src/protocol/constants";
+import { buildPresetBlob } from "../src/protocol/buildPreset";
+import { decodePreset, encodePreset, withName } from "../src/protocol/preset";
 import { PARAMS, TUNER_BLOB_OFFSET, liveSetId } from "../src/protocol/params";
 import { ambienceStore } from "../src/state/ambience";
 import { applyAmbienceType, bindSession, createPedalStore } from "../src/state/store";
@@ -550,5 +559,76 @@ describe("Read from Pedal → store", () => {
     await controller.restoreBackup(3, backup);
 
     expect([...model.presets[3]!]).toEqual([...backup]);
+  });
+});
+
+/**
+ * Renaming the preset you are currently playing. The list updated, but the store's own `name` and the
+ * base blob a save rebuilds from kept the OLD name — so the next "Save current sound here" wrote it
+ * straight back and the rename vanished. Reported from a rehearsal as "rename doesn't work
+ * consistently": it survives a recall (which re-reads flash) and dies on a save.
+ */
+describe("renaming the loaded preset", () => {
+  function presetNamed(name: string): Uint8Array {
+    const b = new Uint8Array(PRESET_SIZE);
+    b.fill(0x20, NAME_OFFSET, NAME_OFFSET + NAME_LENGTH);
+    for (let i = 0; i < name.length && i < NAME_LENGTH; i++)
+      b[NAME_OFFSET + i] = name.charCodeAt(i);
+    return b;
+  }
+
+  /** What saveCurrentTo would commit next, given the store as it now stands. */
+  function nextSaveName(store: ReturnType<typeof createPedalStore>): string {
+    const st = store.getState();
+    return decodePreset(buildPresetBlob(st.raw!, st.values, st.name ?? "", null)).name;
+  }
+
+  it("survives the save that used to overwrite it", () => {
+    const store = createPedalStore();
+    const base = presetNamed("Old Name");
+    store.getState().loadPreset(3, { drive: 40 }, "Old Name", base);
+    expect(nextSaveName(store)).toBe("Old Name");
+
+    const renamed = encodePreset(withName(decodePreset(base), "Upright"));
+    store.getState().renameSlot(3, "Upright", renamed);
+
+    expect(store.getState().name).toBe("Upright");
+    expect(store.getState().names[3]).toBe("Upright");
+    expect(nextSaveName(store)).toBe("Upright"); // the bug: this was still "Old Name"
+  });
+
+  it("keeps unsaved edits unsaved — a rename is not a save", () => {
+    const store = createPedalStore();
+    const base = presetNamed("Old Name");
+    store.getState().loadPreset(3, { drive: 40 }, "Old Name", base);
+    store.getState().setValueLocal("drive", 99);
+    expect(store.getState().dirty).toBe(true);
+
+    store
+      .getState()
+      .renameSlot(3, "Upright", encodePreset(withName(decodePreset(base), "Upright")));
+
+    expect(store.getState().dirty).toBe(true);
+    expect(store.getState().values.drive).toBe(99);
+    expect(nextSaveName(store)).toBe("Upright");
+  });
+
+  it("renaming a different slot leaves the loaded preset's own name alone", () => {
+    const store = createPedalStore();
+    store.getState().loadPreset(3, { drive: 40 }, "Old Name", presetNamed("Old Name"));
+
+    store
+      .getState()
+      .renameSlot(40, "Spare", encodePreset(withName(decodePreset(presetNamed("x")), "Spare")));
+
+    expect(store.getState().name).toBe("Old Name");
+    expect(store.getState().names[40]).toBe("Spare");
+    expect(nextSaveName(store)).toBe("Old Name");
+  });
+
+  it("falls back to the slot label when the name is emptied", () => {
+    const store = createPedalStore();
+    store.getState().renameSlot(11, "", presetNamed(""));
+    expect(store.getState().names[11]).toBe("Preset 12");
   });
 });

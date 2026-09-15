@@ -322,10 +322,17 @@ export async function saveCurrentTo(slot: number): Promise<void> {
 /** Rename a preset in place (reads its blob, rewrites only the name bytes). */
 export async function renamePreset(slot: number, name: string): Promise<void> {
   if (!session) throw new Error("Not connected");
+  // Trim before the wire, not just before the cache: the pedal used to get the raw input while the
+  // list got the trimmed one, so the two could disagree until the next sync re-read the slot.
+  const trimmed = name.trim();
   const preset = await session.readPreset(slot);
-  await session.writePreset(slot, encodePreset(withName(preset, name)));
-  cacheName(slot, name);
-  pedalStore.getState().pushLog(`✎ renamed ${slot + 1} → ${name.trim()}`);
+  const blob = encodePreset(withName(preset, trimmed));
+  await session.writePreset(slot, blob);
+  // Not cacheName: renaming the slot we're PLAYING must also move the store's own name and base blob,
+  // or the next saveCurrentTo rebuilds from the old name and overwrites the rename. See renameSlot.
+  pedalStore.getState().renameSlot(slot, trimmed, blob);
+  invalidateSlotChecksum(slot);
+  pedalStore.getState().pushLog(`✎ renamed ${slot + 1} → ${trimmed}`);
 }
 
 const TUNER_LOG_LABEL = ["off", "mute", "bypass"] as const;
