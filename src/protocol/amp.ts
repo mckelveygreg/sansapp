@@ -7,6 +7,8 @@
  * (Blackface/1980s/Shred). All 10 amps mapped.
  */
 
+import { PARAM_REGION_START } from "./constants";
+
 /** Blob offsets that define the amp voicing (preamp/presence/drive + 5 more). */
 export const AMP_BUNDLE_OFFSETS = [0x23, 0x24, 0x25, 0x26, 0x27, 0x2d, 0x4f, 0x62] as const;
 
@@ -47,6 +49,52 @@ export const AMP_BUNDLES: Readonly<Record<string, readonly number[]>> = {
   British: [61, 27, 77, 67, 96, 39, 80, 14],
   Shred: [61, 43, 105, 67, 96, 40, 27, 14],
 };
+
+/**
+ * Every param an apply of `name` writes, keyed by wire INDEX (== `paramId`) — the voicing bytes plus
+ * {@link ampApplyExtras}. **The single definition of what an apply does**, shared by the Amp page's
+ * apply and by the highlight that claims a preset is "on" a model.
+ *
+ * Sharing it is the point. The two used to disagree: the highlight compared the four character bytes
+ * while the apply wrote eleven params, so the lit chip named a family rather than your preset, and
+ * tapping the chip that was *already lit* silently replaced Pre-Amp, Drive, Presence, Preset Level,
+ * Buzz Q, Crunch Q and (on Para Driver / VT Bass) Mid with factory values. Derive both from here and
+ * that class of drift can't come back.
+ *
+ * **Preset Level is deliberately not written.** It is the last bundle offset, and it is a per-preset
+ * output level rather than part of the amp's identity — which is exactly why {@link bundleMatches}
+ * already ignores it. Writing it on apply contradicted that and was the audible half of the bug:
+ * `AMP_BUNDLES["VT Bass"]` ends in 0, so tapping VT Bass dropped the output to silence and tapping
+ * back set it to 127, whatever the preset had. EliteControl does write it; we don't, on purpose.
+ */
+export function ampApplySets(
+  name: string,
+  vals: readonly number[],
+): { index: number; value: number }[] {
+  return [
+    ...AMP_BUNDLE_OFFSETS.slice(0, -1).map((off, i) => ({
+      index: off - PARAM_REGION_START,
+      value: (vals[i] ?? 0) & 0x7f,
+    })),
+    ...ampApplyExtras(name),
+  ];
+}
+
+/**
+ * Would applying `name` leave every param exactly where it already is? `valueAt` resolves a wire
+ * index to the value currently in force (undefined for a param the caller doesn't model, which
+ * counts as a mismatch — better to warn that a tap will change something than to promise it won't).
+ *
+ * This is what lets the Amp page say "voiced from Bass Driver, edited" instead of claiming you are
+ * on a model whose knobs you have moved away from.
+ */
+export function ampApplyIsNoop(
+  name: string,
+  vals: readonly number[],
+  valueAt: (wireIndex: number) => number | undefined,
+): boolean {
+  return ampApplySets(name, vals).every(({ index, value }) => valueAt(index) === value);
+}
 
 /** Whether we have a captured bundle for `ampName`. */
 export const hasAmpBundle = (ampName: string): boolean => ampName in AMP_BUNDLES;
