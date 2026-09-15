@@ -114,6 +114,20 @@ export interface PedalState {
     raw?: Uint8Array | null,
   ) => void;
   setNames: (names: Record<number, string>) => void;
+  /**
+   * A rename of `slot` has landed on the pedal. Updates the list — and, when that slot is the one
+   * loaded, the loaded preset's own `name` and the base blob (`raw`) a later save rebuilds from.
+   *
+   * The second half is the whole point. `saveCurrentTo` overlays the live values onto `raw` and names
+   * the result `name`; leave those holding the pre-rename name and the very next save writes it back
+   * over the rename, which reads as "renaming doesn't always work" (it survives a recall, because
+   * that re-reads flash, and dies on a save). Keeping it in the action rather than at the call site
+   * means no future writer can forget it, like `loadPreset` and the Red Zone above.
+   *
+   * Deliberately does NOT touch `values`/`baseline`/`dirty`: a rename is not a save, and unsaved
+   * edits must stay unsaved and guarded.
+   */
+  renameSlot: (slot: number, name: string, raw: Uint8Array) => void;
   setValueLocal: (id: ParamId, value: number) => void;
   noteExternal: (id: ParamId, value: number) => void;
   /**
@@ -188,6 +202,11 @@ export function createPedalStore() {
         names: slot != null && name != null ? { ...s.names, [slot]: name } : s.names,
       })),
     setNames: (names) => set({ names }),
+    renameSlot: (slot, name, raw) =>
+      set((s) => ({
+        names: { ...s.names, [slot]: name.trim() || `Preset ${slot + 1}` },
+        ...(s.slot === slot ? { name, raw } : null),
+      })),
     setValueLocal: (id, value) =>
       set((s) => ({ values: { ...s.values, [id]: value }, dirty: true })),
     noteExternal: (id, value) => set((s) => ({ values: { ...s.values, [id]: value } })),
