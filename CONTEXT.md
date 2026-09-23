@@ -69,3 +69,23 @@ The current live patch as the app presents it — the values on screen, whether 
 The preset number the pedal is currently sitting on. The one piece of live information the pedal
 _will_ report, which is why the app can always show the right preset number even when the values
 beside it may be stale.
+
+## Stage
+
+The app's performance surface: a grid of fixed positions holding **the set**, for picking a sound between
+songs. Recall-only — none of the library's management operations reach it.
+
+_Avoid_: "Live", or "Live Mode", for this surface. **Live state** already means the pedal's current
+parameter values, and the two senses would appear on screen at the same time.
+
+## The set
+
+The handful of presets a player has chosen for performance, each occupying a position on **Stage**. The
+position is part of it: a set is arranged, not filtered, and a position a player has learned stays where
+they put it — so removing one leaves its place empty rather than closing the gap.
+
+## Library
+
+All 128 **stored presets** as the app lists them, in slot order: the whole bank, where presets are managed —
+copied, renamed, exported, overwritten. Distinct from **the set**, which is chosen out of it and only
+recalled. Pre-existing code vocabulary (`src/device/library.ts`).
