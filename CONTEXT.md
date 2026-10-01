@@ -84,6 +84,23 @@ The handful of presets a player has chosen for performance, each occupying a pos
 position is part of it: a set is arranged, not filtered, and a position a player has learned stays where
 they put it — so removing one leaves its place empty rather than closing the gap.
 
+A set is exactly as many positions as **Stage** shows at once — never scrolled or paged, since a place
+that scrolls is no longer a place. It belongs to the app, not to a pedal: one set, used with whichever
+pedal is attached, so a spare pedal restored from the same backup answers the same positions.
+
+_Avoid_: "favourites" — it names a flag on a preset, and the set is positions, not flags.
+
+## Set entry
+
+A **slot** placed at a position in **the set**. It refers to the slot number, never to the sound stored
+there: overwrite, swap, import or restore slot 5 and the entry is still slot 5, now showing whatever
+slot 5 holds. A slot appears in the set at most once.
+
+## Performance presets
+
+Programs 1–3 — the three presets the footswitches reach in the pedal's Performance mode. Not a separate
+bank, and not part of **the set**: a fact about the hardware that any slot listing can mark.
+
 ## Library
 
 All 128 **stored presets** as the app lists them, in slot order: the whole bank, where presets are managed —
