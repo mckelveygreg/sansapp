@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type IrRecordState, probeIrRecord } from "../src/midi/irRead";
+import { type IrRecordState, probeIrRecord, readIrRecord } from "../src/midi/irRead";
 import {
   IR_DAT_SIZE,
   buildIrUploadFromDat,
@@ -67,5 +67,21 @@ describe("probeIrRecord — the written/unwritten test the pointer guard needs",
     const s = new ProbeSession("real");
     await probeIrRecord(s as never, 1, 4, 50);
     expect(s.reads).toEqual([[1, 4]]);
+  });
+});
+
+describe("readIrRecord — the probe and the read in one round-trip", () => {
+  const read = (answer: "real" | "erased" | "silent") =>
+    readIrRecord(new ProbeSession(answer) as never, 1, 4, 50);
+
+  it("hands back the decoded IR when the record is written", async () => {
+    const r = await read("real");
+    expect(r.state).toBe("written");
+    if (r.state === "written") expect(r.ir.name).toBe("RealCab");
+  });
+
+  it("keeps erased flash and a silent pedal apart — the two a null-only read conflated", async () => {
+    expect(await read("erased")).toEqual({ state: "unwritten" });
+    expect(await read("silent")).toEqual({ state: "unreadable" });
   });
 });

@@ -97,12 +97,31 @@ describe("cab display helpers", () => {
     expect(cabResponseAt(8, dbAt, flat)![0]).toBeCloseTo(-1.5); // halfway Off↔1 blends flat in
   });
 
-  it("cabResponseAt handles unknown slots like the IR page: fall back, or null when unknowable", () => {
+  it("cabResponseAt draws nothing when an endpoint that really sounds is unknown (lab #62)", () => {
     const flat = grid.map(() => 0);
     const cabs: Record<number, number[]> = { 2: grid.map(() => 6) };
     const dbAt = (s: number) => cabs[s] ?? null;
-    expect(cabResponseAt(40, dbAt, flat)).toEqual(cabs[2]); // 2↔3 with 3 unknown → show 2
+    // 2↔3 with 3 unknown: the old one-sided fallback painted slot 2's curve as if it were the blend.
+    expect(cabResponseAt(40, dbAt, flat)).toBeNull();
+    expect(cabResponseAt(34, dbAt, flat)).toBeNull(); // two wire steps off the known detent
     expect(cabResponseAt(48, dbAt, flat)).toBeNull(); // exactly on unknown slot 3
     expect(cabResponseAt(56, dbAt, flat)).toBeNull(); // 3↔4, both unknown
+    expect(cabResponseAt(32, dbAt, flat)).toEqual(cabs[2]); // exactly on known slot 2
+  });
+
+  it("cabResponseAt tolerates a missing side of one wire step — slot 8's detent is 127", () => {
+    const flat = grid.map(() => 0);
+    const eight = grid.map(() => 4);
+    const seven = grid.map(() => -2);
+    // 127 = 7.9375: the closest the 7-bit wire gets to slot 8, so slot 7 unknown must not blank it.
+    expect(cabResponseAt(127, (s) => (s === 8 ? eight : null), flat)).toEqual(eight);
+    // Symmetrically one step above slot 7 (113) with slot 8 unknown still shows slot 7.
+    expect(cabResponseAt(113, (s) => (s === 7 ? seven : null), flat)).toEqual(seven);
+    // But 127 with slot 8 unknown is almost all slot 8 — nothing to draw.
+    expect(cabResponseAt(127, (s) => (s === 7 ? seven : null), flat)).toBeNull();
+    // With both known the blend is unchanged: 1/16 of slot 7 in.
+    expect(cabResponseAt(127, (s) => (s === 7 ? seven : eight), flat)![0]).toBeCloseTo(
+      4 * (15 / 16) - 2 / 16,
+    );
   });
 });

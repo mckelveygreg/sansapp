@@ -178,10 +178,11 @@ describe("irCurveAt: the record-keyed curve lookup both pages share", () => {
 
   it("blends the two endpoints the pedal blends, each resolved on its own row's terms", () => {
     // 0x0E = 120 sits midway between rows 7 and 8. Row 7 is mode-ON (private record 5, +9 dB), row 8
-    // is mode-OFF (library proxy 263, unread → null), so the blend falls back to the known side.
+    // is mode-OFF (library proxy 263, unread → null). Half the blend is unknown, so there is nothing
+    // honest to draw — showing row 7 alone would pass a neighbour's cab off as the blend (lab #62).
     const blob = blobWithPairs([0, 5]);
     const modes: UserIrModes = { 7: true, 8: false };
-    expect(cabResponseAt(120, irCurveAt(blob, modes, dbOf), CURVE(0))).toEqual(CURVE(9));
+    expect(cabResponseAt(120, irCurveAt(blob, modes, dbOf), CURVE(0))).toBeNull();
 
     // With row 8's proxy read, the same position blends 50/50 — the row-8 mode byte never enters it.
     const withProxy = (r: number) => (r === 263 ? CURVE(-1) : cache[r]);

@@ -40,20 +40,13 @@ import { PEDAL_IR_RATE, cabCurveDb, cabResponseAt } from "../src/dsp/tone";
 import { pickFileBytes, saveAndShare } from "../src/midi/exportFile";
 import { loadIrCache, saveIrCache } from "../src/midi/irCache";
 import { uploadCustomIr } from "../src/midi/irImport";
-import {
-  IR_READ_AB,
-  type IrRecordState,
-  USER_IR_SLOTS,
-  probeIrRecord,
-  readIr,
-} from "../src/midi/irRead";
+import { IR_READ_AB, type IrRecordRead, USER_IR_SLOTS, readIrRecord } from "../src/midi/irRead";
 import { sendParam } from "../src/midi/liveParam";
 import { getController, getSession, pedalCacheKey, pedalStore } from "../src/midi/pedal";
 import { buildPresetBlob } from "../src/protocol/buildPreset";
 import { readIrPointer } from "../src/protocol/irPointer";
 import {
   recordsInvalidatedByUpload,
-  type IrSource,
   type UserIrModes,
   irCurveAt,
   irSourceAt,
@@ -68,6 +61,7 @@ import {
 } from "../src/protocol/params";
 import { ambienceStore } from "../src/state/ambience";
 import { uiStore } from "../src/state/ui";
+import { type IrReadOutcome, type IrRow, captionRowAt, irCaption, irRow } from "../src/ui/irRows";
 import { decodeWav, encodeWav, floatToPcm } from "../src/protocol/wav";
 
 interface TypeDef {
@@ -94,7 +88,6 @@ const TAPS = 1000;
 // IR-select (0x0E) is CONTINUOUS: 0 = Off (flat), then it morphs between neighbouring cabs up to
 // slot 8 at 127. So slot n sits at n·16 (clamped to 127), and values between blend two cabs.
 const IR_SLOTS = 8;
-const slotFallback = (pos: number) => `IR ${pos}`;
 const slotToValue = (pos: number) => Math.min(127, pos * 16);
 
 // The two writable USER slots (7/8) each hold BOTH a factory cab and a per-preset custom IR; the
@@ -103,28 +96,6 @@ const slotToValue = (pos: number) => Math.min(127, pos * 16);
 // factory cab — is src/protocol/irSelect.ts's job, shared with the editor's Tone Shaper.
 const IR_MODE_ID = { 7: "irMode7", 8: "irMode8" } as const satisfies Record<number, ParamId>;
 const IR_GAIN_ID = { 7: "irGain7", 8: "irGain8" } as const satisfies Record<number, ParamId>;
-
-/**
- * Row labels for positions 1–8: the name carried by the record each position resolves to, read off the
- * pedal at record offset +4 by the pull. No hardcoded cab names — the pedal keys IRs by record where
- * the deleted `FACTORY_IR_NAME` keyed them by position, which mislabelled every preset whose slot-7
- * pointer named anything but record 262 (88 of the 128 factory presets point at 260 `Concert 2x15`).
- *
- * An unread record has no name, so the row falls back to a generic `IR n` — the same thing positions
- * 1–6 have always shown before a pull. A record's stored name can be empty-string rather than absent,
- * so the fallback is deliberately on falsiness.
- */
-const slotNames = (
-  sources: readonly (IrSource | null)[],
-  pulled: Record<number, Pulled>,
-): Record<number, string> => {
-  const out: Record<number, string> = {};
-  for (let pos = 1; pos <= IR_SLOTS; pos++) {
-    const src = sources[pos - 1];
-    out[pos] = (src ? pulled[src.record]?.name : undefined) || slotFallback(pos);
-  }
-  return out;
-};
 
 const haptic = (fn: () => Promise<unknown>) => {
   if (Platform.OS !== "web") void fn().catch(() => {});
@@ -148,7 +119,7 @@ interface Pulled {
  * one because the advice differs: "nothing is stored there" and "I couldn't find out" must not read the
  * same, or a link hiccup would tell someone to go upload over a cab they already have.
  */
-type BlockReason = "invalid" | "unwritten" | "unreadable";
+type BlockReason = "invalid" | Exclude<IrRecordRead["state"], "written">;
 
 /** The refusal text, rendered beside the switch that was refused. */
 const blockCopy = (why: BlockReason, slot: 7 | 8): { title: string; body: string } => {
@@ -318,19 +289,57 @@ function GainCell({
   );
 }
 
+/** `EMPTY` / `READ FAILED` on a user slot row — only ever shown when something is actually wrong. */
+function ProblemTag({ tag }: { tag: string }) {
+  return (
+    <View
+      style={{ borderWidth: 1, borderColor: theme.amber, borderRadius: 4, paddingHorizontal: 4 }}
+    >
+      <Text style={{ color: theme.amber, fontSize: 9, letterSpacing: 0.6, fontWeight: "600" }}>
+        {tag}
+      </Text>
+    </View>
+  );
+}
+
+/** The caption under the stack's graph: the cab under the mic, or why nothing is drawn. */
+function GraphCaption({ row }: { row: IrRow }) {
+  const c = irCaption(row);
+  return (
+    <View
+      style={{
+        borderWidth: 1,
+        borderColor: c.problem ? theme.amber : theme.panelEdge,
+        borderStyle: c.empty && !c.problem ? "dashed" : "solid",
+        borderRadius: 8,
+        padding: 8,
+        gap: 2,
+      }}
+    >
+      <Text
+        style={{ color: c.problem ? theme.amber : theme.text, fontSize: 12, fontWeight: "600" }}
+      >
+        {c.title}
+      </Text>
+      <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 15 }}>{c.body}</Text>
+    </View>
+  );
+}
+
 /**
  * The IMPULSE RESPONSE stack: rows Off/1..8 with a microphone you drag to blend between cabs live.
  * `value` is the 0x0E wire value (0..127); dragging maps the mic's Y to it and calls `onChange` so
  * the caller sends it live. Tapping a row snaps to that cab.
  */
 function MicStack({
-  names,
+  rows,
   value,
   onChange,
   onSelect,
   userControls,
 }: {
-  names: Record<number, string>;
+  /** Rows 1–8, in order. */
+  rows: readonly IrRow[];
   value: number;
   onChange: (v: number) => void;
   onSelect: (pos: number) => void;
@@ -418,7 +427,8 @@ function MicStack({
       {/* Rows */}
       <View style={{ flex: 1 }}>
         {Array.from({ length: MIC_ROWS }, (_, pos) => {
-          const label = pos === 0 ? "Off — Flat Response" : (names[pos] ?? slotFallback(pos));
+          const row = pos === 0 ? undefined : rows[pos - 1];
+          const label = row?.label ?? "Off — Flat Response";
           const active = nearest === pos;
           const ctl = userControls?.[pos];
           const rowStyle = {
@@ -453,6 +463,7 @@ function MicStack({
                   >
                     {label}
                   </Text>
+                  {row?.tag ? <ProblemTag tag={row.tag} /> : null}
                 </Pressable>
                 <View
                   style={{ marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 6 }}
@@ -493,6 +504,15 @@ export default function IrStudio() {
   // --- IMPULSE RESPONSE (live blend) ---
   /** IR record → what we read there. Record-keyed (see {@link Pulled}). */
   const [pulled, setPulled] = useState<Record<number, Pulled>>({});
+  /** IR record → how its last curve-less read went (see src/ui/irRows.ts). Page state, not a param. */
+  const [outcomes, setOutcomes] = useState<Record<number, IrReadOutcome>>({});
+  const setOutcome = (record: number, o: IrReadOutcome | null) =>
+    setOutcomes((prev) => {
+      const next = { ...prev };
+      if (o) next[record] = o;
+      else delete next[record];
+      return next;
+    });
   const [pulling, setPulling] = useState(false);
   const [pullProg, setPullProg] = useState<{ done: number; total: number } | null>(null);
   // IR position (0x0E) is store-backed — the mic reflects the LOADED preset's cab, not a guess.
@@ -519,7 +539,15 @@ export default function IrStudio() {
     () => Array.from({ length: IR_SLOTS }, (_, i) => irSourceAt(raw, i + 1, modes)),
     [raw, modes],
   );
-  const names = slotNames(stackSources, pulled);
+  const rows = stackSources.map((src, i) =>
+    irRow(
+      i + 1,
+      src,
+      (r) => pulled[r] !== undefined,
+      (r) => pulled[r]?.name,
+      outcomes,
+    ),
+  );
 
   // Load cached curves on mount so we don't re-read the pedal every visit — Refresh re-pulls.
   useEffect(() => {
@@ -570,7 +598,10 @@ export default function IrStudio() {
     setPulling(true);
     setPullProg({ done: 0, total: targets.length });
     setStatus("Reading IRs from the pedal…");
-    const next: Record<number, Pulled> = {};
+    // Each read's outcome lands as it happens, so a row can say "reading…" while its own read runs
+    // and its result shows up before the whole pull finishes.
+    let result = { ...pulled };
+    let n = 0;
     let lostLink = false;
     for (const [i, t] of targets.entries()) {
       // Re-fetch each read: if the link drops mid-read the session is nulled — bail instead of
@@ -580,27 +611,37 @@ export default function IrStudio() {
         lostLink = true;
         break;
       }
-      const ir = await readIr(session, t.a, t.b);
-      if (ir) {
-        const samples = Float64Array.from(ir.samples);
-        next[t.record] = { name: ir.name, ir: samples, db: curveOf(samples) };
+      setOutcome(t.record, "reading");
+      const read = await readIrRecord(session, t.a, t.b);
+      // A record that read empty is now known to be empty, so its old curve goes. One whose read
+      // failed keeps any curve it already had: a timeout says nothing about the record, and its
+      // number can't have been rewritten without an upload, which re-files it.
+      if (read.state === "written") {
+        const samples = Float64Array.from(read.ir.samples);
+        result = {
+          ...result,
+          [t.record]: { name: read.ir.name, ir: samples, db: curveOf(samples) },
+        };
+        n++;
+      } else if (read.state === "unwritten") {
+        result = { ...result };
+        delete result[t.record];
       }
+      setPulled(result);
+      setOutcome(
+        t.record,
+        read.state === "written" ? null : read.state === "unwritten" ? "unwritten" : "failed",
+      );
       setPullProg({ done: i + 1, total: targets.length });
       // Pace the reads so the back-to-back burst doesn't saturate the BLE TX (which was tripping a
       // transient drop). The reads bypass the request queue, so they aren't otherwise paced.
       if (i + 1 < targets.length) await new Promise((r) => setTimeout(r, 120));
     }
-    // A full pull REPLACES the records it targeted (one that read empty is now genuinely empty) while
-    // KEEPING records it never asked about — other presets' private IRs are still valid for them. A
-    // pull cut short by a link loss also keeps the targets it never got to.
-    const kept = { ...pulled };
-    if (!lostLink) for (const t of targets) delete kept[t.record];
-    const result = { ...kept, ...next };
-    setPulled(result);
+    // Records the pull never asked about are kept as they were: other presets' private IRs are still
+    // valid for them, and a pull cut short by a link loss leaves the targets it never reached alone.
     persist(result);
     setPulling(false);
     setPullProg(null);
-    const n = Object.keys(next).length;
     setStatus(
       lostLink
         ? "Lost the pedal connection while reading — reconnect and try again."
@@ -617,7 +658,7 @@ export default function IrStudio() {
   }
   function selectSlot(pos: number) {
     setBlendValue(slotToValue(pos));
-    setStatus(pos === 0 ? "Off (flat)." : `Cab ${pos}: ${names[pos]}`);
+    setStatus(pos === 0 ? "Off (flat)." : `Cab ${pos}: ${rows[pos - 1]!.label}`);
   }
 
   // The blended curve at the current mic position (interpolated between the two neighbouring cabs),
@@ -632,6 +673,14 @@ export default function IrStudio() {
       ),
     [morph, pulled, raw, modes],
   );
+
+  // The caption under the graph — the row the mic is on, or the missing endpoint that left it empty.
+  const captionPos = captionRowAt(
+    morph,
+    (pos) => rows[pos - 1]?.avail === "read",
+    stackDb !== null,
+  );
+  const captionRow = captionPos ? rows[captionPos - 1] : undefined;
 
   // One faint curve per row — the records the eight rows currently resolve to, deduplicated. Keyed by
   // record, so a cache that has accumulated other presets' private IRs doesn't clutter the graph.
@@ -705,18 +754,31 @@ export default function IrStudio() {
           return;
         }
         setCheckingSlot(slot);
-        let state: IrRecordState;
+        setOutcome(ptr.record, "reading");
+        let read: IrRecordRead;
         try {
-          state = await probeIrRecord(session, ptr.record >> 7, ptr.record & 0x7f);
+          read = await readIrRecord(session, ptr.record >> 7, ptr.record & 0x7f);
         } catch {
-          state = "unreadable";
+          read = { state: "unreadable" };
         } finally {
           setCheckingSlot(null);
         }
-        if (state !== "written") {
-          setBlocked({ slot, record: ptr.record, why: state });
+        // The probe is a full read, so its result is worth keeping either way: a real IR files its
+        // curve (the row draws it the moment the switch comes on), and an empty or failed read is
+        // what the row and caption report.
+        if (read.state !== "written") {
+          setOutcome(ptr.record, read.state === "unwritten" ? "unwritten" : "failed");
+          setBlocked({ slot, record: ptr.record, why: read.state });
           return;
         }
+        const samples = Float64Array.from(read.ir.samples);
+        const filed = { name: read.ir.name, ir: samples, db: curveOf(samples) };
+        setOutcome(ptr.record, null);
+        setPulled((p) => {
+          const next = { ...p, [ptr.record]: filed };
+          persist(next);
+          return next;
+        });
       }
     }
     setBlocked(null);
@@ -882,6 +944,13 @@ export default function IrStudio() {
         persist(kept); // keep the on-disk cache in step with the newly-written flash
         return kept;
       });
+      // Whatever an earlier read found at these records ("nothing stored", a failed read) predates
+      // the write, so it goes too.
+      setOutcomes((o) => {
+        const next = { ...o };
+        for (const r of stale) delete next[r];
+        return next;
+      });
       // The other slot losing its IR is worse news than the uploaded slot's pointer being unconfirmed,
       // so it wins the status line — it means something the user already had is gone, rather than
       // something they just made being fragile.
@@ -982,7 +1051,7 @@ export default function IrStudio() {
         )}
 
         <MicStack
-          names={names}
+          rows={rows}
           value={morph}
           onChange={setBlendValue}
           onSelect={selectSlot}
@@ -1049,6 +1118,7 @@ export default function IrStudio() {
             dbBot={-42}
           />
         </View>
+        {captionRow ? <GraphCaption row={captionRow} /> : null}
       </View>
 
       {/* CRAFT A CUSTOM IR — optional Studio */}
@@ -1115,7 +1185,7 @@ export default function IrStudio() {
                 {stackSources.map((src, i) => {
                   const record = src?.record;
                   if (record === undefined || !pulled[record]) return null;
-                  const label = names[i + 1] ?? slotFallback(i + 1);
+                  const label = rows[i]!.label;
                   return (
                     <Chip
                       key={i + 1}
@@ -1235,7 +1305,7 @@ export default function IrStudio() {
               {USER_IR_SLOTS.map((s) => (
                 <Chip
                   key={s}
-                  label={`${s}: ${names[s] ?? slotFallback(s)}`}
+                  label={`${s}: ${rows[s - 1]!.label}`}
                   active={uploadSlot === s}
                   onPress={() => setUploadSlot(s as 7 | 8)}
                 />
