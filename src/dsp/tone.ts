@@ -97,7 +97,13 @@ export function blendDb(
  * The active cab curve at an IR-select (0x0E) position: 0 is Off (flat), slot n sits at n·16,
  * and values between morph the two neighbouring cabs linearly — the same rule the pedal applies.
  * `dbAt` answers slots 1–8 with the slot's curve or null when it's unknown (not pulled, or a
- * user slot playing its unreadable factory cab); null when the position is entirely unknown.
+ * user slot playing its unreadable factory cab).
+ *
+ * Null whenever an endpoint that really sounds has no curve. The mic between a row with a curve and
+ * a row without one is a blend of both, and drawing the known side alone would show a neighbour's cab
+ * as if it were the blend (lab #62). The one tolerance is a missing side weighing at most one wire step
+ * (1/16 of a slot): that is the mic sitting on the known row's detent as closely as the 7-bit wire
+ * allows. Slot 8's detent is 127, not 128, so it always carries 1/16 of slot 7.
  */
 export function cabResponseAt(
   morph: number,
@@ -108,6 +114,14 @@ export function cabResponseAt(
   const rf = morph / 16;
   const lo = Math.floor(rf);
   const hi = Math.min(8, Math.ceil(rf));
+  const f = rf - lo;
   const curveAt = (pos: number) => (pos <= 0 ? flat : dbAt(pos));
-  return blendDb(curveAt(lo), curveAt(hi), rf - lo);
+  const a = curveAt(lo);
+  const b = curveAt(hi);
+  if (!a && f < 1 - ONE_WIRE_STEP) return null;
+  if (!b && f > ONE_WIRE_STEP) return null;
+  return blendDb(a, b, f);
 }
+
+/** One 0x0E wire step, as a fraction of the distance between two neighbouring IR positions. */
+const ONE_WIRE_STEP = 1 / 16;
