@@ -17,6 +17,7 @@ import { driveResponse } from "./drive";
 import { ELITE_SAMPLE_RATE, eliteFilterBiquad } from "./eliteFilters";
 import type { EqKnobs } from "./eq";
 import { eqResponse } from "./eq";
+import { SLOT_8_DETENT, irNeighbours } from "../protocol/irSelect";
 import { frequencyResponse } from "./ir";
 
 /** Every knob that moves the static tone: the 3-band EQ (with its deep Freq/Q trims) plus the
@@ -101,9 +102,8 @@ export function blendDb(
  *
  * Null whenever an endpoint that really sounds has no curve. The mic between a row with a curve and
  * a row without one is a blend of both, and drawing the known side alone would show a neighbour's cab
- * as if it were the blend (lab #62). The one tolerance is a missing side weighing at most one wire step
- * (1/16 of a slot): that is the mic sitting on the known row's detent as closely as the 7-bit wire
- * allows. Slot 8's detent is 127, not 128, so it always carries 1/16 of slot 7.
+ * as if it were the blend (lab #62). The one exception is slot 8's own detent, {@link SLOT_8_DETENT}:
+ * it can't reach 128, so it carries 1/16 of slot 7, and an unknown slot 7 must not blank slot 8.
  */
 export function cabResponseAt(
   morph: number,
@@ -111,17 +111,11 @@ export function cabResponseAt(
   flat: readonly number[],
 ): number[] | null {
   if (morph <= 0) return flat.slice();
-  const rf = morph / 16;
-  const lo = Math.floor(rf);
-  const hi = Math.min(8, Math.ceil(rf));
-  const f = rf - lo;
+  const { lo, hi, f } = irNeighbours(morph);
   const curveAt = (pos: number) => (pos <= 0 ? flat : dbAt(pos));
   const a = curveAt(lo);
   const b = curveAt(hi);
-  if (!a && f < 1 - ONE_WIRE_STEP) return null;
-  if (!b && f > ONE_WIRE_STEP) return null;
+  if (!b) return null;
+  if (!a && morph !== SLOT_8_DETENT) return null;
   return blendDb(a, b, f);
 }
-
-/** One 0x0E wire step, as a fraction of the distance between two neighbouring IR positions. */
-const ONE_WIRE_STEP = 1 / 16;

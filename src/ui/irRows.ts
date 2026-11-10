@@ -24,13 +24,22 @@
  * mid-read, came back empty, or failed; one in neither has not been read yet. That third state is what a null-only cache could
  * not tell apart from "nothing stored".
  */
-import { type IrSource, LIBRARY_RECORD_BASE } from "../protocol/irSelect";
+import { type IrSource, LIBRARY_RECORD_BASE, irNeighbours } from "../protocol/irSelect";
 
 /** A read that didn't leave a curve: still running, came back empty (erased flash), or never came back. */
 export type IrReadOutcome = "reading" | "unwritten" | "failed";
 
 /** Record → the outcome of its last read that left no curve. */
 export type IrReadOutcomes = Readonly<Record<number, IrReadOutcome>>;
+
+/**
+ * What a finished read leaves on its row: nothing for a real IR (its curve speaks for it), `unwritten`
+ * for erased flash, and `failed` for a read that timed out or didn't decode.
+ */
+export function outcomeOf(state: "written" | "unwritten" | "unreadable"): IrReadOutcome | null {
+  if (state === "written") return null;
+  return state === "unwritten" ? "unwritten" : "failed";
+}
 
 /** Everything a row can be. `none` is a switched-on user slot whose pointer names no real record. */
 export type IrRowAvail = "read" | "unread" | IrReadOutcome | "none";
@@ -179,8 +188,7 @@ export function captionRowAt(
   const nearest = Math.round(rf);
   if (nearest <= 0) return null;
   if (blendDrawn || !hasCurveAt(nearest)) return Math.min(8, nearest);
-  const lo = Math.floor(rf);
-  const hi = Math.min(8, Math.ceil(rf));
+  const { lo, hi } = irNeighbours(morph);
   const other = nearest === lo ? hi : lo;
   return other > 0 && !hasCurveAt(other) ? other : Math.min(8, nearest);
 }

@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { IrSource } from "../src/protocol/irSelect";
-import { type IrReadOutcomes, captionRowAt, irCaption, irRow } from "../src/ui/irRows";
+import { type IrReadOutcomes, captionRowAt, irCaption, irRow, outcomeOf } from "../src/ui/irRows";
 
 const NAMES: Record<number, string> = { 262: "Voice 12L", 260: "Concert 2x15", 5: "My HP cab" };
 const row = (
@@ -121,5 +121,13 @@ describe("captionRowAt", () => {
     expect(captionRowAt(118, has(7), false)).toBe(8);
     // Both missing: the nearest row is the one to explain.
     expect(captionRowAt(118, has(), false)).toBe(7);
+  });
+});
+
+describe("outcomeOf: what a finished read leaves on its row", () => {
+  it("files nothing for a real IR, EMPTY's state for erased flash, and a failure otherwise", () => {
+    expect(outcomeOf("written")).toBeNull();
+    expect(outcomeOf("unwritten")).toBe("unwritten");
+    expect(outcomeOf("unreadable")).toBe("failed");
   });
 });

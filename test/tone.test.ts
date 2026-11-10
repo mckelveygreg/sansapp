@@ -109,14 +109,16 @@ describe("cab display helpers", () => {
     expect(cabResponseAt(32, dbAt, flat)).toEqual(cabs[2]); // exactly on known slot 2
   });
 
-  it("cabResponseAt tolerates a missing side of one wire step — slot 8's detent is 127", () => {
+  it("cabResponseAt draws slot 8 at its 127 detent with slot 7 unknown — and only there", () => {
     const flat = grid.map(() => 0);
     const eight = grid.map(() => 4);
     const seven = grid.map(() => -2);
     // 127 = 7.9375: the closest the 7-bit wire gets to slot 8, so slot 7 unknown must not blank it.
     expect(cabResponseAt(127, (s) => (s === 8 ? eight : null), flat)).toEqual(eight);
-    // Symmetrically one step above slot 7 (113) with slot 8 unknown still shows slot 7.
-    expect(cabResponseAt(113, (s) => (s === 7 ? seven : null), flat)).toEqual(seven);
+    // Every other detent is exactly n·16, so one step off it is a real blend: 113 is 1/16 slot 8, and
+    // 17 is 1/16 slot 2. With that side unknown there is nothing honest to draw.
+    expect(cabResponseAt(113, (s) => (s === 7 ? seven : null), flat)).toBeNull();
+    expect(cabResponseAt(17, (s) => (s === 1 ? seven : null), flat)).toBeNull();
     // But 127 with slot 8 unknown is almost all slot 8 — nothing to draw.
     expect(cabResponseAt(127, (s) => (s === 7 ? seven : null), flat)).toBeNull();
     // With both known the blend is unchanged: 1/16 of slot 7 in.

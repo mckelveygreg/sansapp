@@ -61,7 +61,14 @@ import {
 } from "../src/protocol/params";
 import { ambienceStore } from "../src/state/ambience";
 import { uiStore } from "../src/state/ui";
-import { type IrReadOutcome, type IrRow, captionRowAt, irCaption, irRow } from "../src/ui/irRows";
+import {
+  type IrReadOutcome,
+  type IrRow,
+  captionRowAt,
+  irCaption,
+  irRow,
+  outcomeOf,
+} from "../src/ui/irRows";
 import { decodeWav, encodeWav, floatToPcm } from "../src/protocol/wav";
 
 interface TypeDef {
@@ -506,13 +513,19 @@ export default function IrStudio() {
   const [pulled, setPulled] = useState<Record<number, Pulled>>({});
   /** IR record → how its last curve-less read went (see src/ui/irRows.ts). Page state, not a param. */
   const [outcomes, setOutcomes] = useState<Record<number, IrReadOutcome>>({});
-  const setOutcome = (record: number, o: IrReadOutcome | null) =>
+  const setOutcome = (record: number, o: IrReadOutcome) =>
+    setOutcomes((prev) => ({ ...prev, [record]: o }));
+  const clearOutcomes = (records: Iterable<number>) =>
     setOutcomes((prev) => {
       const next = { ...prev };
-      if (o) next[record] = o;
-      else delete next[record];
+      for (const r of records) delete next[r];
       return next;
     });
+  const settleOutcome = (record: number, read: IrRecordRead) => {
+    const o = outcomeOf(read.state);
+    if (o) setOutcome(record, o);
+    else clearOutcomes([record]);
+  };
   const [pulling, setPulling] = useState(false);
   const [pullProg, setPullProg] = useState<{ done: number; total: number } | null>(null);
   // IR position (0x0E) is store-backed — the mic reflects the LOADED preset's cab, not a guess.
@@ -612,7 +625,14 @@ export default function IrStudio() {
         break;
       }
       setOutcome(t.record, "reading");
-      const read = await readIrRecord(session, t.a, t.b);
+      // A read that throws is a failed read, not a reason to leave this row "reading" and the page
+      // stuck mid-pull.
+      let read: IrRecordRead;
+      try {
+        read = await readIrRecord(session, t.a, t.b);
+      } catch {
+        read = { state: "unreadable" };
+      }
       // A record that read empty is now known to be empty, so its old curve goes. One whose read
       // failed keeps any curve it already had: a timeout says nothing about the record, and its
       // number can't have been rewritten without an upload, which re-files it.
@@ -628,10 +648,7 @@ export default function IrStudio() {
         delete result[t.record];
       }
       setPulled(result);
-      setOutcome(
-        t.record,
-        read.state === "written" ? null : read.state === "unwritten" ? "unwritten" : "failed",
-      );
+      settleOutcome(t.record, read);
       setPullProg({ done: i + 1, total: targets.length });
       // Pace the reads so the back-to-back burst doesn't saturate the BLE TX (which was tripping a
       // transient drop). The reads bypass the request queue, so they aren't otherwise paced.
@@ -767,13 +784,13 @@ export default function IrStudio() {
         // curve (the row draws it the moment the switch comes on), and an empty or failed read is
         // what the row and caption report.
         if (read.state !== "written") {
-          setOutcome(ptr.record, read.state === "unwritten" ? "unwritten" : "failed");
+          settleOutcome(ptr.record, read);
           setBlocked({ slot, record: ptr.record, why: read.state });
           return;
         }
         const samples = Float64Array.from(read.ir.samples);
         const filed = { name: read.ir.name, ir: samples, db: curveOf(samples) };
-        setOutcome(ptr.record, null);
+        clearOutcomes([ptr.record]);
         setPulled((p) => {
           const next = { ...p, [ptr.record]: filed };
           persist(next);
@@ -946,11 +963,7 @@ export default function IrStudio() {
       });
       // Whatever an earlier read found at these records ("nothing stored", a failed read) predates
       // the write, so it goes too.
-      setOutcomes((o) => {
-        const next = { ...o };
-        for (const r of stale) delete next[r];
-        return next;
-      });
+      clearOutcomes(stale);
       // The other slot losing its IR is worse news than the uploaded slot's pointer being unconfirmed,
       // so it wins the status line — it means something the user already had is gone, rather than
       // something they just made being fragile.
