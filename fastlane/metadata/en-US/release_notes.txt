@@ -1,3 +1,5 @@
+Works with pedal firmware 1.0, 1.1 and 1.2.
+
 New:
 • Read from Pedal. Turned some knobs at the pedal without saving? Read from Pedal brings those tweaks into the app, so what you see matches what you hear. Afterwards it tells you plainly whether the read checked out. One limit, from the pedal itself: an engaged Red Zone can't be carried across, so turn it back on at the footswitch.
 • The IR page now says what each cab slot holds. Rows are named for the cab stored there, such as "Factory cab 3", "Your cab", or "No cab stored", and slots 7 and 8 only get a tag when something is wrong: EMPTY or READ FAILED. A caption under the graph says where the curve you're looking at came from, and marks it "approximate" when it's a stand-in for the factory cab.
