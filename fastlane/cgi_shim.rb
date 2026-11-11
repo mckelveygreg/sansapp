@@ -1,6 +1,6 @@
 # Ruby 4 moved CGI.parse out of the default cgi gem, and fastlane's Apple login (spaceship) still
 # calls it. Load this before fastlane until spaceship stops relying on it:
-#   RUBYOPT="-r./fastlane/cgi_shim.rb" fastlane ios beta
+#   RUBYOPT="-r$PWD/fastlane/cgi_shim.rb" fastlane ios beta   (absolute: the lanes change directory)
 require "cgi"
 unless CGI.respond_to?(:parse)
   def CGI.parse(query)
