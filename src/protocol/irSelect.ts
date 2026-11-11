@@ -48,6 +48,19 @@ import { type UserIrSlot, readIrPointer } from "./irPointer";
 const IR_POSITIONS = 8;
 
 /**
+ * The IR-select (0x0E) value of slot 8's detent. Every other slot n sits exactly at n·16, but 8·16 is
+ * one past the 7-bit wire, so slot 8 sits at 127 and always carries 1/16 of slot 7.
+ */
+export const SLOT_8_DETENT = 127;
+
+/** The two IR positions an IR-select value sits between (0 = Off), and how far it is toward `hi`. */
+export function irNeighbours(morph: number): { lo: number; hi: number; f: number } {
+  const rf = morph / 16;
+  const lo = Math.floor(rf);
+  return { lo, hi: Math.min(IR_POSITIONS, Math.ceil(rf)), f: rf - lo };
+}
+
+/**
  * First record of the shared 8-entry library (records 256–263 = `05 69` bank `0x02`, `b` 0–7).
  * Everything below it is the private per-preset store — the only records this app ever writes.
  */

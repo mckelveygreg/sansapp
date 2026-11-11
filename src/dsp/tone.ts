@@ -17,6 +17,7 @@ import { driveResponse } from "./drive";
 import { ELITE_SAMPLE_RATE, eliteFilterBiquad } from "./eliteFilters";
 import type { EqKnobs } from "./eq";
 import { eqResponse } from "./eq";
+import { SLOT_8_DETENT, irNeighbours } from "../protocol/irSelect";
 import { frequencyResponse } from "./ir";
 
 /** Every knob that moves the static tone: the 3-band EQ (with its deep Freq/Q trims) plus the
@@ -97,7 +98,12 @@ export function blendDb(
  * The active cab curve at an IR-select (0x0E) position: 0 is Off (flat), slot n sits at n·16,
  * and values between morph the two neighbouring cabs linearly — the same rule the pedal applies.
  * `dbAt` answers slots 1–8 with the slot's curve or null when it's unknown (not pulled, or a
- * user slot playing its unreadable factory cab); null when the position is entirely unknown.
+ * user slot playing its unreadable factory cab).
+ *
+ * Null whenever an endpoint that really sounds has no curve. The mic between a row with a curve and
+ * a row without one is a blend of both, and drawing the known side alone would show a neighbour's cab
+ * as if it were the blend (lab #62). The one exception is slot 8's own detent, {@link SLOT_8_DETENT}:
+ * it can't reach 128, so it carries 1/16 of slot 7, and an unknown slot 7 must not blank slot 8.
  */
 export function cabResponseAt(
   morph: number,
@@ -105,9 +111,11 @@ export function cabResponseAt(
   flat: readonly number[],
 ): number[] | null {
   if (morph <= 0) return flat.slice();
-  const rf = morph / 16;
-  const lo = Math.floor(rf);
-  const hi = Math.min(8, Math.ceil(rf));
+  const { lo, hi, f } = irNeighbours(morph);
   const curveAt = (pos: number) => (pos <= 0 ? flat : dbAt(pos));
-  return blendDb(curveAt(lo), curveAt(hi), rf - lo);
+  const a = curveAt(lo);
+  const b = curveAt(hi);
+  if (!b) return null;
+  if (!a && morph !== SLOT_8_DETENT) return null;
+  return blendDb(a, b, f);
 }

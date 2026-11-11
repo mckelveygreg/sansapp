@@ -147,9 +147,30 @@ export async function probeIrRecord(
   b: number,
   timeoutMs = 6000,
 ): Promise<IrRecordState> {
+  return (await readIrRecord(session, a, b, timeoutMs)).state;
+}
+
+/** One read's whole outcome: the decoded IR when there was one, and which way it went otherwise. */
+export type IrRecordRead =
+  | { readonly state: "written"; readonly ir: DecodedIr }
+  | { readonly state: "unwritten" | "unreadable" };
+
+/**
+ * {@link probeIrRecord} and {@link readIr} in one round-trip: what the record holds, plus its samples
+ * when it holds a real IR. A pull needs both. {@link readIr} alone answers null for an erased record
+ * and for a timed-out read, so a page built on it can't tell "nothing stored" from "not read yet".
+ */
+export async function readIrRecord(
+  session: DeviceSession,
+  a: number,
+  b: number,
+  timeoutMs = 6000,
+): Promise<IrRecordRead> {
   const packed = await readIrPacked(session, a, b, timeoutMs);
-  if (!packed) return "unreadable";
-  return irStreamToDat(packed) ? "written" : "unwritten";
+  if (!packed) return { state: "unreadable" };
+  if (!irStreamToDat(packed)) return { state: "unwritten" };
+  const ir = decodeIrStream(packed);
+  return ir ? { state: "written", ir } : { state: "unreadable" };
 }
 
 /** Read the IR in slot 1..8 using {@link IR_READ_AB} (null for an out-of-range slot). */
