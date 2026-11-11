@@ -1,22 +1,11 @@
-Adds support for pedal firmware 1.2. One build now talks to firmware 1.0, 1.1 and 1.2 — SansApp detects which one your pedal is running and adapts to it, including firmware 1.2's change to how the red footswitch's Red Zone state is worked out. If you have updated your pedal to 1.2, you need this version: older builds of SansApp cannot connect to it at all.
-
 New:
-• Red Zone indicator. The status bar now shows whether the pedal's red footswitch layer is engaged, and re-checks it every time a preset loads. On firmware 1.1 and earlier, any preset with Ambiance dialled in comes up already engaged, so the first press of the red switch turns things off rather than on — now you can see that coming instead of guessing. Firmware 1.2 fixes it at the pedal.
-• MUTE / BYPASS bar, for silent tuning and quick A/B against your dry signal.
-• The preset list now refreshes itself from the pedal every time you connect, so a preset you renamed or saved at the pedal shows up correctly. It stays quick: SansApp asks the pedal which presets changed and re-reads only those, instead of walking all 128. Your list also appears immediately when you open the app, before connecting.
-• SansApp now recognises which pedal it is talking to, so if you use it with more than one, each keeps its own preset names and cab data instead of showing the other's.
-• The app version and build number are shown on the Settings page.
+• Read from Pedal. Turned some knobs at the pedal without saving? Read from Pedal brings those tweaks into the app, so what you see matches what you hear. Afterwards it tells you plainly whether the read checked out. One limit, from the pedal itself: an engaged Red Zone can't be carried across, so turn it back on at the footswitch.
+• The IR page now says what each cab slot holds. Rows are named for the cab stored there, such as "Factory cab 3", "Your cab", or "No cab stored", and slots 7 and 8 only get a tag when something is wrong: EMPTY or READ FAILED. A caption under the graph says where the curve you're looking at came from, and marks it "approximate" when it's a stand-in for the factory cab.
+• Settings → Behaviour → Confirm before switching presets. Turn it off and changing presets discards unsaved edits without asking, which is handy while you experiment. It's on by default.
 
 Fixed:
-• Compressor and gate timing read-outs were wrong through the middle of their travel — Release showed roughly a third of the real time, and Attack was out too. All three now match the pedal.
-• Soft Clip is a switch on the pedal, not an amount, so it is now a switch in the app instead of a percentage knob that appeared to do nothing.
-• The Dynamics page stays inside its panels. The Soft Clip, Auto Gain and Lookahead switches ran off the right-hand edge, the gate's four knobs crowded past it, and a longer read-out could spill over the rim of its dial.
-• Controls no longer move when no pedal is connected. Device Settings in particular used to show a set of values that were not read from your pedal at all.
-• Uploading a custom IR to one user slot no longer blanks the other slot's cab in the IR display. Nothing was ever lost on the pedal, but the app stopped showing it.
-• The Studio's Low-pass preview is readable again instead of pinning the low end to the top of the graph.
-• When a user IR slot cannot be switched on, the explanation now appears next to the switch rather than at the bottom of the page, where it was easy to miss.
-• A user IR slot can no longer be enabled when its pointer doesn't refer to a real cab — closing a path that could send a write to the wrong place on the pedal.
-• Custom IR uploads no longer begin unless the connection can carry them through, and they reconnect before retrying.
-• Each preset's cab is resolved by record, so presets sharing or overriding a custom IR load the right one.
-• A preset saved with its Level at zero is no longer silently treated as empty.
-• The tuner no longer leaves an unsaved change behind after you use it.
+• Renaming the preset you're playing now sticks. Before, saving afterwards could put the old name back.
+• Tapping an amp model no longer changes your preset's output level. Before, VT Bass could drop the level to silence and Bass Driver could jump it to full.
+• An amp model's button now shows "edited" when your preset is voiced from that model but its knobs have moved off it, and explains that tapping it resets the voicing to the factory recipe.
+• A user IR slot can't be switched on unless a cab is really stored where it points. An upload that stopped partway could leave a pointer at empty memory, which the pedal plays back very loud.
+• The IR graph no longer shows a neighbouring cab's curve when the mic sits between a cab it has read and one it hasn't. It shows nothing and says which cab is missing.
