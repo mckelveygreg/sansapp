@@ -426,6 +426,17 @@ describe("physical knob moves mark the preset edited (lab#79)", () => {
     ctl.dispose();
   });
 
+  it("a 0x4d stomp on an already-edited preset leaves it dirty", async () => {
+    const { store, ctl, notify } = await setup();
+    ctl.setValue("drive", 90); // in-app edit
+    expect(store.getState().dirty).toBe(true);
+    await notify(0x4d, 1);
+    expect(store.getState().dirty).toBe(true);
+    await notify(0x4d, 0);
+    expect(store.getState().dirty).toBe(true);
+    ctl.dispose();
+  });
+
   it("a knob turn after a stomp marks dirty, and turning it back clears it", async () => {
     const { store, ctl, notify } = await setup();
     await notify(0x4d, 1);
