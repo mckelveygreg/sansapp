@@ -129,7 +129,25 @@ export interface PedalState {
    */
   renameSlot: (slot: number, name: string, raw: Uint8Array) => void;
   setValueLocal: (id: ParamId, value: number) => void;
+  /**
+   * A physical knob moved on the pedal (a `05 51` notify). It IS an edit: `dirty` is recomputed
+   * against the baseline — the rule {@link adoptLive} uses — so turning a knob back to its stored
+   * value clears the `•` again. A type picked on the Ambience page (`typeDirty`) has no value diff of
+   * its own, so it keeps the sound dirty regardless.
+   *
+   * Not for the Red Zone footswitch mirror: that goes through {@link noteRedZoneToggle}.
+   */
   noteExternal: (id: ParamId, value: number) => void;
+  /**
+   * Firmware ≥ 1.1 red footswitch: the pedal force-set {@link RED_ZONE_TOGGLE_PARAMS} to `on`. A
+   * stomp is a performance action, not an edit, so this moves `values` AND `baseline` for those params
+   * together and leaves `dirty` alone — the stomp neither creates nor erases an unsaved edit.
+   *
+   * Moving the baseline (rather than leaving the toggle params out of the dirty comparison) keeps
+   * them comparable: a later in-app toggle still diffs against what the pedal is now playing, and a
+   * save still writes the stomped flags, because save-from-state builds the blob from `values`.
+   */
+  noteRedZoneToggle: (on: 0 | 1) => void;
   /**
    * Land values recovered by a Read from Pedal: `values` is what the pedal is playing, `baseline` is
    * what its slot stores. They become **unsaved edits** — the `•` lights up and the existing
@@ -151,6 +169,14 @@ export interface PedalState {
 }
 
 const LOG_CAP = 200;
+
+/** Whether any modeled param in `values` differs from `baseline` — the unsaved-edit rule. */
+function differs(
+  values: Partial<Record<ParamId, number>>,
+  baseline: Partial<Record<ParamId, number>>,
+): boolean {
+  return PARAM_IDS.some((id) => values[id] !== baseline[id]);
+}
 
 export function createPedalStore() {
   return createStore<PedalState>((set) => ({
@@ -209,7 +235,24 @@ export function createPedalStore() {
       })),
     setValueLocal: (id, value) =>
       set((s) => ({ values: { ...s.values, [id]: value }, dirty: true })),
-    noteExternal: (id, value) => set((s) => ({ values: { ...s.values, [id]: value } })),
+    noteExternal: (id, value) =>
+      set((s) => {
+        const values = { ...s.values, [id]: value };
+        return {
+          values,
+          dirty: differs(values, s.baseline) || ambienceStore.getState().typeDirty,
+        };
+      }),
+    noteRedZoneToggle: (on) =>
+      set((s) => {
+        const values = { ...s.values };
+        const baseline = { ...s.baseline };
+        for (const id of RED_ZONE_TOGGLE_PARAMS) {
+          values[id] = on;
+          baseline[id] = on;
+        }
+        return { values, baseline };
+      }),
     adoptLive: (slot, values, baseline, name, raw) =>
       set((s) => ({
         // The slot comes from the PEDAL (its active program), so this also corrects a store that had
@@ -220,7 +263,7 @@ export function createPedalStore() {
         values: { ...values },
         baseline: { ...baseline },
         raw,
-        dirty: PARAM_IDS.some((id) => values[id] !== baseline[id]),
+        dirty: differs(values, baseline),
         // The pedal re-derives its Red Zone state from the values a preset LOAD pushes into the live
         // array — and the restore's `05 20` stage is such a load, of the STORED blob. The re-apply
         // that follows sets params individually and re-derives nothing. So the pedal is sitting on
@@ -444,7 +487,7 @@ export function bindSession(session: DeviceSession, store: PedalStoreApi): Pedal
         // repoints all eight physical knobs at the other knob bank.
         const fw = store.getState().firmware;
         if (fw !== null && fw >= RED_ZONE_TOGGLE_MIN_FIRMWARE) {
-          for (const id of RED_ZONE_TOGGLE_PARAMS) store.getState().noteExternal(id, on);
+          store.getState().noteRedZoneToggle(on); // a stomp, not an edit — see noteRedZoneToggle
           store
             .getState()
             .pushLog(`🔴 Red Zone ${on ? "ON" : "OFF"} → chorus + filter ${on ? "on" : "off"}`);

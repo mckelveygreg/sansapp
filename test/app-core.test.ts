@@ -80,7 +80,7 @@ describe("pedal store + controller", () => {
     ctl.dispose();
   });
 
-  it("reflects an external (physical knob) change without setting dirty", async () => {
+  it("reflects an external (physical knob) change in values", async () => {
     const [appIO, devIO] = createLoopback();
     wireModel(devIO, new PedalModel());
     const session = new DeviceSession(appIO, 500);
@@ -91,7 +91,6 @@ describe("pedal store + controller", () => {
     devIO.send(encode({ kind: "paramNotify", param: 0x05, value: 0x40 })); // physical Drive
     await new Promise((r) => setTimeout(r, 10));
     expect(store.getState().values.drive).toBe(0x40);
-    expect(store.getState().dirty).toBe(false); // external change isn't a local edit
   });
 
   it("physical AMBIANCE knob (0x08) updates values.ambiance — the deep page's Level (issue #39)", async () => {
@@ -108,7 +107,6 @@ describe("pedal store + controller", () => {
     devIO.send(encode({ kind: "paramNotify", param: 0x08, value: 56 })); // physical AMBIANCE knob
     await new Promise((r) => setTimeout(r, 10));
     expect(store.getState().values.ambiance).toBe(56);
-    expect(store.getState().dirty).toBe(false);
     ctl.dispose();
   });
 
@@ -180,7 +178,7 @@ describe("pedal store + controller", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(store.getState().values.chorusOn).toBe(1);
     expect(store.getState().values.autoFilterOn).toBe(1);
-    expect(store.getState().dirty).toBe(false); // pedal-initiated, not a local edit
+    expect(store.getState().dirty).toBe(false); // a stomp, not an edit (lab#79)
 
     devIO.send(encode({ kind: "paramNotify", param: 0x4d, value: 0 }, PROTOCOL_V1_1)); // off
     await new Promise((r) => setTimeout(r, 10));
@@ -370,6 +368,116 @@ describe("pedal store + controller", () => {
     expect(store.getState().layer).toBe("red"); // the layer still tracks
     expect(store.getState().values.chorusOn).toBeUndefined();
     expect(store.getState().values.autoFilterOn).toBeUndefined();
+    ctl.dispose();
+  });
+});
+
+describe("physical knob moves mark the preset edited (lab#79)", () => {
+  // A knob turned at the pedal is an edit like one made in the app: the `•` lights and the
+  // unsaved-changes guard fires. The red footswitch (fw ≥ 1.1) is exempt — a stomp is a performance
+  // action — but must not stop a later knob turn or in-app edit from counting.
+  const DRIVE = 20;
+  const CHORUS = 30;
+
+  async function setup(version = PROTOCOL_V1_1) {
+    const presets = Array.from({ length: 128 }, () => {
+      const b = new Uint8Array(PRESET_SIZE);
+      b[0] = 0x01;
+      b[PARAMS.drive.blobOffset] = DRIVE;
+      b[PARAMS.chorus.blobOffset] = CHORUS;
+      return b;
+    });
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel(presets), version);
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+    await ctl.recall(3);
+    expect(store.getState().dirty).toBe(false);
+    const notify = async (param: number, value: number): Promise<void> => {
+      devIO.send(encode({ kind: "paramNotify", param, value }, version));
+      await new Promise((r) => setTimeout(r, 10));
+    };
+    return { store, ctl, notify };
+  }
+
+  it("a knob notify marks dirty, and turning it back to the stored value clears it", async () => {
+    const { store, ctl, notify } = await setup();
+    await notify(0x05, 90); // physical Drive
+    expect(store.getState().values.drive).toBe(90);
+    expect(store.getState().dirty).toBe(true);
+
+    await notify(0x05, DRIVE); // back where the preset stores it
+    expect(store.getState().dirty).toBe(false);
+    ctl.dispose();
+  });
+
+  it("a 0x4d stomp alone does not mark dirty, in either direction", async () => {
+    const { store, ctl, notify } = await setup();
+    await notify(0x4d, 1);
+    expect(store.getState().values.chorusOn).toBe(1);
+    expect(store.getState().values.autoFilterOn).toBe(1);
+    expect(store.getState().dirty).toBe(false);
+
+    await notify(0x4d, 0);
+    expect(store.getState().values.chorusOn).toBe(0);
+    expect(store.getState().dirty).toBe(false);
+    ctl.dispose();
+  });
+
+  it("a knob turn after a stomp marks dirty, and turning it back clears it", async () => {
+    const { store, ctl, notify } = await setup();
+    await notify(0x4d, 1);
+    await notify(0x05, 90);
+    expect(store.getState().dirty).toBe(true);
+
+    await notify(0x05, DRIVE); // the stomped flags alone don't hold the mark
+    expect(store.getState().dirty).toBe(false);
+    ctl.dispose();
+  });
+
+  it("after a stomp, an in-app edit still dirties and a save persists the stomped flags", async () => {
+    const { store, ctl, notify } = await setup();
+    await notify(0x4d, 1);
+    ctl.setValue("chorusOn", 0); // switch chorus back off in the app
+    expect(store.getState().dirty).toBe(true);
+    // A knob turned and returned must not erase that in-app edit: chorusOn still differs.
+    await notify(0x05, 90);
+    await notify(0x05, DRIVE);
+    expect(store.getState().dirty).toBe(true);
+
+    // Save-from-state builds from `values`: chorus as the app set it, Auto Filter as the stomp set it.
+    const st = store.getState();
+    expect(st.raw).not.toBeNull();
+    const saved = decodePreset(buildPresetBlob(st.raw!, st.values, st.name ?? "", null)).values;
+    expect(saved.chorusOn).toBe(0);
+    expect(saved.autoFilterOn).toBe(1);
+    ctl.dispose();
+  });
+
+  it("the Red Zone Chorus knob's one-shot Chorus Level bump counts as an edit", async () => {
+    const { store, ctl, notify } = await setup();
+    await notify(0x44, 70); // Red Zone CHORUS knob = Chorus Mod Depth
+    await notify(0x42, 64); // the firmware's Chorus Level bump that comes with it
+    expect(store.getState().values.chorus).toBe(64);
+    expect(store.getState().dirty).toBe(true);
+
+    await notify(0x44, 0); // mod depth back to stored — the level bump still stands
+    expect(store.getState().dirty).toBe(true);
+    ctl.dispose();
+  });
+
+  it("an Ambience type pick stays dirty when every value is back at the baseline", async () => {
+    const { store, ctl, notify } = await setup();
+    applyAmbienceType(store, 1);
+    expect(store.getState().dirty).toBe(true);
+    // Walk the type's one modeled param (Ambience Time) back to the stored value at the pedal, so no
+    // value differs from the baseline and only the picked type is left unsaved.
+    await notify(0x10, 0); // Ambience Time
+    expect(store.getState().values.ambienceTime).toBe(0);
+    expect(store.getState().dirty).toBe(true); // typeDirty has no value diff of its own
+    store.getState().markSaved();
     ctl.dispose();
   });
 });
