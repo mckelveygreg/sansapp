@@ -4,6 +4,7 @@ New:
 • Read from Pedal. Turned some knobs at the pedal without saving? Read from Pedal brings those tweaks into the app, so what you see matches what you hear. Afterwards it tells you plainly whether the read checked out. One limit, from the pedal itself: an engaged Red Zone can't be carried across, so turn it back on at the footswitch.
 • The IR page now says what each cab slot holds. Rows are named for the cab stored there, such as "Factory cab 3", "Your cab", or "No cab stored", and slots 7 and 8 only get a tag when something is wrong: EMPTY or READ FAILED. A caption under the graph says where the curve you're looking at came from, and marks it "approximate" when it's a stand-in for the factory cab.
 • Settings → Behaviour → Confirm before switching presets. Turn it off and changing presets discards unsaved edits without asking, which is handy while you experiment. It's on by default.
+• The Mid, Freq and Q knobs now match the pedal. On VT Bass and Para Driver the pedal's Mid knob turns the amp's Punch band; on every other model it turns the tone-stack Mid. The app's Mid follows along, so turning the knob on the pedal moves the matching one on screen. Knob names now read as the pedal prints them, and the Red Zone Chorus knob sets Chorus depth, as it does on the pedal.
 
 Fixed:
 • Renaming the preset you're playing now sticks. Before, saving afterwards could put the old name back.
