@@ -18,7 +18,8 @@ import { radius, theme, toneColors } from "../src/components/theme";
 import { designEliteFilter } from "../src/dsp/eliteFilters";
 import { eqResponse } from "../src/dsp/eq";
 import { logGrid } from "../src/dsp/ir";
-import { PARAMETRIC_EQ, panelMidMap, type ParamId } from "../src/protocol/params";
+import { PedalKnobBadge } from "../src/components/PedalKnobBadge";
+import { PARAMETRIC_EQ, panelMidBand, type ParamId } from "../src/protocol/params";
 import { eqGainDb, fmtHz } from "../src/protocol/units";
 import { sendParam } from "../src/midi/liveParam";
 import { pedalStore } from "../src/midi/pedal";
@@ -51,8 +52,8 @@ export default function ParametricEq() {
   // its graph reflect the pedal's actual values and match the editor's tone chart.
   const values = useStore(pedalStore, (s) => s.values);
   const baseline = useStore(pedalStore, (s) => s.baseline);
-  // Is the Mid band the pedal's own MID knob right now? Depends on the amp model (via Buzz).
-  const midIsPanel = panelMidMap(values.buzz).mid === "mid";
+  // Is the Mid band the pedal's own MID knob right now? Follows live Buzz (lab#82), not the model.
+  const midIsPanel = panelMidBand(values.buzz) === "mid";
 
   const read = (key: string): number => values[STORE_ID[key]!] ?? 64;
   const ghostOf = (key: string): number | undefined => baseline[STORE_ID[key]!];
@@ -117,14 +118,17 @@ export default function ParametricEq() {
               gap: 14,
             }}
           >
-            <Text style={{ color: theme.accent, fontWeight: "700", letterSpacing: 1 }}>
-              {b.label}
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <Text style={{ color: theme.accent, fontWeight: "700", letterSpacing: 1 }}>
+                {b.label}
+              </Text>
+              {b.key === "mid" && midIsPanel ? <PedalKnobBadge /> : null}
+            </View>
             {b.key === "mid" ? (
               <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
                 {midIsPanel
                   ? "The pedal's MID knob, with its Red Zone FREQ and Q."
-                  : "Not on a pedal knob with this amp model: VT Bass and Para Driver park this band at 0 and move the pedal's MID / FREQ / Q knobs to Punch on the Amp page."}
+                  : "Not on a pedal knob right now: with Buzz at 62 or 63 (VT Bass, Para Driver) the pedal's MID / FREQ / Q knobs turn Punch on the Amp page instead."}
               </Text>
             ) : null}
             <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
