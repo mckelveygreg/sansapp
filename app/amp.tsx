@@ -31,7 +31,8 @@ import { AMP_MODELS } from "../src/protocol/constants";
 import { rawToPct, sendParam } from "../src/midi/liveParam";
 import { getSession, pedalStore } from "../src/midi/pedal";
 import { type AmpPreset, loadAmpPresets, saveAmpPresets } from "../src/midi/ampPresets";
-import { PARAM_IDS, PARAMS, liveSetId, panelMidMap, type ParamId } from "../src/protocol/params";
+import { PedalKnobBadge } from "../src/components/PedalKnobBadge";
+import { PARAM_IDS, PARAMS, liveSetId, panelMidBand, type ParamId } from "../src/protocol/params";
 
 // Wire INDEX (paramId) → registry id, so an apply can record every param it live-sets in the store.
 const PARAM_BY_INDEX = new Map<number, ParamId>();
@@ -125,7 +126,7 @@ export default function Amp() {
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
   const values = useStore(pedalStore, (s) => s.values);
   // On VT Bass / Para Driver (Buzz 62/63) the pedal's MID / FREQ / Q knobs drive the Punch band.
-  const punchIsPanel = panelMidMap(values.buzz).mid === "punch";
+  const punchIsPanel = panelMidBand(values.buzz) === "punch";
   const baseline = useStore(pedalStore, (s) => s.baseline);
   const [customs, setCustoms] = useState<AmpPreset[]>([]);
   const [status, setStatus] = useState<string | null>(null);
@@ -370,6 +371,14 @@ export default function Amp() {
             rowGap: 18,
           }}
         >
+          {punchIsPanel ? (
+            <View style={{ width: "100%", flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <PedalKnobBadge />
+              <Text style={{ color: theme.textDim, fontSize: 11 }}>
+                → Punch / Punch Freq / Punch Q
+              </Text>
+            </View>
+          ) : null}
           {AMP_KNOBS.map(({ id, label }) => (
             <Knob
               key={id}
@@ -384,8 +393,8 @@ export default function Amp() {
         </View>
         <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
           {punchIsPanel
-            ? "Preamp / Drive / Presence are pedal knobs. With this amp model (VT Bass / Para Driver), so are Punch / Punch Freq / Punch Q: they are what the pedal's MID, FREQ and Q knobs turn. Buzz is hidden voicing."
-            : "Preamp / Drive / Presence are pedal knobs; Buzz / Punch / Punch Freq / Punch Q are hidden voicing an amp model sets. (On VT Bass and Para Driver, the pedal's MID, FREQ and Q knobs turn Punch instead of the EQ's Mid.)"}{" "}
+            ? "Preamp / Drive / Presence are pedal knobs. With Buzz at 62 or 63 (VT Bass / Para Driver), so are Punch / Punch Freq / Punch Q: they are what the pedal's MID, FREQ and Q knobs turn. Move Buzz off 62/63 and those knobs go back to the EQ's Mid."
+            : "Preamp / Drive / Presence are pedal knobs; Buzz / Punch / Punch Freq / Punch Q are hidden voicing an amp model sets. (With Buzz at 62 or 63, as on VT Bass and Para Driver, the pedal's MID, FREQ and Q knobs turn Punch instead of the EQ's Mid.)"}{" "}
           Ranges uncalibrated, shown as raw %.
         </Text>
       </View>

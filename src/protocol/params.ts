@@ -191,7 +191,20 @@ const PUNCH_MAP: PanelMidMap = Object.freeze({ mid: "punch", freq: "punchFreq", 
  * gets the Mid map, the pedal's own boot default.
  */
 export function panelMidMap(buzz: number | undefined): PanelMidMap {
-  return buzz !== undefined && PUNCH_MAP_BUZZ.includes(buzz) ? PUNCH_MAP : MID_MAP;
+  return panelMidBand(buzz) === "punch" ? PUNCH_MAP : MID_MAP;
+}
+
+/** The band the panel's MID / FREQ / Q knobs drive: the drive-stage Punch band or the tone-stack Mid. */
+export type PanelMidBand = "punch" | "mid";
+
+/**
+ * Which band the panel's MID / FREQ / Q knobs drive right now, from the live Buzz value alone (lab#82,
+ * confirmed on hardware): Buzz 62 or 63 → `"punch"`, anything else (or unknown) → `"mid"`. Keyed on
+ * Buzz, not the amp model: editing Buzz off 62/63 on Para Driver flips it back to the Mid band, and
+ * Buzz 62 on any other model flips it to Punch. The UI uses it to badge the band the knobs move.
+ */
+export function panelMidBand(buzz: number | undefined): PanelMidBand {
+  return buzz !== undefined && PUNCH_MAP_BUZZ.includes(buzz) ? "punch" : "mid";
 }
 
 /** Label overrides that show a {@link PanelMidMap}'s params under the panel's own names. */

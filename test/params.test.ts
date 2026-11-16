@@ -4,6 +4,7 @@ import {
   AMBIANCE_RED_ZONE_FIXED_FIRMWARE,
   CHORUS_AUTO_LEVEL,
   panelChorusWrites,
+  panelMidBand,
   panelMidLabels,
   panelMidMap,
   AMBIENCE_PARAMS,
@@ -18,6 +19,33 @@ import {
   redZoneEngagedFor,
   redZoneStateParamsFor,
 } from "../src/protocol/params";
+
+describe("panelMidBand (live Buzz → the band the pedal's mid knobs drive)", () => {
+  it("is the Punch band at Buzz 62 and 63 only", () => {
+    expect(panelMidBand(62)).toBe("punch");
+    expect(panelMidBand(63)).toBe("punch");
+    for (const buzz of [0, 1, 61, 64, 100, 127])
+      expect(panelMidBand(buzz), `buzz ${buzz}`).toBe("mid");
+  });
+
+  it("is the Mid band when Buzz is unknown (the pedal's boot default)", () => {
+    expect(panelMidBand(undefined)).toBe("mid");
+  });
+
+  it("follows Buzz, not the amp model: Para Driver edited off 62 is back on Mid", () => {
+    const paraDriver = 62;
+    expect(panelMidBand(paraDriver)).toBe("punch");
+    expect(panelMidBand(paraDriver + 5)).toBe("mid");
+  });
+
+  it("agrees with panelMidMap for every Buzz value", () => {
+    for (let buzz = 0; buzz < 128; buzz++) {
+      expect(panelMidMap(buzz).mid, `buzz ${buzz}`).toBe(
+        panelMidBand(buzz) === "punch" ? "punch" : "mid",
+      );
+    }
+  });
+});
 
 describe("panelMidMap (which band the pedal's MID / FREQ / Q knobs drive)", () => {
   const MID = { mid: "mid", freq: "midFreq", q: "midQ" };
