@@ -87,6 +87,16 @@ end
 
 default_platform(:ios)
 
+require_relative "scene_guard"
+
+# Fail the lane BEFORE upload if the .ipa would crash at launch on iOS 27 (see scene_guard.rb).
+def assert_launchable_on_ios27!
+  ipa = lane_context[SharedValues::IPA_OUTPUT_PATH]
+  reason = SceneGuard.problem(ipa)
+  UI.user_error!(reason) if reason
+  UI.success("Scene lifecycle OK: #{File.basename(ipa)} will launch on iOS 27+")
+end
+
 XCODEPROJ = "ios/SansApp.xcodeproj"
 INFO_PLIST = "ios/SansApp/Info.plist"
 
@@ -171,6 +181,7 @@ platform :ios do
     prep
     sync_signing
     build_app # reads Gymfile
+    assert_launchable_on_ios27!
   end
 
   desc "Build and upload to TestFlight"
@@ -182,6 +193,7 @@ platform :ios do
     increment_build_number(xcodeproj: XCODEPROJ, build_number: next_build)
     stamp_commit(INFO_PLIST)
     build_app
+    assert_launchable_on_ios27!
     upload_to_testflight(skip_waiting_for_build_processing: true)
     tag_upload("ios/build-#{next_build}", "TestFlight build #{next_build} of #{marketing_version}")
   end
@@ -196,6 +208,7 @@ platform :ios do
     increment_build_number(xcodeproj: XCODEPROJ, build_number: next_build)
     stamp_commit(INFO_PLIST)
     build_app
+    assert_launchable_on_ios27!
     deliver(app_review_information: app_review_info) # + Deliverfile/metadata/screenshots
     tag_upload("ios/build-#{next_build}", "App Store build #{next_build} of #{marketing_version}")
   end

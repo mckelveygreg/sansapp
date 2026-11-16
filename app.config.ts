@@ -69,9 +69,20 @@ const config: ExpoConfig = {
     ],
     // From-source only for the dev client (see rnFromSource above). ccache caches C++ compilation
     // across builds (survives a clean) — speeds up the dev-client builds that still build from source.
+    // enableSceneSupport: an app linked against the iOS 27 SDK (Xcode 27) is KILLED AT LAUNCH on
+    // iOS 27 unless it adopts the UIScene lifecycle (UIKit traps in
+    // _UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption). Every 1.3.0 build was
+    // archived with Xcode 27.2 and crashed on launch. Drop this flag after the Expo SDK 58 upgrade,
+    // which adopts scenes by default.
     [
       "expo-build-properties",
-      { ios: { buildReactNativeFromSource: rnFromSource, ccacheEnabled: true } },
+      {
+        ios: {
+          buildReactNativeFromSource: rnFromSource,
+          ccacheEnabled: true,
+          enableSceneSupport: true,
+        },
+      },
     ],
     // Android MIDI permissions + USB-host/BLE features (see plugins/withAndroidMidi.js).
     "./plugins/withAndroidMidi",
