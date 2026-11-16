@@ -108,54 +108,54 @@ So Blend (index `0x47`) must be _set_ via `0x4B`; sending a set to `0x47` actual
 `params.ts` encodes this; it was the root cause of "reads back but won't write" for Blend, Auto
 Filter, and the other deep controls.
 
-**Param ids** (the `<param>` byte in `05 50/51`), mapped by turning each physical knob. Knobs are
-named as printed on the pedal; the desktop editor calls Mid "Punch" and Presence "Crunch". Blend is
-attributed from the manual and the desktop editor, not yet observed as a panel notify.
+**Param ids** (the `<param>` byte in `05 50/51`), mapped by turning each physical knob (named as
+printed on the pedal; the desktop editor calls Presence "Crunch"):
 
-| Knob  | id     |     | Knob     | id                      |
-| ----- | ------ | --- | -------- | ----------------------- |
-| Drive | `0x05` |     | Presence | `0x04`                  |
-| Low   | `0x06` |     | Blend    | `0x47` (set via `0x4B`) |
-| Mid   | `0x03` |     | Comp     | `0x0A`                  |
-| High  | `0x07` |     | Level    | `0x00`                  |
+| Knob  | id                   |     | Knob     | id                      |
+| ----- | -------------------- | --- | -------- | ----------------------- |
+| Drive | `0x05`               |     | Presence | `0x04`                  |
+| Low   | `0x06`               |     | Blend    | `0x47` (set via `0x4B`) |
+| Mid   | `0x0C` / `0x03` (\*) |     | Comp     | `0x0A`                  |
+| High  | `0x07`               |     | Level    | `0x00`                  |
 
-The tone stack's middle band (`0x0C`, the desktop editor's "Mid") has **no panel knob**: SansApp calls
-it the **Parametric Mid** and shows it on the EQ page only.
+(\*) **The MID knob, and the Red Zone FREQ and Q knobs, depend on the amp model.** Before every knob
+scan the pedal checks the live **Buzz** value (`0x02`): Buzz 62 or 63 (Para Driver, VT Bass) points
+the three knobs at the drive-stage **Punch** band (`0x03` / `0x0B` / `0x2D`); any other value points
+them at the tone-stack **Mid** band (`0x0C` / `0x0D` / `0x2F`). It follows a preset load or an amp
+change within one scan. SansApp's Editor follows the same rule (`panelMidMap` in `params.ts`).
 
-**Red Zone controls** — these read/notify on the index; a live edit sets on index + 4. Freq
-(`0x0B`, the desktop editor's "Punch Freq") is the panel Mid's frequency, observed as a panel notify.
-**Q is unresolved**: the knob was seen sending `0x2F` (Parametric Mid Q) on firmware ≤ 1.1, but
-`0x2D` (Mid Q, "Punch Q") would pair it with Freq; it needs re-checking on firmware 1.2. Filter,
-Ambiance and Ratio are attributed from the manual, not yet observed.
+**Red Zone controls** — these read/notify on the index; a live edit sets on index + 4. Freq and Q
+follow the amp model as above. The **CHORUS** knob sends Chorus **Mod Depth** (`0x44`); turning it
+while Chorus Level (`0x42`) is 0 also sets Chorus Level to 64 and notifies that.
 
-| Ctrl   | index  | set id |     | Ctrl     | index  | set id |
-| ------ | ------ | ------ | --- | -------- | ------ | ------ |
-| Preamp | `0x01` | `0x01` |     | Ambiance | `0x08` | `0x08` |
-| Filter | `0x3D` | `0x41` |     | Chorus   | `0x42` | `0x46` |
-| Freq   | `0x0B` | `0x0B` |     | Ratio    | `0x19` | `0x1D` |
-| Q (?)  | `0x2F` | `0x33` |     |          |        |        |
+| Ctrl   | index                | set id          |     | Ctrl     | index  | set id |
+| ------ | -------------------- | --------------- | --- | -------- | ------ | ------ |
+| Preamp | `0x01`               | `0x01`          |     | Ambiance | `0x08` | `0x08` |
+| Filter | `0x3D`               | `0x41`          |     | Chorus   | `0x44` | `0x48` |
+| Freq   | `0x0D` / `0x0B` (\*) | `0x0D` / `0x0B` |     | Ratio    | `0x19` | `0x1D` |
+| Q      | `0x2F` / `0x2D` (\*) | `0x33` / `0x31` |     |          |        |        |
 
 (The earlier notes listed these as `0x41`/`0x46`/`0x1D`/`0x33` — those are the **set** ids, not the
-indices; the +4 rule reconciles the two.)
+indices; the +4 rule reconciles the two. They also listed Chorus as `0x42`: that was the Chorus Level
+bump above, not the knob itself.)
 
-**Tone-stack parametric EQ (deep pages)** ✅: Low / Parametric Mid / High each have Gain/Freq/Q.
-Low and High Gain are the panel LOW/HIGH knobs; the Parametric Mid is editor-only (the panel MID
-knob is the drive-stage filter `0x03`). Freq/Q are deep params. `PARAMETRIC_EQ` in `params.ts`.
+**3-band parametric EQ (deep pages)** ✅: Low/Mid/High each have Gain/Freq/Q. Low and High Gain are
+the panel LOW/HIGH knobs; Mid's Gain/Freq/Q are the panel MID / FREQ / Q knobs except on VT Bass and
+Para Driver (see (\*) above), where an apply parks Mid at 0. Freq/Q are deep params. `PARAMETRIC_EQ` in `params.ts`.
 
-| Band     | Gain   | Freq   | Q      | Freq range (taper)                    | Q range (taper)             |
-| -------- | ------ | ------ | ------ | ------------------------------------- | --------------------------- |
-| Low      | `0x06` | `0x48` | `0x30` | 40–199 Hz (linear)                    | 0.5–2.0 (exponential)       |
-| Para Mid | `0x0C` | `0x0D` | `0x2F` | 200–1977 Hz (bipolar, 500 Hz at noon) | 0.25–3.9 (exponential)      |
-| High     | `0x07` | `0x49` | `0x31` | 1000–7945 Hz (linear)                 | exponential, gain-dependent |
+| Band | Gain   | Freq   | Q      | Freq range (taper)                    | Q range (taper)             |
+| ---- | ------ | ------ | ------ | ------------------------------------- | --------------------------- |
+| Low  | `0x06` | `0x48` | `0x30` | 40–199 Hz (linear)                    | 0.5–2.0 (exponential)       |
+| Mid  | `0x0C` | `0x0D` | `0x2F` | 200–1977 Hz (bipolar, 500 Hz at noon) | 0.25–3.9 (exponential)      |
+| High | `0x07` | `0x49` | `0x31` | 1000–7945 Hz (linear)                 | exponential, gain-dependent |
 
 Every taper normalises the wire value as x = value/128, so the noon detent (64) sits exactly on
 centre; gain is 24x − 12 dB on all three (−12 … +11.8, exactly 0 at 64). The filter shapes are not
 fixed: **Low and High switch shape on the sign of the gain** — a cut is a shelf, a boost is a
 peaking bell — and High runs its section twice, trimming what it hands the designer (gain ×0.75 and
-Q ×0.6 on boost, Q ×0.7 on cut). The Parametric Mid is always a peaking bell; its centre sweep (shared
-with the panel Mid's Freq, `0x0B`) is deliberately
+Q ×0.6 on boost, Q ×0.7 on cut). Mid is always a peaking bell; its centre sweep is deliberately
 asymmetric (300 Hz of travel below the 500 Hz detent, 1500 above) so the knob feels centred. The
-front-panel **Mid** (`0x03`, a swept bell run twice) and **Presence** knobs are drive-stage filters; Presence is: a peaking bell fixed at 2500 Hz, cascaded ×2,
+front-panel **Presence** knob is a fourth tone filter: a peaking bell fixed at 2500 Hz, cascaded ×2,
 and **boost-only** (gain 12x, 0 … +11.9 dB — value 0 is flat; it cannot cut). All of this is the
 hardware-verified model in `src/dsp/eliteFilters.ts` (golden-tested against the pedal); the tone
 charts build on it in `src/dsp/eq.ts`, live on the **Parametric EQ** screen (`app/eq.tsx`).
@@ -198,9 +198,8 @@ linear. In `src/protocol/units.ts`.
 **Amp model & ambience type = live-set bundles, not index bytes** (from the app): neither is stored
 as a single index. Selecting one **live-sets a bundle of individual params** via `05 50`. The amp
 bundle is 8 voicing bytes at blob offsets `0x23, 0x24, 0x25, 0x26, 0x27, 0x2D, 0x4F, 0x62`
-(`0x23/26/27` = preamp/presence/drive; `0x25/2D/4F` = the panel Mid, its Freq and Mid Q, so a model
-sets the player's panel Mid); every apply also live-sets **Buzz Q = 64** and **Presence Q = 0**, and
-VT Bass / Para Driver additionally force the editor-only **Parametric Mid → 0**. `AMP_BUNDLES` / `AMP_APPLY_FIXED` in
+(`0x23/26/27` = preamp/presence/drive); every apply also live-sets **Buzz Q = 64** and **Presence Q
+(Crunch Q) = 0**, and VT Bass / Para Driver additionally force **Mid → 0**. `AMP_BUNDLES` / `AMP_APPLY_FIXED` in
 `src/protocol/amp.ts` — **all 10** models captured in one clean pass, anchor-verified. The pedal has
 **10 amps** (Bass Driver, VT Bass, Para Driver, 1970s, 1980s, Flip, VT Stack, Blackface, British,
 Shred) — **not 12**. The pedal **discards** edit-buffer (`05 20` to `0x7F`) writes, so the live-set
@@ -273,21 +272,21 @@ param follows the same rule (confirmed two ways: EliteControl's `05 41` decode l
 k]` → param `k` for `k = 0x00..0x49`, and a 128-preset oracle places every known toggle at its
 predicted offset).
 
-| Knob     | index  | offset |     | Knob          | index  | offset |
-| -------- | ------ | ------ | --- | ------------- | ------ | ------ |
-| Level    | `0x00` | `0x22` |     | Comp          | `0x0A` | `0x2C` |
-| Preamp   | `0x01` | `0x23` |     | Para Mid Freq | `0x0D` | `0x2F` |
-| Presence | `0x04` | `0x26` |     | Para Mid      | `0x0C` | `0x2E` |
-| Drive    | `0x05` | `0x27` |     | Ratio         | `0x19` | `0x3B` |
-| Low      | `0x06` | `0x28` |     | Filter        | `0x3D` | `0x5F` |
-| High     | `0x07` | `0x29` |     | Chorus        | `0x42` | `0x64` |
-| Ambiance | `0x08` | `0x2A` |     | Blend         | `0x47` | `0x69` |
+| Knob     | index  | offset |     | Knob     | index  | offset |
+| -------- | ------ | ------ | --- | -------- | ------ | ------ |
+| Level    | `0x00` | `0x22` |     | Comp     | `0x0A` | `0x2C` |
+| Preamp   | `0x01` | `0x23` |     | Mid Freq | `0x0D` | `0x2F` |
+| Presence | `0x04` | `0x26` |     | Mid      | `0x0C` | `0x2E` |
+| Drive    | `0x05` | `0x27` |     | Ratio    | `0x19` | `0x3B` |
+| Low      | `0x06` | `0x28` |     | Filter   | `0x3D` | `0x5F` |
+| High     | `0x07` | `0x29` |     | Chorus   | `0x42` | `0x64` |
+| Ambiance | `0x08` | `0x2A` |     | Blend    | `0x47` | `0x69` |
 
 **Deep sub-params** (read back on the EQ / Chorus deep pages), same `index + 0x22` rule:
 
 | Deep param | index  | offset |     | Deep param        | index  | offset |
 | ---------- | ------ | ------ | --- | ----------------- | ------ | ------ |
-| Para Mid Q | `0x2F` | `0x51` |     | Chorus Mod Freq   | `0x43` | `0x65` |
+| Mid Q      | `0x2F` | `0x51` |     | Chorus Mod Freq   | `0x43` | `0x65` |
 | Low Q      | `0x30` | `0x52` |     | Chorus Mod Depth  | `0x44` | `0x66` |
 | High Q     | `0x31` | `0x53` |     | Chorus Delay Size | `0x45` | `0x67` |
 | Low Freq   | `0x48` | `0x6A` |     | Chorus Feedback   | `0x46` | `0x68` |
@@ -574,7 +573,7 @@ Bluetooth — so **you can bake a high-pass into a cab and drop a standalone HPF
 also exports a WAV. Verified on the Brit V30 factory cab: an 80 Hz 4th-order high-pass adds 21.4 dB
 of cut at 40 Hz with the passband preserved to 0.00 dB (`app/ir.tsx`, `test/ir-studio.test.ts`).
 
-The desktop editor's **MID FILTER** panel confirms its Mid (SansApp's Parametric Mid, `0x0C`) = a **parametric peak** (Gain dB · Frequency
+The desktop editor's **MID FILTER** panel confirms Mid = a **parametric peak** (Gain dB · Frequency
 Hz · Quality) — validates `src/dsp/eq.ts` (one capture: Gain −3.7 dB, 410 Hz, Q 1.1).
 
 ## `.p3b` bundle (export/backup) ✅ (2026-07-04)
@@ -611,7 +610,7 @@ Codec + `restorePlan()` in `src/protocol/bundle.ts`.
   raw `16/32/48/64/80/96/112/127`. Settable directly, like any knob.
 - **Amp model and ambience type are param bundles, not a single index.** The app applies one by
   **live-setting each param in the bundle** (`05 50`, mapping index → set-id via the +4 rule) — the
-  amp bundle plus its fixed Buzz Q / Presence Q (and Parametric Mid → 0 for VT Bass / Para Driver); the ambience
+  amp bundle plus its fixed Buzz Q / Crunch Q (and Mid → 0 for VT Bass / Para Driver); the ambience
   bundle of 10 params. **The pedal discards edit-buffer (`05 20` to `0x7F`) writes**, so the app does
   no edit-buffer write anywhere — the live-set path is what changes the sound, and a save bakes the
   resulting bytes into the preset blob.

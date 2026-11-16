@@ -70,15 +70,16 @@ export const PARAMS = {
   high: knob("high", "High", "tone", 0x29, 0x07, true),
   ambiance: knob("ambiance", "Ambiance", "ambience", 0x2a, 0x08, true),
   comp: knob("comp", "Comp", "dynamics", 0x2c, 0x0a, true),
-  // Parametric Mid — an EDITOR-ONLY second mid band in the tone stack (0x0c gain / 0x0d freq / 0x2f
-  // Q). No panel knob reaches it: the pedal's MID knob is `mid` (0x03) below, in the drive stage.
-  paraMid: knob("paraMid", "Parametric Mid", "tone", 0x2e, 0x0c, true),
-  paraMidFreq: knob("paraMidFreq", "Parametric Mid Freq", "tone", 0x2f, 0x0d, true),
+  // The tone-stack Mid band (0x0c gain / 0x0d freq / 0x2f Q; the desktop editor's Mid / Mid Shift /
+  // Mid Q). The panel's MID / FREQ / Q knobs drive this band on most amp models, and the drive-stage
+  // Punch band below on VT Bass and Para Driver — see panelMidMap.
+  mid: knob("mid", "Mid", "tone", 0x2e, 0x0c, true),
+  midFreq: knob("midFreq", "Mid Freq", "tone", 0x2f, 0x0d, true),
   // ─────────────────────────────────────────────────────────────────────────────────────────
   // Deep-param controls. Each wire id is the pedal's own parameter index (the same index the
   // desktop editor uses), confirmed against hardware; the ids satisfy blobOffset − wireId = 0x22,
   // the same rule as the main panel. Blob offsets are the read-back positions. See docs/PARAM-MAP.md.
-  paraMidQ: knob("paraMidQ", "Parametric Mid Q", "tone", 0x51, 0x2f, true),
+  midQ: knob("midQ", "Mid Q", "tone", 0x51, 0x2f, true),
   // ratio (compressor) = 0x19. The COMPRESSOR block is 0x19-0x1c — its Ratio sweeps 1:1→20:1
   // (compression), vs the separate Expander block's 1:1→1:16 (downward expansion). See COMP_PARAMS.
   ratio: knob("ratio", "Ratio", "dynamics", 0x3b, 0x19, true),
@@ -116,17 +117,15 @@ export const PARAMS = {
   // moves the later echoes, so it isn't the Time control. blobOffset = index + 0x22.
   ambienceDecay: knob("ambienceDecay", "Ambiance Decay", "ambience", 0x33, 0x11, true),
   ambienceTime: knob("ambienceTime", "Ambiance Time", "ambience", 0x32, 0x10, true),
-  // Drive-stage voicing — the bytes an amp-model bundle sets besides Preamp/Drive/Presence. Ids and
-  // labels follow the PANEL (owner's manual); the desktop editor's names are in the comments.
-  // Buzz has no panel knob. `mid` (desktop editor: "Punch", 0x03) IS the pedal's MID knob, and
-  // `midFreq` ("Punch Freq", 0x0b) its Red Zone FREQ knob — both confirmed by panel notifies. So an
-  // amp model sets the player's panel Mid. Ranges: gain ±12 dB, freq 200–1977 Hz (eliteFilters.ts).
+  // Drive-stage voicing — the bytes an amp-model bundle sets besides Preamp/Drive/Presence. Buzz has
+  // no panel knob. Punch / Punch Freq / Punch Q (0x03 / 0x0b / 0x2d) are a second, drive-stage mid
+  // band: on VT Bass and Para Driver the panel's MID / FREQ / Q knobs drive it (Mid 0x03 and Freq
+  // 0x0b seen as panel notifies); on every other model no panel knob reaches it — see panelMidMap.
+  // Ranges: gain ±12 dB, freq 200–1977 Hz (eliteFilters.ts).
   buzz: knob("buzz", "Buzz", "preamp", 0x24, 0x02, true),
-  mid: knob("mid", "Mid", "preamp", 0x25, 0x03, true),
-  midFreq: knob("midFreq", "Mid Freq", "preamp", 0x2d, 0x0b, true),
-  // Mid Q (desktop editor: "Punch Q", 0x2d). Whether the panel's Red Zone Q knob sends this or the
-  // Parametric Mid Q (0x2f) is still unresolved — see RED_ZONE_Q in app/(tabs)/index.tsx.
-  midQ: knob("midQ", "Mid Q", "preamp", 0x4f, 0x2d, true),
+  punch: knob("punch", "Punch", "preamp", 0x25, 0x03, true),
+  punchFreq: knob("punchFreq", "Punch Freq", "preamp", 0x2d, 0x0b, true),
+  punchQ: knob("punchQ", "Punch Q", "preamp", 0x4f, 0x2d, true),
   // Buzz Q / Presence Q (desktop editor: "Crunch Q") — the remaining drive-stage Qs (PROTOCOL-MAP §3,
   // idx 0x2c/0x2e). An amp model apply live-sets them to constants (Buzz Q = 64, Presence Q = 0, §5);
   // modeled so a SAVE after an apply records those bytes instead of silently keeping the old Qs.
@@ -166,21 +165,39 @@ export const PARAMS = {
 
 export type ParamId = keyof typeof PARAMS;
 
-/**
- * The param the Editor's Red Zone **Q** knob drives. UNRESOLVED: the panel's Q knob notifies either
- * `paraMidQ` (0x2f, seen on firmware ≤ 1.1) or `midQ` (0x2d, the desktop editor's "Punch Q", which
- * would pair it with FREQ = `midFreq` 0x0b). Kept on 0x2f — the only id observed so far — until an
- * on-pedal check on firmware 1.2 settles it. Switching is this one line: the Red Zone row, its label
- * ("Q", from {@link RED_ZONE_LABELS}), its readout and its deep-page link all key off this constant.
- */
-export const RED_ZONE_Q: ParamId = "paraMidQ";
+/** The params the panel's MID knob and its Red Zone FREQ / Q knobs drive. See {@link panelMidMap}. */
+export interface PanelMidMap {
+  readonly mid: ParamId;
+  readonly freq: ParamId;
+  readonly q: ParamId;
+}
+
+/** Buzz values that move the panel's mid knobs onto the Punch band: 62 = Para Driver, 63 = VT Bass. */
+const PUNCH_MAP_BUZZ: readonly number[] = Object.freeze([62, 63]);
+
+const MID_MAP: PanelMidMap = Object.freeze({ mid: "mid", freq: "midFreq", q: "midQ" });
+const PUNCH_MAP: PanelMidMap = Object.freeze({ mid: "punch", freq: "punchFreq", q: "punchQ" });
 
 /**
- * Panel-legend overrides for a knob shown in the Editor's Red Zone row, where the pedal prints a
- * shorter name than the param's own label. Only Q needs one: whichever wire id {@link RED_ZONE_Q}
- * picks, the knob is printed "Q" on the pedal.
+ * Which band the panel's MID knob (and its Red Zone FREQ and Q knobs) drives, given the live Buzz
+ * value. The pedal decides this itself before every knob scan, from Buzz alone:
+ *
+ * - **Buzz 62 or 63** (Para Driver, VT Bass — the two models that park the tone-stack Mid at 0): the
+ *   "Punch map", `punch` / `punchFreq` / `punchQ` (0x03 / 0x0b / 0x2d).
+ * - **anything else**: the "Mid map", `mid` / `midFreq` / `midQ` (0x0c / 0x0d / 0x2f).
+ *
+ * A user preset that happens to carry Buzz 62/63 gets the Punch map too. It follows the live value,
+ * so the map flips after an amp-model apply or a preset load. An unknown Buzz (nothing loaded yet)
+ * gets the Mid map, the pedal's own boot default.
  */
-export const RED_ZONE_LABELS: Partial<Record<ParamId, string>> = { [RED_ZONE_Q]: "Q" };
+export function panelMidMap(buzz: number | undefined): PanelMidMap {
+  return buzz !== undefined && PUNCH_MAP_BUZZ.includes(buzz) ? PUNCH_MAP : MID_MAP;
+}
+
+/** Label overrides that show a {@link PanelMidMap}'s params under the panel's own names. */
+export function panelMidLabels(map: PanelMidMap): Partial<Record<ParamId, string>> {
+  return { [map.mid]: "Mid", [map.freq]: "Mid Freq", [map.q]: "Mid Q" };
+}
 
 export const PARAM_IDS = Object.keys(PARAMS) as ParamId[];
 
@@ -275,6 +292,23 @@ export const CHORUS_PARAMS = {
 } as const;
 
 /**
+ * The Red Zone **CHORUS** knob on the pedal drives Chorus **Mod Depth** (0x44), not Chorus Level
+ * (0x42). It has one side effect the app mirrors: moving it while Chorus Level is 0 also sets Chorus
+ * Level to {@link CHORUS_AUTO_LEVEL}, so the knob is never silent (the desktop editor does the same).
+ */
+export const CHORUS_AUTO_LEVEL = 64;
+
+/** What moving the panel CHORUS knob to `depth` writes, given the current Chorus Level. */
+export function panelChorusWrites(
+  depth: number,
+  chorusLevel: number | undefined,
+): { id: ParamId; value: number }[] {
+  const writes: { id: ParamId; value: number }[] = [{ id: "chorusModDepth", value: depth }];
+  if ((chorusLevel ?? 0) === 0) writes.push({ id: "chorus", value: CHORUS_AUTO_LEVEL });
+  return writes;
+}
+
+/**
  * Deep Ambience-page paramIds (iPlug indices; sendParam maps them to the live-set wire via liveSetId).
  * The **AMBIANCE knob (0x08) is Level**; Decay = **0x11 (Reverb Decay Time)**; Time = **0x10 (Reverb
  * Room Size)**, Echo / Echo Verb only — derived from observing EliteControl's ShowAmbience page
@@ -302,26 +336,26 @@ export const GATE_PARAMS = {
 } as const;
 
 /**
- * The tone-stack parametric EQ: Low / Parametric Mid / High, each with Gain / Freq / Q — captured
- * 2026-07-05 by sweeping every band's deep page. Low and High Gain are the panel LOW/HIGH knobs
- * (0x06/0x07). The middle band is the editor-only **Parametric Mid** (0x0c/0x0d/0x2f): no panel knob
- * reaches it. The panel's MID knob is a different filter, `mid` (0x03), in the drive stage. Freq and
- * Q are deep params. Display ranges + tapers come from the pedal's own filter model,
- * src/dsp/eliteFilters.ts (x = value/128): gain 24x − 12 dB on all three; Low freq 40–199 Hz linear,
- * Parametric Mid a bipolar 200–1977 Hz sweep centred at exactly 500 Hz, High 1000–7945 Hz linear; Q
- * exponential 0.5–2 (Low) / 0.25–3.9 (Parametric Mid), High's Q switching taper (and the band its
- * shape) on the sign of the gain — boosts are peaking bells, cuts shelves.
+ * The tone-stack parametric EQ: Low / Mid / High, each with Gain / Freq / Q — captured 2026-07-05 by
+ * sweeping every band's deep page. Low and High Gain are the panel LOW/HIGH knobs (0x06/0x07). The Mid
+ * band (0x0c/0x0d/0x2f) is driven by the panel's MID / FREQ / Q knobs on most amp models, but on VT
+ * Bass and Para Driver those knobs move to the drive-stage Punch band and this one is parked at 0
+ * (see {@link panelMidMap}). Freq and Q are deep params. Display ranges + tapers come from the
+ * pedal's own filter model, src/dsp/eliteFilters.ts (x = value/128): gain 24x − 12 dB on all three;
+ * Low freq 40–199 Hz linear, Mid a bipolar 200–1977 Hz sweep centred at exactly 500 Hz, High
+ * 1000–7945 Hz linear; Q exponential 0.5–2 (Low) / 0.25–3.9 (Mid), High's Q switching taper (and the
+ * band its shape) on the sign of the gain — boosts are peaking bells, cuts shelves.
  */
 export const PARAMETRIC_EQ = {
   low: { gain: 0x06, freq: 0x48, q: 0x30 },
-  paraMid: { gain: 0x0c, freq: 0x0d, q: 0x2f },
+  mid: { gain: 0x0c, freq: 0x0d, q: 0x2f },
   high: { gain: 0x07, freq: 0x49, q: 0x31 },
 } as const;
 
 /**
  * A few notes on the fuller parameter map (docs/PARAM-MAP.md):
  *
- * - 0x2f is the Parametric Mid Q (mapped as `paraMidQ` / eq.paraMid.q) — a real control.
+ * - 0x2f is the Mid band's Q (mapped as `midQ` / eq.mid.q) — a real control.
  * - 0x13 is "Reverb Extension Factor" (2–5).
  * - 0x35–0x38 are the "User IR 7/8 Preset" addressing params for the writable IR slots.
  * - The deep reverb-engine params beyond Level/Decay/Time (0x12–0x18, 0x39–0x3b), the Expander block

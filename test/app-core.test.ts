@@ -112,25 +112,31 @@ describe("pedal store + controller", () => {
     ctl.dispose();
   });
 
-  it("the physical MID knob (0x03) and Red Zone FREQ (0x0b) land on the panel Mid, not the Parametric Mid", async () => {
-    // Observed on hardware (fw 1.2): the pedal's Mid knob notifies 0x03, and with the Red Zone on,
-    // 0x0b. The Editor's "Mid" / Red Zone "Mid Freq" knobs render values.mid / values.midFreq, so the
-    // notifies must route there — never to the editor-only Parametric Mid (0x0c / 0x0d).
+  it("panel mid-knob notifies route by wire id: 0x03/0x0b/0x2d to Punch, 0x0c/0x0d/0x2f to Mid", async () => {
+    // The pedal's MID / FREQ / Q knobs send the Punch ids on VT Bass / Para Driver and the Mid ids on
+    // every other model. Either way the notify must land on the param it names, so the Editor's
+    // model-dependent "Mid" knob (panelMidMap) shows what the pedal just did.
     const [appIO, devIO] = createLoopback();
     wireModel(devIO, new PedalModel());
     const session = new DeviceSession(appIO, 500);
     await session.connect();
     const store = createPedalStore();
     const ctl = bindSession(session, store);
-    const paraBefore = [store.getState().values.paraMid, store.getState().values.paraMidFreq];
 
-    devIO.send(encode({ kind: "paramNotify", param: 0x03, value: 90 })); // physical MID knob
-    devIO.send(encode({ kind: "paramNotify", param: 0x0b, value: 20 })); // Red Zone FREQ
+    const sends: [number, number][] = [
+      [0x03, 90],
+      [0x0b, 20],
+      [0x2d, 30],
+      [0x0c, 40],
+      [0x0d, 50],
+      [0x2f, 60],
+      [0x44, 70], // Red Zone CHORUS knob = Chorus Mod Depth
+    ];
+    for (const [param, value] of sends) devIO.send(encode({ kind: "paramNotify", param, value }));
     await new Promise((r) => setTimeout(r, 10));
-    expect(store.getState().values.mid).toBe(90);
-    expect(store.getState().values.midFreq).toBe(20);
-    expect([store.getState().values.paraMid, store.getState().values.paraMidFreq]).toEqual(
-      paraBefore,
+    const v = store.getState().values;
+    expect([v.punch, v.punchFreq, v.punchQ, v.mid, v.midFreq, v.midQ, v.chorusModDepth]).toEqual(
+      sends.map(([, value]) => value),
     );
     ctl.dispose();
   });

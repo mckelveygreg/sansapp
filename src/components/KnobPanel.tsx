@@ -13,33 +13,33 @@ export interface KnobPanelProps {
   onChange: (id: ParamId, value: number) => void;
   /** No pedal connected: knobs render dimmed and inert (a tap still opens the deep page). */
   disabled?: boolean;
-  /** Per-knob label overrides (e.g. the panel's bare "Q" in the Red Zone row). */
+  /** Per-knob label overrides — the panel's own names for the model-dependent mid knobs. */
   labels?: Partial<Record<ParamId, string>>;
 }
 
 // Knobs that have a deep-edit page: tapping the knob opens it (the Knob shows a chevron badge).
-// Rule: any knob that also appears on a deep page links to it. Preamp/Drive/Mid/Presence and Mid
-// Freq/Q live on the Amp page (with the editor-only Buzz) — an amp model sets them; comp/ratio open
-// Dynamics (comp + gate); the Parametric Mid opens the EQ page. Blend and Level have no deep page
-// (Level is just the master output, edited here). Keep in sync with the KNOB_PAGES routes in
-// app/_layout.tsx.
+// Rule: any knob that also appears on a deep page links to it. Preamp/Drive/Presence and the Punch
+// band live on the Amp page (with Buzz); comp/ratio open Dynamics (comp + gate). Blend and
+// Level have no deep page (Level is just the master output, edited here). Keep in sync with the
+// KNOB_PAGES routes in app/_layout.tsx.
 const DEEP_LINK: Partial<Record<ParamId, string>> = {
   preamp: "/amp",
   drive: "/amp",
   presence: "/amp",
-  mid: "/amp",
-  midFreq: "/amp",
-  midQ: "/amp",
+  punch: "/amp",
+  punchFreq: "/amp",
+  punchQ: "/amp",
   comp: "/comp",
   ratio: "/comp",
   filter: "/filter",
   ambiance: "/ambience",
   chorus: "/chorus",
+  chorusModDepth: "/chorus",
   low: "/eq",
+  mid: "/eq",
   high: "/eq",
-  paraMid: "/eq",
-  paraMidFreq: "/eq",
-  paraMidQ: "/eq",
+  midFreq: "/eq",
+  midQ: "/eq",
 };
 
 /** A wrapping grid of knobs bound to `values` — used by the editor and Red Zone screens. */

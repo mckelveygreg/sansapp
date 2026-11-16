@@ -72,7 +72,8 @@ export default function Chorus() {
   return (
     <KnobScroll style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 16 }}>
       <IntroNote ready={ready}>
-        The pedal&apos;s chorus — modulation, delay size, feedback, and level.
+        The pedal&apos;s chorus — modulation, delay size, feedback, and level. The pedal&apos;s
+        Red Zone CHORUS knob is Mod Depth; turning it with Level at 0 sets Level to 50%.
       </IntroNote>
 
       {/* Master enable. If a preset loads with chorus OFF, the knobs below have no audible effect

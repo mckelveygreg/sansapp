@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { AMP_BUNDLE_OFFSETS, AMP_BUNDLES, ampApplyExtras } from "../src/protocol/amp";
 import {
   AMBIANCE_RED_ZONE_FIXED_FIRMWARE,
-  PARAMETRIC_EQ,
-  RED_ZONE_LABELS,
-  RED_ZONE_Q,
+  CHORUS_AUTO_LEVEL,
+  panelChorusWrites,
+  panelMidLabels,
+  panelMidMap,
   AMBIENCE_PARAMS,
   AUTO_FILTER_PARAMS,
   CHORUS_PARAMS,
@@ -17,66 +19,104 @@ import {
   redZoneStateParamsFor,
 } from "../src/protocol/params";
 
-describe("panel attribution (names match the knobs printed on the pedal)", () => {
-  it("the panel Mid / Mid Freq are the drive-stage filter, not the tone-stack Parametric Mid", () => {
-    expect(PARAMS.mid.label).toBe("Mid");
-    expect(PARAMS.mid.paramId).toBe(0x03);
-    expect(PARAMS.midFreq.label).toBe("Mid Freq");
-    expect(PARAMS.midFreq.paramId).toBe(0x0b);
-    expect(PARAMS.midQ.label).toBe("Mid Q");
-    expect(PARAMS.presenceQ.label).toBe("Presence Q");
+describe("panelMidMap (which band the pedal's MID / FREQ / Q knobs drive)", () => {
+  const MID = { mid: "mid", freq: "midFreq", q: "midQ" };
+  const PUNCH = { mid: "punch", freq: "punchFreq", q: "punchQ" };
+
+  it("Buzz 62 (Para Driver) and 63 (VT Bass) move the knobs to the Punch band", () => {
+    expect(panelMidMap(62)).toEqual(PUNCH);
+    expect(panelMidMap(63)).toEqual(PUNCH);
   });
 
-  it("the EQ page's middle band is the editor-only Parametric Mid", () => {
-    expect(PARAMETRIC_EQ.paraMid).toEqual({
-      gain: PARAMS.paraMid.paramId,
-      freq: PARAMS.paraMidFreq.paramId,
-      q: PARAMS.paraMidQ.paramId,
+  it("every other Buzz value, including the neighbours 61 and 64, keeps the Mid band", () => {
+    for (const buzz of [0, 61, 64, 127]) expect(panelMidMap(buzz), `buzz ${buzz}`).toEqual(MID);
+  });
+
+  it("an unknown Buzz (nothing loaded) uses the pedal's boot default, the Mid map", () => {
+    expect(panelMidMap(undefined)).toEqual(MID);
+  });
+
+  it("the two maps are the wire ids the pedal's knobs send", () => {
+    const wires = (m: ReturnType<typeof panelMidMap>) =>
+      [m.mid, m.freq, m.q].map((id) => PARAMS[id].paramId);
+    expect(wires(panelMidMap(64))).toEqual([0x0c, 0x0d, 0x2f]);
+    expect(wires(panelMidMap(63))).toEqual([0x03, 0x0b, 0x2d]);
+  });
+
+  it("the Punch map is exactly the models whose apply zeroes the EQ Mid", () => {
+    for (const name of ["VT Bass", "Para Driver"]) {
+      const buzz = AMP_BUNDLES[name]![AMP_BUNDLE_OFFSETS.indexOf(0x24)];
+      expect(panelMidMap(buzz).mid, name).toBe("punch");
+      expect(ampApplyExtras(name)).toContainEqual({ index: 0x0c, value: 0 });
+    }
+    for (const [name, vals] of Object.entries(AMP_BUNDLES)) {
+      if (name === "VT Bass" || name === "Para Driver") continue;
+      expect(panelMidMap(vals[AMP_BUNDLE_OFFSETS.indexOf(0x24)]).mid, name).toBe("mid");
+    }
+  });
+
+  it("labels whichever band is live with the panel's names", () => {
+    expect(panelMidLabels(panelMidMap(63))).toEqual({
+      punch: "Mid",
+      punchFreq: "Mid Freq",
+      punchQ: "Mid Q",
     });
-    expect(PARAMETRIC_EQ.paraMid.gain).toBe(0x0c);
-    for (const id of ["paraMid", "paraMidFreq", "paraMidQ"] as const) {
-      expect(PARAMS[id].label).toMatch(/^Parametric Mid/);
-    }
+    expect(panelMidLabels(panelMidMap(64))).toEqual({
+      mid: "Mid",
+      midFreq: "Mid Freq",
+      midQ: "Mid Q",
+    });
+  });
+});
+
+describe("panelChorusWrites (the Red Zone CHORUS knob is Mod Depth)", () => {
+  it("writes Mod Depth 0x44", () => {
+    expect(PARAMS.chorusModDepth.paramId).toBe(0x44);
+    expect(panelChorusWrites(90, 40)).toEqual([{ id: "chorusModDepth", value: 90 }]);
   });
 
-  it("no param uses the desktop editor's Punch/Crunch names or a bare 'Pre-Amp'/'Ambience' label", () => {
+  it("bumps a silent Chorus Level to 64, as the pedal does", () => {
+    expect(panelChorusWrites(90, 0)).toEqual([
+      { id: "chorusModDepth", value: 90 },
+      { id: "chorus", value: CHORUS_AUTO_LEVEL },
+    ]);
+    expect(CHORUS_AUTO_LEVEL).toBe(64);
+  });
+});
+
+describe("labels", () => {
+  it("no param uses the desktop editor's Crunch name or a 'Pre-Amp'/'Ambience' spelling", () => {
     for (const id of PARAM_IDS) {
-      expect(PARAMS[id].label, id).not.toMatch(/Punch|Crunch|Pre-Amp|Ambience/);
+      expect(PARAMS[id].label, id).not.toMatch(/Crunch|Pre-Amp|Ambience/);
     }
-  });
-
-  it("the Red Zone Q knob is still the only id observed so far (0x2f), labelled as printed", () => {
-    // Unresolved between 0x2f and 0x2d (Mid Q) until an on-pedal check on firmware 1.2.
-    expect(PARAMS[RED_ZONE_Q].paramId).toBe(0x2f);
-    expect(RED_ZONE_LABELS[RED_ZONE_Q]).toBe("Q");
   });
 });
 
 describe("param registry", () => {
   it("has the paramIds confirmed from live capture", () => {
     const expected: Record<string, number> = {
-      // main panel — ids named for the knob printed on the pedal
+      // main panel
       drive: 0x05,
       low: 0x06,
-      mid: 0x03, // panel MID (desktop editor: Punch) — notify observed on hardware
+      mid: 0x0c, // tone-stack Mid band (the panel MID knob on most amp models)
       high: 0x07,
       presence: 0x04,
       comp: 0x0a,
       level: 0x00,
       // red zone
       preamp: 0x01,
-      midFreq: 0x0b, // panel Red Zone FREQ (desktop editor: Punch Freq) — notify observed
+      midFreq: 0x0d, // Mid band freq (desktop editor: Mid Shift)
       ambiance: 0x08,
       ratio: 0x19, // comp ratio (Compressor block)
       // Deep-param wire ids, confirmed against the parameter map + hardware. See docs/PARAM-MAP.md.
       filter: 0x3d,
       chorus: 0x42,
       blend: 0x47,
-      // editor-only Parametric Mid (tone stack) — no panel knob
-      paraMid: 0x0c,
-      paraMidFreq: 0x0d,
-      paraMidQ: 0x2f,
-      midQ: 0x2d, // desktop editor: Punch Q
+      midQ: 0x2f, // Mid band Q
+      // drive-stage Punch band (the panel MID / FREQ / Q on VT Bass and Para Driver)
+      punch: 0x03,
+      punchFreq: 0x0b,
+      punchQ: 0x2d,
       presenceQ: 0x2e, // desktop editor: Crunch Q
     };
     for (const [id, pid] of Object.entries(expected)) {
@@ -87,7 +127,7 @@ describe("param registry", () => {
   it("deep-param wire ids obey blobOffset − paramId == 0x22 (confirmed against the parameter map + hardware, 2026-07-14)", () => {
     // The main panel and the deep params share the same rule; a deep id off by +4 was the bug.
     const deep = [
-      "paraMidQ",
+      "midQ",
       "ratio",
       "filter",
       "chorus",
@@ -233,7 +273,7 @@ describe("param registry", () => {
   it("deep-param blob offsets recovered 2026-07-07 form contiguous blocks", () => {
     // Recovered by correlating deep setParam values against 05 20 edit-buffer blobs.
     // EQ Q block (parametric mid/low/high consecutive):
-    expect([PARAMS.paraMidQ.blobOffset, PARAMS.lowQ.blobOffset, PARAMS.highQ.blobOffset]).toEqual([
+    expect([PARAMS.midQ.blobOffset, PARAMS.lowQ.blobOffset, PARAMS.highQ.blobOffset]).toEqual([
       0x51, 0x52, 0x53,
     ]);
     // Chorus block (level → feedback consecutive):

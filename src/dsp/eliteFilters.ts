@@ -1,14 +1,11 @@
 /**
  * The Elite's own tone/drive filter model. Maps the wire values (0..127) of the six character/EQ
- * controls to the exact biquads the pedal designs, so the app can draw the same curve the hardware
- * produces. The filter laws keep the desktop editor's names (also the golden fixture's keys), which
- * differ from the panel's: `punch` is the panel **Mid** knob (0x03), `crunch` the panel **Presence**
- * (0x04), and `mid` the editor-only **Parametric Mid** (0x0c) in the tone stack. Golden-tested
- * against a hardware-verified fixture (test/fixtures/eliteFilters.golden.json). Framework-free.
+ * controls — Buzz, Punch, Crunch, Low, Mid, High — to the exact biquads the pedal designs, so the
+ * app can draw the same curve the hardware produces. Golden-tested against a hardware-verified
+ * fixture (test/fixtures/eliteFilters.golden.json). Framework-free.
  *
  * The value scale is x = value/128 (NOT /127): x is exactly 0.5 at value 64, which is what puts
- * 0.00 dB and the 500 Hz Mid / Parametric Mid centre exactly on the detent. x' = 2x − 1 is the
- * bipolar form.
+ * 0.00 dB and the 500 Hz Punch/Mid centre exactly on the detent. x' = 2x − 1 is the bipolar form.
  *
  * Two deliberate departures from the plain RBJ cookbook, both observed on the pedal:
  *  - the shelf slope term is √(2A)·alpha, not the cookbook's 2·√A·alpha (√2 narrower);

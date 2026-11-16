@@ -1,9 +1,9 @@
 /**
  * Combined tone view — the pedal's static tone stages on one axis. The drive voicing (drive.ts)
  * and the tone stack (eq.ts) are linear filter cascades in series, so their dB responses add;
- * the master curve is that sum, evaluated from the same hardware-verified model. The panel's Mid and
- * Presence knobs belong to the drive stage, so the EQ component here is the tone stack alone (Low,
- * the editor-only Parametric Mid, High) — nothing is counted twice.
+ * the master curve is that sum, evaluated from the same hardware-verified model. Presence belongs
+ * to the drive stage (it IS the Crunch filter), so the EQ component here is the 3-band stack
+ * alone — nothing is counted twice.
  *
  * The cab is deliberately NOT summed into the master: an IR curve is FFT-normalized to a band
  * (relative dB) at a nominal sample rate (approximate x-axis), unlike the exact absolute-dB model
@@ -20,15 +20,15 @@ import { eqResponse } from "./eq";
 import { SLOT_8_DETENT, irNeighbours } from "../protocol/irSelect";
 import { frequencyResponse } from "./ir";
 
-/** Every knob that moves the static tone: the tone stack (Low / Parametric Mid / High, with their
- * deep Freq/Q trims) plus the drive stage (Buzz / Mid / Presence). Presence lives on the drive side,
- * so the EQ overlay fields are dropped — the drive stage owns that bell. */
+/** Every knob that moves the static tone: the 3-band EQ (with its deep Freq/Q trims) plus the
+ * drive voicing. Presence lives on the drive side (it's the Crunch filter), so the EQ overlay
+ * fields are dropped — the drive stage owns that bell. */
 export type ToneKnobs = Omit<EqKnobs, "presence" | "presenceQ"> & DriveKnobs;
 
 export interface ToneResponse {
-  /** The tone stack alone (no Mid or Presence — those are in `drive`). */
+  /** The 3-band tone stack alone (no Presence — that's in `drive`). */
   eq: number[];
-  /** The drive stage: Buzz + Mid ×2 + Presence ×2. */
+  /** The drive voicing: Buzz + Punch ×2 + Crunch ×2 (Crunch = the Presence knob). */
   drive: number[];
   /** The summed static tone: `eq + drive`, pointwise. */
   master: number[];
@@ -40,10 +40,10 @@ export function toneResponse(k: ToneKnobs, grid: readonly number[]): ToneRespons
   const eq = eqResponse(
     {
       low: k.low,
-      paraMid: k.paraMid,
+      mid: k.mid,
       high: k.high,
-      paraMidFreq: k.paraMidFreq,
-      paraMidQ: k.paraMidQ,
+      midFreq: k.midFreq,
+      midQ: k.midQ,
       lowFreq: k.lowFreq,
       lowQ: k.lowQ,
       highFreq: k.highFreq,

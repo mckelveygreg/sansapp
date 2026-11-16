@@ -1,14 +1,13 @@
 /**
- * Parametric EQ — the Elite's tone stack: Low / Parametric Mid / High, each with Gain/Freq/Q, LIVE
- * over MIDI. Low and High Gain are the panel LOW/HIGH knobs (0x06/0x07). The middle band is the
- * editor-only Parametric Mid (0x0c gain) — NOT the panel's MID knob, which is the drive-stage Mid
- * (0x03) on the Amp page. Freq/Q are deep params: low 0x48/0x30, parametric mid 0x0d/0x2f, high
- * 0x49/0x31. The graph is the combined tone response and the Freq/Q read-outs are
+ * Parametric EQ — the Elite's tone stack, Low/Mid/High, each with Gain/Freq/Q, LIVE over MIDI.
+ * Gain = 0x06/0x0C/0x07; Freq/Q are the deep params: low 0x48/0x30, mid 0x0D/0x2f, high 0x49/0x31.
+ * Low and High Gain are always the panel LOW/HIGH knobs. Whether the Mid band is the panel's MID
+ * knob depends on the amp model (panelMidMap): yes on most models, but on VT Bass and Para Driver the
+ * panel's mid knobs drive the drive-stage Punch band instead and this band is parked at 0. The graph is the combined tone response and the Freq/Q read-outs are
  * the designer's own values, both from the pedal's filter model (src/dsp/eliteFilters.ts). All
  * bands read live from the store (so they reflect the loaded preset and match the editor's tone
  * chart); adjusting a control sends it to the pedal. RN app surface.
  */
-import { Link } from "expo-router";
 import { Text, useWindowDimensions, View } from "react-native";
 import { KnobScroll } from "../src/components/KnobScroll";
 import { useStore } from "zustand";
@@ -19,7 +18,7 @@ import { radius, theme, toneColors } from "../src/components/theme";
 import { designEliteFilter } from "../src/dsp/eliteFilters";
 import { eqResponse } from "../src/dsp/eq";
 import { logGrid } from "../src/dsp/ir";
-import { PARAMETRIC_EQ, type ParamId } from "../src/protocol/params";
+import { PARAMETRIC_EQ, panelMidMap, type ParamId } from "../src/protocol/params";
 import { eqGainDb, fmtHz } from "../src/protocol/units";
 import { sendParam } from "../src/midi/liveParam";
 import { pedalStore } from "../src/midi/pedal";
@@ -27,15 +26,9 @@ import { pedalStore } from "../src/midi/pedal";
 const GRID = logGrid(30, 18000, 150);
 
 const BANDS = [
-  { key: "low", filter: "low", label: "LOW", ids: PARAMETRIC_EQ.low },
-  // `filter` is the pedal filter law's name; the tone-stack middle band's law is called "mid" there.
-  {
-    key: "paraMid",
-    filter: "mid",
-    label: "PARAMETRIC MID (editor-only)",
-    ids: PARAMETRIC_EQ.paraMid,
-  },
-  { key: "high", filter: "high", label: "HIGH", ids: PARAMETRIC_EQ.high },
+  { key: "low", label: "LOW", ids: PARAMETRIC_EQ.low },
+  { key: "mid", label: "MID", ids: PARAMETRIC_EQ.mid },
+  { key: "high", label: "HIGH", ids: PARAMETRIC_EQ.high },
 ] as const;
 
 // Every EQ control maps to a preset-synced store ParamId (blob offsets recovered 2026-07-07).
@@ -43,9 +36,9 @@ const STORE_ID: Record<string, ParamId> = {
   lowGain: "low",
   lowFreq: "lowFreq",
   lowQ: "lowQ",
-  paraMidGain: "paraMid",
-  paraMidFreq: "paraMidFreq",
-  paraMidQ: "paraMidQ",
+  midGain: "mid",
+  midFreq: "midFreq",
+  midQ: "midQ",
   highGain: "high",
   highFreq: "highFreq",
   highQ: "highQ",
@@ -58,6 +51,8 @@ export default function ParametricEq() {
   // its graph reflect the pedal's actual values and match the editor's tone chart.
   const values = useStore(pedalStore, (s) => s.values);
   const baseline = useStore(pedalStore, (s) => s.baseline);
+  // Is the Mid band the pedal's own MID knob right now? Depends on the amp model (via Buzz).
+  const midIsPanel = panelMidMap(values.buzz).mid === "mid";
 
   const read = (key: string): number => values[STORE_ID[key]!] ?? 64;
   const ghostOf = (key: string): number | undefined => baseline[STORE_ID[key]!];
@@ -71,10 +66,10 @@ export default function ParametricEq() {
   const db = eqResponse(
     {
       low: read("lowGain"),
-      paraMid: read("paraMidGain"),
+      mid: read("midGain"),
       high: read("highGain"),
-      paraMidFreq: read("paraMidFreq"),
-      paraMidQ: read("paraMidQ"),
+      midFreq: read("midFreq"),
+      midQ: read("midQ"),
       lowFreq: read("lowFreq"),
       lowQ: read("lowQ"),
       highFreq: read("highFreq"),
@@ -86,13 +81,7 @@ export default function ParametricEq() {
   return (
     <KnobScroll style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 16 }}>
       <IntroNote ready={ready}>
-        The tone-stack EQ. Each band sweeps its own centre frequency and width. Low and High are the
-        pedal&apos;s LOW and HIGH knobs; the Parametric Mid is an extra band with no knob on the
-        pedal. The pedal&apos;s MID knob is a different filter, on the{" "}
-        <Link href="/amp" style={{ color: theme.accent }}>
-          Amp page
-        </Link>
-        .
+        The 3-band parametric EQ. Each band sweeps its own centre frequency and width.
       </IntroNote>
 
       <GraphCard>
@@ -111,7 +100,7 @@ export default function ParametricEq() {
         // The pedal's designer supplies the read-outs: freq in Hz and the actual filter Q,
         // per-band trims included. High needs the gain too — its Q law switches on the gain sign.
         const design = designEliteFilter(
-          b.filter,
+          b.key,
           read(`${b.key}Gain`),
           read(`${b.key}Freq`),
           read(`${b.key}Q`),
@@ -131,6 +120,13 @@ export default function ParametricEq() {
             <Text style={{ color: theme.accent, fontWeight: "700", letterSpacing: 1 }}>
               {b.label}
             </Text>
+            {b.key === "mid" ? (
+              <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
+                {midIsPanel
+                  ? "The pedal's MID knob, with its Red Zone FREQ and Q."
+                  : "Not on a pedal knob with this amp model: VT Bass and Para Driver park this band at 0 and move the pedal's MID / FREQ / Q knobs to Punch on the Amp page."}
+              </Text>
+            ) : null}
             <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
               <Knob
                 label="Gain"

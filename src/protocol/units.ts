@@ -3,7 +3,7 @@
  *
  * Two calibration sources, and the denominator differs between them — don't unify it:
  *
- *  - **Hardware-model tapers** (EQ gain, the Mid / Parametric Mid frequency sweep) follow the pedal's own
+ *  - **Hardware-model tapers** (EQ gain, the Punch/Mid frequency sweep) follow the pedal's own
  *    filter maths (src/dsp/eliteFilters.ts, golden-tested against the pedal). The pedal normalises
  *    a wire value as x = value/128, so the noon detent (64) sits exactly on centre — 0.00 dB,
  *    500 Hz — and the top of travel (127) stops just shy of the nominal maximum. Every OTHER EQ
@@ -92,9 +92,8 @@ export const filterTimePct = (r: number): number => Math.round(lin(r, 0, 100)); 
 // Gain is 24x − 12 on every band: −12 … +11.8 dB, exactly 0 at 64.
 export const eqGainDb = (r: number): number => lin128(r, -12, 12);
 
-/** Mid Freq (0x0b) and Parametric Mid Freq (0x0d) share this centre-frequency sweep — deliberately
- * asymmetric (300 Hz of travel below the detent, 1500 above, so the knob feels centred):
- * 200 … 1977 Hz, exactly 500 Hz at 64. */
+/** Punch and Mid's shared centre-frequency sweep — deliberately asymmetric (300 Hz of travel below
+ * the detent, 1500 above, so the knob feels centred): 200 … 1977 Hz, exactly 500 Hz at 64. */
 export const sweepFreqHz = (r: number): number => {
   const xp = bipolar(r);
   return 500 + xp * (xp < 0 ? 300 : 1500);

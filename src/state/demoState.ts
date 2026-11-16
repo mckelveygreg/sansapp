@@ -26,21 +26,21 @@ export const DEMO_VALUES = {
   presence: 80,
   comp: 55,
   ambiance: 34,
-  // Tone stack — boosted lows + air, a gently scooped Parametric Mid for a punchy modern tone.
+  // 3-band parametric EQ — boosted lows + air, gently scooped mids for a punchy modern tone.
   low: 84,
   lowFreq: 38,
   lowQ: 64,
-  paraMid: 44,
-  paraMidFreq: 58,
-  paraMidQ: 70,
+  mid: 44,
+  midFreq: 58,
+  midQ: 70,
   high: 88,
   highFreq: 82,
   highQ: 60,
-  // Amp voicing — buzz/mid/midFreq/midQ are the VT Bass character bytes (Amp page highlights it).
+  // Amp voicing — buzz/punch/punchFreq/punchQ are the VT Bass character bytes (Amp page highlights it).
   buzz: 63,
-  mid: 64,
-  midFreq: 65,
-  midQ: 64,
+  punch: 64,
+  punchFreq: 65,
+  punchQ: 64,
   buzzQ: 64, // constant across amp models (§5)
   presenceQ: 0, // constant across amp models (§5)
   // Blend (dry/wet) + IR cab

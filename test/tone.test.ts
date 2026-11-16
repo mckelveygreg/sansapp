@@ -17,23 +17,23 @@ const at = (db: readonly number[], f: number): number => {
 };
 const NOON = {
   low: 64,
-  paraMid: 64,
-  high: 64,
-  paraMidFreq: 64,
-  paraMidQ: 64,
-  buzz: 64,
   mid: 64,
+  high: 64,
+  midFreq: 64,
+  midQ: 64,
+  buzz: 64,
+  punch: 64,
   presence: 64,
 };
 
 describe("toneResponse (master = drive + EQ)", () => {
   it("master is the pointwise sum of the two stages, each the standalone model's curve", () => {
-    const k = { ...NOON, low: 96, high: 20, presence: 100, mid: 30 };
+    const k = { ...NOON, low: 96, high: 20, presence: 100, punch: 30 };
     const { eq, drive, master } = toneResponse(k, grid);
     expect(eq).toEqual(
-      eqResponse({ low: 96, paraMid: 64, high: 20, paraMidFreq: 64, paraMidQ: 64 }, grid), // no presence key
+      eqResponse({ low: 96, mid: 64, high: 20, midFreq: 64, midQ: 64 }, grid), // no presence key
     );
-    expect(drive).toEqual(driveResponse({ buzz: 64, mid: 30, presence: 100 }, grid));
+    expect(drive).toEqual(driveResponse({ buzz: 64, punch: 30, presence: 100 }, grid));
     master.forEach((v, i) => expect(v).toBeCloseTo(eq[i]! + drive[i]!, 12));
   });
 

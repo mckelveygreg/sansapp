@@ -58,7 +58,7 @@ for (const [k, v] of Object.entries(AUTO_FILTER_PARAMS)) add(v, `filter.${k}`);
 for (const [k, v] of Object.entries(CHORUS_PARAMS)) add(v, `chorus.${k}`);
 for (const [k, v] of Object.entries(GATE_PARAMS)) add(v, `gate.${k}`);
 for (const [k, v] of Object.entries(AMBIENCE_PARAMS)) add(v, `ambience.${k}`);
-for (const band of ["low", "paraMid", "high"] as const)
+for (const band of ["low", "mid", "high"] as const)
   for (const [k, v] of Object.entries(PARAMETRIC_EQ[band])) add(v, `eq.${band}.${k}`);
 add(
   0x13,
