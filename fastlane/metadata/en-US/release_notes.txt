@@ -1,11 +1,13 @@
-Works with pedal firmware 1.0, 1.1 and 1.2.
+Works with pedal firmware 1.0, 1.1 and 1.2, over Bluetooth MIDI or a USB-C cable.
 
 New:
 • Read from Pedal. Turned some knobs at the pedal without saving? Read from Pedal brings those tweaks into the app, so what you see matches what you hear. Afterwards it tells you plainly whether the read checked out. One limit, from the pedal itself: an engaged Red Zone can't be carried across, so turn it back on at the footswitch.
-• The IR page now says what each cab slot holds. Rows are named for the cab stored there, such as "Factory cab 3", "Your cab", or "No cab stored", and slots 7 and 8 only get a tag when something is wrong: EMPTY or READ FAILED. A caption under the graph says where the curve you're looking at came from, and marks it "approximate" when it's a stand-in for the factory cab.
+• The IR page now says what each cab slot holds. Rows carry the name of the cab actually stored on the pedal, such as "Concert 2x15" or "Voice 12L", and slots 7 and 8 only get a tag when something is wrong: EMPTY or READ FAILED. A caption under the graph says where the curve you're looking at came from, and marks it "approximate" when it's a stand-in for the factory cab.
+• The pedal's Mid, Freq and Q knobs now line up with the app. On VT Bass and Para Driver they turn the amp's Punch band; on every other model, the tone-stack Mid. A PEDAL KNOB tag shows which one they're driving. Knob names now read as the pedal prints them, and the Red Zone Chorus knob sets Chorus depth, as it does on the pedal.
 • Settings → Behaviour → Confirm before switching presets. Turn it off and changing presets discards unsaved edits without asking, which is handy while you experiment. It's on by default.
 
 Fixed:
+• Turning a knob on the pedal now marks your preset edited, so switching presets asks before dropping those changes. Stomping Red Zone on its own doesn't count as an edit.
 • Renaming the preset you're playing now sticks. Before, saving afterwards could put the old name back.
 • Tapping an amp model no longer changes your preset's output level. Before, VT Bass could drop the level to silence and Bass Driver could jump it to full.
 • An amp model's button now shows "edited" when your preset is voiced from that model but its knobs have moved off it, and explains that tapping it resets the voicing to the factory recipe.
