@@ -75,8 +75,6 @@ const config: ExpoConfig = {
     ],
     // Android MIDI permissions + USB-host/BLE features (see plugins/withAndroidMidi.js).
     "./plugins/withAndroidMidi",
-    // Xcode 27 rejects pod resource bundles below iOS 15 (see the plugin for why RN's hook misses them).
-    "./plugins/withPodResourceBundleDeploymentTarget",
   ],
   web: { bundler: "metro", output: "single", favicon: "./assets/icon.png" },
   experiments: { typedRoutes: false },
