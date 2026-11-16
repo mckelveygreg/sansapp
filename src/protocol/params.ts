@@ -304,7 +304,9 @@ export function panelChorusWrites(
   chorusLevel: number | undefined,
 ): { id: ParamId; value: number }[] {
   const writes: { id: ParamId; value: number }[] = [{ id: "chorusModDepth", value: depth }];
-  if ((chorusLevel ?? 0) === 0) writes.push({ id: "chorus", value: CHORUS_AUTO_LEVEL });
+  // Only a KNOWN zero bumps: before a preset is read the level is unknown, and writing 64 then could
+  // overwrite a real, non-zero level on the pedal.
+  if (chorusLevel === 0) writes.push({ id: "chorus", value: CHORUS_AUTO_LEVEL });
   return writes;
 }
 

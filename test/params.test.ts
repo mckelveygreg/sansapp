@@ -82,6 +82,10 @@ describe("panelChorusWrites (the Red Zone CHORUS knob is Mod Depth)", () => {
     ]);
     expect(CHORUS_AUTO_LEVEL).toBe(64);
   });
+
+  it("does not bump when Chorus Level is unknown (nothing read yet)", () => {
+    expect(panelChorusWrites(90, undefined)).toEqual([{ id: "chorusModDepth", value: 90 }]);
+  });
 });
 
 describe("labels", () => {
