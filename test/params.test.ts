@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   AMBIANCE_RED_ZONE_FIXED_FIRMWARE,
+  PARAMETRIC_EQ,
+  RED_ZONE_LABELS,
+  RED_ZONE_Q,
   AMBIENCE_PARAMS,
   AUTO_FILTER_PARAMS,
   CHORUS_PARAMS,
@@ -14,27 +17,67 @@ import {
   redZoneStateParamsFor,
 } from "../src/protocol/params";
 
+describe("panel attribution (names match the knobs printed on the pedal)", () => {
+  it("the panel Mid / Mid Freq are the drive-stage filter, not the tone-stack Parametric Mid", () => {
+    expect(PARAMS.mid.label).toBe("Mid");
+    expect(PARAMS.mid.paramId).toBe(0x03);
+    expect(PARAMS.midFreq.label).toBe("Mid Freq");
+    expect(PARAMS.midFreq.paramId).toBe(0x0b);
+    expect(PARAMS.midQ.label).toBe("Mid Q");
+    expect(PARAMS.presenceQ.label).toBe("Presence Q");
+  });
+
+  it("the EQ page's middle band is the editor-only Parametric Mid", () => {
+    expect(PARAMETRIC_EQ.paraMid).toEqual({
+      gain: PARAMS.paraMid.paramId,
+      freq: PARAMS.paraMidFreq.paramId,
+      q: PARAMS.paraMidQ.paramId,
+    });
+    expect(PARAMETRIC_EQ.paraMid.gain).toBe(0x0c);
+    for (const id of ["paraMid", "paraMidFreq", "paraMidQ"] as const) {
+      expect(PARAMS[id].label).toMatch(/^Parametric Mid/);
+    }
+  });
+
+  it("no param uses the desktop editor's Punch/Crunch names or a bare 'Pre-Amp'/'Ambience' label", () => {
+    for (const id of PARAM_IDS) {
+      expect(PARAMS[id].label, id).not.toMatch(/Punch|Crunch|Pre-Amp|Ambience/);
+    }
+  });
+
+  it("the Red Zone Q knob is still the only id observed so far (0x2f), labelled as printed", () => {
+    // Unresolved between 0x2f and 0x2d (Mid Q) until an on-pedal check on firmware 1.2.
+    expect(PARAMS[RED_ZONE_Q].paramId).toBe(0x2f);
+    expect(RED_ZONE_LABELS[RED_ZONE_Q]).toBe("Q");
+  });
+});
+
 describe("param registry", () => {
   it("has the paramIds confirmed from live capture", () => {
     const expected: Record<string, number> = {
-      // main panel
+      // main panel — ids named for the knob printed on the pedal
       drive: 0x05,
       low: 0x06,
-      mid: 0x0c,
+      mid: 0x03, // panel MID (desktop editor: Punch) — notify observed on hardware
       high: 0x07,
       presence: 0x04,
       comp: 0x0a,
       level: 0x00,
       // red zone
       preamp: 0x01,
-      freq: 0x0d, // parametric Mid Filter freq (Mid Shift)
+      midFreq: 0x0b, // panel Red Zone FREQ (desktop editor: Punch Freq) — notify observed
       ambiance: 0x08,
       ratio: 0x19, // comp ratio (Compressor block)
       // Deep-param wire ids, confirmed against the parameter map + hardware. See docs/PARAM-MAP.md.
       filter: 0x3d,
-      q: 0x2f, // mid Q
       chorus: 0x42,
       blend: 0x47,
+      // editor-only Parametric Mid (tone stack) — no panel knob
+      paraMid: 0x0c,
+      paraMidFreq: 0x0d,
+      paraMidQ: 0x2f,
+      midQ: 0x2d, // desktop editor: Punch Q
+      presenceQ: 0x2e, // desktop editor: Crunch Q
     };
     for (const [id, pid] of Object.entries(expected)) {
       expect(PARAMS[id as keyof typeof PARAMS].paramId).toBe(pid);
@@ -44,7 +87,7 @@ describe("param registry", () => {
   it("deep-param wire ids obey blobOffset − paramId == 0x22 (confirmed against the parameter map + hardware, 2026-07-14)", () => {
     // The main panel and the deep params share the same rule; a deep id off by +4 was the bug.
     const deep = [
-      "q",
+      "paraMidQ",
       "ratio",
       "filter",
       "chorus",
@@ -64,7 +107,7 @@ describe("param registry", () => {
     }
   });
 
-  it("models IR mode/gain, Preset Level, and Buzz/Crunch Q at blob = paramId + 0x22 (§3/§5)", () => {
+  it("models IR mode/gain, Preset Level, and Buzz/Presence Q at blob = paramId + 0x22 (§3/§5)", () => {
     const expected: Record<string, [number, number]> = {
       irMode7: [0x28, 0x4a],
       irMode8: [0x29, 0x4b],
@@ -72,7 +115,7 @@ describe("param registry", () => {
       irGain8: [0x2b, 0x4d],
       presetLevel: [0x40, 0x62],
       buzzQ: [0x2c, 0x4e],
-      crunchQ: [0x2e, 0x50],
+      presenceQ: [0x2e, 0x50],
     };
     for (const [id, [pid, blob]] of Object.entries(expected)) {
       const p = PARAMS[id as keyof typeof PARAMS];
@@ -189,8 +232,8 @@ describe("param registry", () => {
 
   it("deep-param blob offsets recovered 2026-07-07 form contiguous blocks", () => {
     // Recovered by correlating deep setParam values against 05 20 edit-buffer blobs.
-    // EQ Q block (mid/low/high consecutive):
-    expect([PARAMS.q.blobOffset, PARAMS.lowQ.blobOffset, PARAMS.highQ.blobOffset]).toEqual([
+    // EQ Q block (parametric mid/low/high consecutive):
+    expect([PARAMS.paraMidQ.blobOffset, PARAMS.lowQ.blobOffset, PARAMS.highQ.blobOffset]).toEqual([
       0x51, 0x52, 0x53,
     ]);
     // Chorus block (level → feedback consecutive):

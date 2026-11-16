@@ -1,6 +1,7 @@
 /**
- * Amp — the AMPLIFIER page. An "amp model" is a recipe: it writes 7 voicing bytes (Pre-Amp, Drive,
- * Presence + the hidden Buzz/Punch/Punch-Freq/Punch-Q) plus a few fixed extras. It does NOT write the
+ * Amp — the AMPLIFIER page. An "amp model" is a recipe: it writes 7 voicing bytes (Preamp, Drive,
+ * Presence, the editor-only Buzz, and the panel Mid / Mid Freq / Mid Q — the desktop editor's Punch /
+ * Punch Freq / Punch Q) plus a few fixed extras. It does NOT write the
  * preset's output level — see ampApplySets. This page exposes all of them
  * as live knobs so the factory models are re-voiceable starting points — and lets you SAVE the
  * current voicing as your own custom amp (persisted, shown beside the factory models). Cabs/IRs live
@@ -40,13 +41,13 @@ for (const id of PARAM_IDS) {
 
 // The store-backed knobs an amp bundle drives (Preset Level 0x40 is level-match, not a knob here).
 const AMP_KNOBS: { id: ParamId; label: string }[] = [
-  { id: "preamp", label: "Pre-Amp" },
+  { id: "preamp", label: "Preamp" },
   { id: "drive", label: "Drive" },
   { id: "presence", label: "Presence" },
   { id: "buzz", label: "Buzz" },
-  { id: "punch", label: "Punch" },
-  { id: "punchFreq", label: "Punch Freq" },
-  { id: "punchQ", label: "Punch Q" },
+  { id: "mid", label: "Mid" },
+  { id: "midFreq", label: "Mid Freq" },
+  { id: "midQ", label: "Mid Q" },
 ];
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -173,7 +174,7 @@ export default function Amp() {
     // Preset Level stays out of it: it's a per-preset output level, not part of the amp's identity.
     const sets = ampApplySets(name, vals);
     // Reflect into the store immediately (local, no wire) so the UI updates at once AND a later SAVE
-    // records what the pedal is now playing (Buzz Q / Crunch Q / Mid included) instead of the loaded
+    // records what the pedal is now playing (Buzz Q / Presence Q / Parametric Mid included) instead of the loaded
     // preset's old bytes. Preset Level is left alone, so the preset keeps the level you set.
     for (const { index, value } of sets) {
       const id = PARAM_BY_INDEX.get(index);
@@ -352,11 +353,11 @@ export default function Amp() {
         </Text>
         <AmpVoicePrint values={values} />
         <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
-          The drive character&apos;s real frequency response: Buzz&apos;s 200 Hz shelf, Punch&apos;s
-          swept bell, and Crunch (the Presence knob) at 2500 Hz, summed exactly as the pedal builds
-          them. A centred Buzz is a slight cut — its unity point is up near ¾ — and Crunch only ever
-          lifts. Pre-Amp and Drive set level and saturation, not tone, so they don&apos;t move the
-          curve.
+          The drive stage&apos;s real frequency response: Buzz&apos;s 200 Hz shelf, Mid&apos;s swept
+          bell (Punch in the desktop editor), and Presence (Crunch) at 2500 Hz, summed exactly as
+          the pedal builds them. A centred Buzz is a slight cut — its unity point is up near ¾ — and
+          Presence only ever lifts. Preamp and Drive set level and saturation, not tone, so they
+          don&apos;t move the curve.
         </Text>
         <View
           style={{
@@ -379,8 +380,10 @@ export default function Amp() {
           ))}
         </View>
         <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
-          Pre-Amp / Drive / Presence are the front-panel controls; Buzz / Punch / Punch Freq / Punch
-          Q are the hidden voicing an amp model sets (ranges uncalibrated, shown as raw %).
+          An amp model sets all of these, including your panel Mid. Drive, Mid and Presence are
+          front-panel knobs; Preamp and Mid Freq are Red Zone knobs. Buzz is editor-only. Mid / Mid
+          Freq / Mid Q are Punch / Punch Freq / Punch Q in the desktop editor. Ranges uncalibrated,
+          shown as raw %.
         </Text>
       </View>
 

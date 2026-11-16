@@ -58,7 +58,7 @@ const P = {
   drive: wire("drive"), // 0x05
   low: wire("low"), // 0x06
   high: wire("high"), // 0x07
-  mid: wire("mid"), // 0x0c
+  mid: wire("mid"), // 0x03 — the panel MID knob (desktop editor: "Punch"), not the Parametric Mid 0x0c
   blend: wire("blend"), // 0x47
   ambienceLevel: AMBIENCE_PARAMS.level, // 0x08
   ambienceTime: AMBIENCE_PARAMS.time, // 0x10 (Reverb Room Size)
@@ -148,25 +148,25 @@ const RECIPES: Recipe[] = [
       {
         title: "Ambient space — Echo Verb (the faithful route)",
         detail:
-          "Bender's signature space is a Roland Space Echo (tape echo). The Elite's Echo Verb type — tape-style repeats plus a reverb tail — is the closest match, and since Ambience is one effect at a time, this beats plain reverb here. (Simpler alternative: Room reverb, ~20% Level / ~30% Decay.)",
+          "Bender's signature space is a Roland Space Echo (tape echo). The Elite's Echo Verb type — tape-style repeats plus a reverb tail — is the closest match, and since Ambiance is one effect at a time, this beats plain reverb here. (Simpler alternative: Room reverb, ~20% Level / ~30% Decay.)",
         settings: [
           {
-            control: "Ambience · Type",
+            control: "Ambiance · Type",
             value: "Echo Verb",
             applyEngine: AMBIENCE_ENGINES.indexOf("Echo Verb"),
           },
           {
-            control: "Ambience · Time",
+            control: "Ambiance · Time",
             value: "~40% (≈200 ms)",
             apply: { param: P.ambienceTime, raw: 51 },
           },
           {
-            control: "Ambience · Level",
+            control: "Ambiance · Level",
             value: "~22%",
             apply: { param: P.ambienceLevel, raw: 28 },
           },
           {
-            control: "Ambience · Decay",
+            control: "Ambiance · Decay",
             value: "~35% (a few soft repeats)",
             apply: { param: P.ambienceDecay, raw: 44 },
           },
@@ -198,7 +198,7 @@ const RECIPES: Recipe[] = [
       {
         title: "Notes",
         detail:
-          "The echo (Space Echo) is the documented Bender ingredient; the layered-bass width + warm voicing do the rest, with chorus just an optional stand-in. Ambience is one effect at a time — pick Echo Verb OR Room, not both. Keep everything light so the low end stays anchored (don't push Chorus past ~35% or the echo Level/Decay too high).",
+          "The echo (Space Echo) is the documented Bender ingredient; the layered-bass width + warm voicing do the rest, with chorus just an optional stand-in. Ambiance is one effect at a time — pick Echo Verb OR Room, not both. Keep everything light so the low end stays anchored (don't push Chorus past ~35% or the echo Level/Decay too high).",
       },
     ],
   },

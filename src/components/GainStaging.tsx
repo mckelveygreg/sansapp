@@ -1,7 +1,7 @@
 /**
  * GainStaging — an honest, at-a-glance estimate of how hard the drive-side gains are stacking into
  * breakup. NOT a measurement: the pedal's distortion isn't calibrated, so this is a heuristic guide
- * (Drive-weighted, with Pre-Amp compounding it and Buzz adding fizz) to keep clean tones clean and
+ * (Drive-weighted, with Preamp compounding it and Buzz adding fizz) to keep clean tones clean and
  * to gauge how dirty a patch gets. Framework-light (plain Views); reads live from the store values.
  */
 import { Text, View } from "react-native";
@@ -23,7 +23,7 @@ const ZONES: readonly Zone[] = [
   { max: 1.01, label: "Dirty", color: theme.accent, hint: "Heavy — gains stacked hot." },
 ];
 
-/** Heuristic 0..1 "grit" from the drive-side controls. Drive is the dirt knob; Pre-Amp drives it
+/** Heuristic 0..1 "grit" from the drive-side controls. Drive is the dirt knob; Preamp drives it
  *  harder (so they compound); Buzz adds high-frequency fizz. Guide only — not measured. */
 function gritEstimate(values: Readonly<Partial<Record<ParamId, number>>>): number {
   const n = (id: ParamId) => Math.min(1, Math.max(0, (values[id] ?? 0) / 127));
@@ -39,7 +39,7 @@ export function GainStaging({ values }: { values: Readonly<Partial<Record<ParamI
   const drive = (values.drive ?? 0) / 127;
   const preamp = (values.preamp ?? 0) / 127;
   // A specific nudge when the two big gains are both hot (the classic stacking case).
-  const stackNote = drive > 0.6 && preamp > 0.6 ? " Pre-Amp and Drive are both hot." : "";
+  const stackNote = drive > 0.6 && preamp > 0.6 ? " Preamp and Drive are both hot." : "";
 
   return (
     <View

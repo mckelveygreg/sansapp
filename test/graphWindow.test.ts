@@ -3,7 +3,7 @@ import { eqResponse } from "../src/dsp/eq";
 import { logGrid } from "../src/dsp/ir";
 import { fitDbWindow } from "../src/ui/graphWindow";
 
-const flat = { low: 64, mid: 64, high: 64, freq: 64, q: 64 };
+const flat = { low: 64, paraMid: 64, high: 64, paraMidFreq: 64, paraMidQ: 64 };
 const grid = logGrid(30, 18000, 140);
 
 describe("fitDbWindow", () => {

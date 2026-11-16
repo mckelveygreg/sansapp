@@ -1,5 +1,5 @@
 /**
- * Ambience — pick the reverb/echo TYPE and adjust its Level / Decay / Time, all in one place.
+ * Ambiance — pick the reverb/echo TYPE and adjust its Level / Decay / Time, all in one place.
  *
  * Type selection LIVE-SETS the type's 10-param profile on the pedal (no edit-buffer write) and marks
  * it dirty so a save re-bakes it. Deep controls are live params read from pedalStore.values: Level =

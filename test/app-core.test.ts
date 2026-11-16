@@ -112,6 +112,29 @@ describe("pedal store + controller", () => {
     ctl.dispose();
   });
 
+  it("the physical MID knob (0x03) and Red Zone FREQ (0x0b) land on the panel Mid, not the Parametric Mid", async () => {
+    // Observed on hardware (fw 1.2): the pedal's Mid knob notifies 0x03, and with the Red Zone on,
+    // 0x0b. The Editor's "Mid" / Red Zone "Mid Freq" knobs render values.mid / values.midFreq, so the
+    // notifies must route there — never to the editor-only Parametric Mid (0x0c / 0x0d).
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel());
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+    const paraBefore = [store.getState().values.paraMid, store.getState().values.paraMidFreq];
+
+    devIO.send(encode({ kind: "paramNotify", param: 0x03, value: 90 })); // physical MID knob
+    devIO.send(encode({ kind: "paramNotify", param: 0x0b, value: 20 })); // Red Zone FREQ
+    await new Promise((r) => setTimeout(r, 10));
+    expect(store.getState().values.mid).toBe(90);
+    expect(store.getState().values.midFreq).toBe(20);
+    expect([store.getState().values.paraMid, store.getState().values.paraMidFreq]).toEqual(
+      paraBefore,
+    );
+    ctl.dispose();
+  });
+
   it("tracks the knob layer from the 0x4d footswitch notify (and never as a knob value)", async () => {
     const [appIO, devIO] = createLoopback();
     wireModel(devIO, new PedalModel());

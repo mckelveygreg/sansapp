@@ -153,7 +153,7 @@ export default function Compressor() {
           }}
         >
           <Knob
-            label="Threshold"
+            label="Comp"
             value={threshold}
             ghost={baseline.comp}
             display={compThresholdLabel(threshold)}
@@ -266,9 +266,10 @@ export default function Compressor() {
       </View>
 
       <FootNote>
-        Live over MIDI when connected. Units are calibrated to EliteControl&apos;s read-outs.
-        Compressor (upper-right of the graph) tames peaks above its Threshold; the Gate/Expander
-        (lower-left) cleans up hiss below its. Master output Level is on the editor (Output).
+        Live over MIDI when connected. Units are calibrated to EliteControl&apos;s read-outs. The
+        Comp knob (the pedal&apos;s COMP) sets the compressor&apos;s threshold: the Compressor
+        (upper-right of the graph) tames peaks above it; the Gate/Expander (lower-left) cleans up
+        hiss below its own threshold. Master output Level is on the editor (Output).
       </FootNote>
     </KnobScroll>
   );

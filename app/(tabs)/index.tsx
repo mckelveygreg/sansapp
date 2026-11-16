@@ -13,15 +13,26 @@ import { ReadFromPedalOffer } from "../../src/components/ReadFromPedal";
 import { Section } from "../../src/components/Section";
 import { SectionBar } from "../../src/components/SectionBar";
 import { radius, theme } from "../../src/components/theme";
-import type { ParamId } from "../../src/protocol/params";
+import { RED_ZONE_LABELS, RED_ZONE_Q, type ParamId } from "../../src/protocol/params";
 import { connectPedal, getController, pedalStore } from "../../src/midi/pedal";
 
+// The panel's primary knobs, by their printed names. `mid` is the panel MID knob (wire 0x03 — the
+// desktop editor's "Punch"); the editor-only Parametric Mid (0x0c) lives on the EQ page.
 const PREAMP: ParamId[] = ["drive", "low", "mid", "high", "presence"];
 const OUTPUT: ParamId[] = ["comp", "blend", "level"];
-// The pedal's red-SHIFT "Red Zone" layer functions. On hardware these share the physical knobs with
-// the primary controls (toggled by the footswitch); the app has no such constraint, so we just show
-// them all — as their own red-accented section rather than a separate, stripped-down tab.
-const RED_ZONE: ParamId[] = ["preamp", "filter", "freq", "q", "ambiance", "chorus", "ratio"];
+// The pedal's Red Zone controls. On hardware these share the physical knobs with the primary
+// controls (toggled by the Red/Tuner footswitch); the app has no such constraint, so we just show
+// them all — as their own red-accented section rather than a separate, stripped-down tab. FREQ is
+// `midFreq` (0x0b, confirmed by a panel notify); Q's wire id is still open — see RED_ZONE_Q.
+const RED_ZONE: ParamId[] = [
+  "preamp",
+  "filter",
+  "midFreq",
+  RED_ZONE_Q,
+  "ambiance",
+  "chorus",
+  "ratio",
+];
 
 const setValue = (id: ParamId, v: number) => getController()?.setValue(id, v);
 
@@ -108,6 +119,7 @@ export default function Editor() {
         <Section title="RED ZONE" accent>
           <KnobPanel
             ids={RED_ZONE}
+            labels={RED_ZONE_LABELS}
             values={values}
             baseline={baseline}
             onChange={setValue}

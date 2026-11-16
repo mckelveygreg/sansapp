@@ -23,7 +23,7 @@ over MIDI (Bluetooth or wired).
 2. **Edit live.** The **Editor** has every control on one screen — Drive/EQ, Mix/Output, and the
    red **Red Zone** functions — plus a live EQ tone graph and the current preset name/number. Turn a
    knob and the pedal responds immediately. Tap a knob's ▸ chevron to jump to its deep page
-   (Amp, Parametric EQ, Dynamics, Auto Filter, Ambience, Chorus, IR Studio).
+   (Amp, Parametric EQ, Dynamics, Auto Filter, Ambiance, Chorus, IR Studio).
 3. **Cabs & IRs.** The **IR page** pulls your pedal's own cabs and shows each one's real frequency
    curve. Design a custom cab — high-pass a cab (drop the HPF pedal!), blend two, or build a filter
    from scratch — and upload it straight to a user slot over MIDI, with its own gain and a per-preset
@@ -36,7 +36,7 @@ over MIDI (Bluetooth or wired).
 
 - **Full editor** — all knobs on one page (main + Red Zone), a live EQ tone graph, and preset
   name/number with a dirty indicator.
-- **Deep pages** — Amp, 3-band parametric EQ, Dynamics (compressor + gate), Auto Filter, Ambience,
+- **Deep pages** — Amp, parametric EQ, Dynamics (compressor + gate), Auto Filter, Ambiance,
   Chorus, and IR Studio — with hardware-calibrated units and live graphs.
 - **All 10 amp models + 7 ambience types**, applied live.
 - **IR page** — pull the pedal's cabs with real curves, select/blend live, and **design and upload

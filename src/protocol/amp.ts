@@ -9,30 +9,34 @@
 
 import { PARAM_REGION_START } from "./constants";
 
-/** Blob offsets that define the amp voicing (preamp/presence/drive + 5 more). */
+/** Blob offsets that define the amp voicing, in order: Preamp, Buzz, Mid (0x03), Presence, Drive,
+ * Mid Freq (0x0b), Mid Q (0x2d), Preset Level. Mid and Mid Freq are panel knobs (the desktop editor's
+ * Punch / Punch Freq), so an amp model sets the player's panel Mid. */
 export const AMP_BUNDLE_OFFSETS = [0x23, 0x24, 0x25, 0x26, 0x27, 0x2d, 0x4f, 0x62] as const;
 
 /**
  * Constant voicing params EliteControl live-sets on EVERY amp apply, ON TOP of the AMP_BUNDLES bytes
- * (PROTOCOL-MAP §5): Buzz Q is always 64, Crunch Q always 0. Keyed by wire INDEX (== the notify id /
+ * (PROTOCOL-MAP §5): Buzz Q is always 64, Presence Q always 0. Keyed by wire INDEX (== the notify id /
  * `paramId`; the caller maps to the live-set id via `liveSetId`). VT Bass & Para Driver additionally
- * force Mid (idx 0x0c) to 0 — see {@link ampApplyExtras}.
+ * zero the editor-only Parametric Mid (idx 0x0c) — see {@link ampApplyExtras}. That is NOT the panel
+ * Mid knob (0x03), which every model sets from its bundle.
  */
 export const AMP_APPLY_FIXED: readonly { readonly index: number; readonly value: number }[] = [
   { index: 0x2c, value: 64 }, // Buzz Q
-  { index: 0x2e, value: 0 }, // Crunch Q
+  { index: 0x2e, value: 0 }, // Presence Q (desktop editor: Crunch Q)
 ];
 
-/** Models whose apply forces Mid (idx 0x0c) to 0 (PROTOCOL-MAP §5). */
-const MID_ZERO_MODELS: ReadonlySet<string> = new Set(["VT Bass", "Para Driver"]);
+/** Models whose apply forces the Parametric Mid (idx 0x0c, editor-only) to 0 (PROTOCOL-MAP §5). */
+const PARA_MID_ZERO_MODELS: ReadonlySet<string> = new Set(["VT Bass", "Para Driver"]);
 
 /**
  * The extra params (beyond the {@link AMP_BUNDLES} bytes) an apply of `name` live-sets: the fixed
- * Buzz Q / Crunch Q, plus Mid → 0 for VT Bass & Para Driver only. Index-keyed like AMP_APPLY_FIXED.
+ * Buzz Q / Presence Q, plus Parametric Mid → 0 for VT Bass & Para Driver only. Index-keyed like
+ * AMP_APPLY_FIXED.
  */
 export function ampApplyExtras(name: string): { index: number; value: number }[] {
   const extras = AMP_APPLY_FIXED.map((e) => ({ ...e }));
-  if (MID_ZERO_MODELS.has(name)) extras.push({ index: 0x0c, value: 0 }); // Mid forced to 0
+  if (PARA_MID_ZERO_MODELS.has(name)) extras.push({ index: 0x0c, value: 0 }); // Parametric Mid → 0
   return extras;
 }
 
@@ -57,9 +61,9 @@ export const AMP_BUNDLES: Readonly<Record<string, readonly number[]>> = {
  *
  * Sharing it is the point. The two used to disagree: the highlight compared the four character bytes
  * while the apply wrote eleven params, so the lit chip named a family rather than your preset, and
- * tapping the chip that was *already lit* silently replaced Pre-Amp, Drive, Presence, Preset Level,
- * Buzz Q, Crunch Q and (on Para Driver / VT Bass) Mid with factory values. Derive both from here and
- * that class of drift can't come back.
+ * tapping the chip that was *already lit* silently replaced Preamp, Drive, Presence, Preset Level,
+ * Buzz Q, Presence Q and (on Para Driver / VT Bass) Parametric Mid with factory values. Derive
+ * both from here and that class of drift can't come back.
  *
  * **Preset Level is deliberately not written.** It is the last bundle offset, and it is a per-preset
  * output level rather than part of the amp's identity — which is exactly why {@link bundleMatches}
@@ -111,8 +115,8 @@ export function applyAmpBundle(blob: Uint8Array, ampName: string): Uint8Array {
 }
 
 /**
- * The voicing-character bytes (indices into a bundle: Buzz, Punch, Punch-Freq, Punch-Q) that
- * identify an amp model. Pre-Amp/Drive/Presence are front-panel knobs a preset tweaks on top, and
+ * The voicing-character bytes (indices into a bundle: Buzz, Mid, Mid Freq, Mid Q) that identify an
+ * amp model. Preamp/Drive/Presence are panel knobs a preset tweaks on top, and
  * Preset Level is a per-preset output level — none are part of the model's identity, so we match on
  * the character alone. Every factory bundle is unique on these four (British vs Shred differ ONLY
  * here), so a loaded preset still fingerprints back to the amp it was voiced from even after edits.

@@ -106,3 +106,25 @@ bank, and not part of **the set**: a fact about the hardware that any slot listi
 All 128 **stored presets** as the app lists them, in slot order: the whole bank, where presets are managed —
 copied, renamed, exported, overwritten. Distinct from **the set**, which is chosen out of it and only
 recalled. Pre-existing code vocabulary (`src/device/library.ts`).
+
+## Panel names
+
+Controls are named as printed on the pedal and in its owner's manual. The desktop editor often uses
+different words for the same wire id; those appear only as secondary text ("Punch" for **Mid**,
+"Crunch" for **Presence**, "Reverb" for Ambiance, "Dynamics" for Comp).
+
+_Avoid_: Pre-Amp, Ambience, Crunch Q — say Preamp, Ambiance, Presence Q.
+
+## Mid
+
+The panel's MID knob (wire `0x03`): a swept bell in the drive stage. Its Red Zone FREQ knob is
+**Mid Freq** (`0x0b`). An amp model sets both.
+
+_Avoid_: Punch; never "Mid" for the **Parametric Mid**.
+
+## Parametric Mid
+
+An editor-only middle band of the tone-stack EQ (gain `0x0c`, freq `0x0d`, Q `0x2f`). No knob on the
+pedal reaches it; it is shown only on the EQ page.
+
+_Avoid_: Mid, Mid Gain, Mid Shift

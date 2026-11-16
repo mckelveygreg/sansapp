@@ -97,7 +97,7 @@ export default function AutoFilter() {
         />
         <Text style={{ color: theme.textDim, fontSize: 11, textAlign: "center", marginTop: 4 }}>
           {level === 64
-            ? "Level at Bypass (centre) — turn UP for an up-wah, DOWN for a reverse wah"
+            ? "Filter at Bypass (centre) — turn UP for an up-wah, DOWN for a reverse wah"
             : `${up ? "up-wah — peak sweeps UP" : "reverse wah — peak sweeps DOWN"} as you dig in (range is fixed)`}
         </Text>
       </GraphCard>
@@ -141,7 +141,7 @@ export default function AutoFilter() {
           }}
         >
           <Knob
-            label="Level"
+            label="Filter"
             value={level}
             ghost={baseline.filter}
             display={filterLevelLabel(level)}
@@ -168,13 +168,13 @@ export default function AutoFilter() {
       </View>
 
       <FootNote>
-        Turn the toggle ON, then move Level OFF its centre. Level is bipolar (Bypass at centre):
-        turn it UP for a normal up-wah, DOWN for a reverse (down) wah — the further from centre, the
-        deeper the sweep. There is no sweep-frequency control; that range is fixed in the pedal (the
-        factory wah presets all leave the EQ neutral). Attack/Release set the envelope feel (how
-        fast the quack opens/closes). Factory starting points: WakaWaka = Level +45%, slow attack;
-        Funk = +28%, snappy attack; Reverse Funk = −17%, fast release. The % values are
-        hardware-calibrated.
+        Turn the toggle ON, then move Filter (the pedal&apos;s FILTER knob; Level in the desktop
+        editor) OFF its centre. It is bipolar (Bypass at centre): turn it UP for a normal up-wah,
+        DOWN for a reverse (down) wah — the further from centre, the deeper the sweep. There is no
+        sweep-frequency control; that range is fixed in the pedal (the factory wah presets all leave
+        the EQ neutral). Attack/Release set the envelope feel (how fast the quack opens/closes).
+        Factory starting points: WakaWaka = Filter +45%, slow attack; Funk = +28%, snappy attack;
+        Reverse Funk = −17%, fast release. The % values are hardware-calibrated.
       </FootNote>
     </KnobScroll>
   );

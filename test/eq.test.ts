@@ -3,7 +3,7 @@ import { highShelf, lowShelf, magnitudeDb, peaking } from "../src/dsp/biquad";
 import { eqFilters, eqResponse } from "../src/dsp/eq";
 import { logGrid } from "../src/dsp/ir";
 
-const flat = { low: 64, mid: 64, high: 64, freq: 64, q: 64 };
+const flat = { low: 64, paraMid: 64, high: 64, paraMidFreq: 64, paraMidQ: 64 };
 const grid = logGrid(20, 20000, 200);
 const at = (db: readonly number[], f: number): number => {
   let k = 0;
@@ -81,8 +81,8 @@ describe("EQ tone curve (the pedal's own filter model)", () => {
   });
 
   it("mid knob boosts near the swept centre frequency", () => {
-    const lowMid = eqResponse({ ...flat, mid: 127, freq: 10 }, grid);
-    const hiMid = eqResponse({ ...flat, mid: 127, freq: 120 }, grid);
+    const lowMid = eqResponse({ ...flat, paraMid: 127, paraMidFreq: 10 }, grid);
+    const hiMid = eqResponse({ ...flat, paraMid: 127, paraMidFreq: 120 }, grid);
     // low freq-knob peaks lower than high freq-knob
     const peakF = (db: readonly number[]): number => {
       let k = 0;
