@@ -190,6 +190,10 @@ release-please/changesets automation: both fire on merge, and a merge here isn't
 
 ## Gotchas
 
+- **Ruby 4 breaks fastlane's Apple login** (`undefined method 'parse' for class CGI`). Run every
+  lane that talks to App Store Connect with the shim loaded:
+  `RUBYOPT="-r$PWD/fastlane/cgi_shim.rb" fastlane ios beta`. Separately, the saved Apple session expires
+  every few weeks; the next lane then stops at a 6-digit two-factor prompt, so run it in a terminal.
 - **A Ruby upgrade can break `pod install` inside the `beta`/`release` lanes.** Hit on 2026-08-12 with
   Ruby 4.0.6: step 4 (`cocoapods`) died before doing anything, with
   `Could not find 'httpclient' (~> 2.8, >= 2.8.3)` — the CocoaPods vendored under fastlane's own gem
