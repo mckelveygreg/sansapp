@@ -1,12 +1,13 @@
 SansApp is a free, open-source editor for the Tech 21 SansAmp Programmable Bass Driver DI Elite — the desktop-only editor, now in your pocket.
 
-Connect over Bluetooth MIDI (or USB) and:
+Connect over Bluetooth MIDI or straight over USB-C, and:
 
 • Edit every control live — Drive, three-band parametric EQ, the Red Zone functions, Compressor, Auto Filter, Ambience and Chorus — with a live tone graph and hardware-calibrated units.
 • Work with cabs the way the pedal does: browse your pedal's own cabs with real frequency curves, then design your own — bake a high-pass into a cab so you can drop a standalone HPF pedal, blend two cabs, or build a filter from scratch — and upload it straight to a user slot.
+• Stay in sync with the pedal: turn a knob on the pedal and the app follows, a tag shows which on-screen band the pedal's Mid / Freq / Q knobs are driving, Read from Pedal pulls in tweaks you haven't saved, and the app asks before a preset change throws edits away.
 • Manage all 128 presets: recall, step through, and back up / restore / share your whole pedal.
 
-You'll need the pedal plus a Bluetooth MIDI adapter (a CME WIDI Jack is recommended) or a USB MIDI interface. SansApp keeps everything on your device — no account, no sign-in, no data collection.
+You'll need the pedal plus either a USB cable into your USB-C iPhone or iPad, or a Bluetooth MIDI adapter (a CME WIDI Jack is recommended). SansApp keeps everything on your device — no account, no sign-in, no data collection.
 
 SansApp is an independent, community project and is not affiliated with, authorized, or endorsed by Tech 21 USA, Inc. "SansAmp", "Bass Driver", and "Tech 21" are trademarks of their owner, used here only to describe compatibility.
 

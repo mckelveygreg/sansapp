@@ -52,7 +52,13 @@ async function main() {
     // already booted
   }
   simctl("bootstatus", udid, "-b");
-  execFileSync("open", ["-a", "Simulator"]);
+  // The window is only for watching; capture goes through `simctl io` and works headless. Some Xcode
+  // installs ship without Simulator.app, so a missing window must not abort the run.
+  try {
+    execFileSync("open", ["-a", "Simulator"], { stdio: "ignore" });
+  } catch {
+    console.log("Simulator.app not found — continuing headless.");
+  }
 
   if (process.argv.includes("--build")) {
     console.log("Building Release app for the simulator (slow)…");
