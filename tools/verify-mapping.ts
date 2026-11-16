@@ -64,7 +64,7 @@ add(
   0x13,
   "reverb extension factor (notify id 0x13; as a live-set id, 0x13 is RESERVED — never send)",
 );
-add(0x4d, "RED SHIFT footswitch (layer)");
+add(0x4d, "Red/Tuner footswitch (knob bank)");
 
 const name = (id: number) => LABEL.get(id) ?? "(unmapped)";
 

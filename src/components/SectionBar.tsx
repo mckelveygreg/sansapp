@@ -11,7 +11,7 @@ import { radius, theme } from "./theme";
 // Alphabetical by label. Recipes stays last (its natural alphabetical slot) and is hidden unless the
 // EXPO_PUBLIC_ENABLE_RECIPES flag is on — it's a personal, in-progress feature (see config/features).
 const SECTIONS = [
-  { href: "/ambience", label: "Ambience" },
+  { href: "/ambience", label: "Ambiance" },
   { href: "/amp", label: "Amp" },
   { href: "/chorus", label: "Chorus" },
   { href: "/comp", label: "Dynamics" },

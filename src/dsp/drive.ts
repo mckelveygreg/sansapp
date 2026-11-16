@@ -28,8 +28,8 @@ export interface DriveKnobs {
   punchQ?: number;
   /** The front-panel Presence knob (0x04) — it is the pedal's Crunch filter, fixed at 2500 Hz. */
   presence: number;
-  /** Crunch width (Crunch Q, 0x2e). */
-  crunchQ?: number;
+  /** Presence width (Presence Q, 0x2e; the desktop editor's "Crunch Q"). */
+  presenceQ?: number;
 }
 
 const NOON = 64;
@@ -39,7 +39,7 @@ export function driveFilters(k: DriveKnobs): Biquad[] {
   return [
     ...eliteFilterBiquads("buzz", k.buzz, NOON, k.buzzQ ?? NOON),
     ...eliteFilterBiquads("punch", k.punch, k.punchFreq ?? NOON, k.punchQ ?? NOON),
-    ...eliteFilterBiquads("crunch", k.presence, NOON, k.crunchQ ?? NOON),
+    ...eliteFilterBiquads("crunch", k.presence, NOON, k.presenceQ ?? NOON),
   ];
 }
 

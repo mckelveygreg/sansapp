@@ -21,12 +21,12 @@ export interface EqKnobs {
   /** Presence (0..127) — the Crunch bell. Optional: an overlay for the OVERALL tone chart; omit it
    * on the Parametric EQ page, which shows only the 3 adjustable bands. */
   presence?: number;
-  /** Presence width (Crunch Q, 0..127); defaults to noon when omitted. */
+  /** Presence width (Presence Q, 0..127); defaults to noon when omitted. */
   presenceQ?: number;
-  /** Parametric mid centre-frequency knob (0..127). */
-  freq: number;
-  /** Parametric mid width knob (0..127). */
-  q: number;
+  /** Mid band centre frequency (0x0d, 0..127). */
+  midFreq: number;
+  /** Mid band width (0x2f, 0..127). */
+  midQ: number;
   /** Low/High band Freq + Q (0..127); default to noon when omitted. */
   lowFreq?: number;
   lowQ?: number;
@@ -39,7 +39,7 @@ const NOON = 64;
 export function eqFilters(eq: EqKnobs): Biquad[] {
   const filters = [
     ...eliteFilterBiquads("low", eq.low, eq.lowFreq ?? NOON, eq.lowQ ?? NOON),
-    ...eliteFilterBiquads("mid", eq.mid, eq.freq, eq.q),
+    ...eliteFilterBiquads("mid", eq.mid, eq.midFreq, eq.midQ),
     ...eliteFilterBiquads("high", eq.high, eq.highFreq ?? NOON, eq.highQ ?? NOON),
   ];
   // Presence is a preamp voicing control, not one of the 3 EQ bands — only overlay it when the

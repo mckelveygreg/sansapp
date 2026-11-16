@@ -70,14 +70,16 @@ export const PARAMS = {
   high: knob("high", "High", "tone", 0x29, 0x07, true),
   ambiance: knob("ambiance", "Ambiance", "ambience", 0x2a, 0x08, true),
   comp: knob("comp", "Comp", "dynamics", 0x2c, 0x0a, true),
+  // The tone-stack Mid band (0x0c gain / 0x0d freq / 0x2f Q; the desktop editor's Mid / Mid Shift /
+  // Mid Q). The panel's MID / FREQ / Q knobs drive this band on most amp models, and the drive-stage
+  // Punch band below on VT Bass and Para Driver — see panelMidMap.
   mid: knob("mid", "Mid", "tone", 0x2e, 0x0c, true),
-  // Parametric Mid Filter (deep page): MID knob = Gain (0x0c above), Freq/Q below.
-  freq: knob("freq", "Mid Freq", "redzone", 0x2f, 0x0d, true),
+  midFreq: knob("midFreq", "Mid Freq", "tone", 0x2f, 0x0d, true),
   // ─────────────────────────────────────────────────────────────────────────────────────────
   // Deep-param controls. Each wire id is the pedal's own parameter index (the same index the
   // desktop editor uses), confirmed against hardware; the ids satisfy blobOffset − wireId = 0x22,
   // the same rule as the main panel. Blob offsets are the read-back positions. See docs/PARAM-MAP.md.
-  q: knob("q", "Mid Q", "redzone", 0x51, 0x2f, true), // mid Q
+  midQ: knob("midQ", "Mid Q", "tone", 0x51, 0x2f, true),
   // ratio (compressor) = 0x19. The COMPRESSOR block is 0x19-0x1c — its Ratio sweeps 1:1→20:1
   // (compression), vs the separate Expander block's 1:1→1:16 (downward expansion). See COMP_PARAMS.
   ratio: knob("ratio", "Ratio", "dynamics", 0x3b, 0x19, true),
@@ -108,24 +110,27 @@ export const PARAMS = {
   compRelease: knob("compRelease", "Comp Release", "dynamics", 0x3e, 0x1c, true),
   autoGain: knob("autoGain", "Auto Gain", "dynamics", 0x54, 0x32, true),
   lookahead: knob("lookahead", "Look-ahead", "dynamics", 0x55, 0x33, true),
-  // Ambience Decay/Time wire ids, derived from observing EliteControl (issue #38): its ShowAmbience
+  // Ambiance Decay/Time wire ids, derived from observing EliteControl (issue #38): its ShowAmbience
   // page builds the DECAY knob on param index 0x11 (Reverb Decay Time) and the TIME knob on index
   // 0x10 (Reverb Room Size) — the same knob constructor whose LEVEL knob uses index 0x08, which pins
   // the reading. Room Size (0x10) drives the whole echo time; the nearby Fbk Delay Size (0x14) only
   // moves the later echoes, so it isn't the Time control. blobOffset = index + 0x22.
-  ambienceDecay: knob("ambienceDecay", "Ambience Decay", "ambience", 0x33, 0x11, true),
-  ambienceTime: knob("ambienceTime", "Ambience Time", "ambience", 0x32, 0x10, true),
-  // Amp-voicing params — the "hidden" bytes an amp-model bundle sets besides Pre-Amp/Drive/Presence.
-  // Exposed so the amp models become re-voiceable starting points. Ranges uncalibrated (shown raw %).
+  ambienceDecay: knob("ambienceDecay", "Ambiance Decay", "ambience", 0x33, 0x11, true),
+  ambienceTime: knob("ambienceTime", "Ambiance Time", "ambience", 0x32, 0x10, true),
+  // Drive-stage voicing — the bytes an amp-model bundle sets besides Preamp/Drive/Presence. Buzz has
+  // no panel knob. Punch / Punch Freq / Punch Q (0x03 / 0x0b / 0x2d) are a second, drive-stage mid
+  // band: on VT Bass and Para Driver the panel's MID / FREQ / Q knobs drive it (Mid 0x03 and Freq
+  // 0x0b seen as panel notifies); on every other model no panel knob reaches it — see panelMidMap.
+  // Ranges: gain ±12 dB, freq 200–1977 Hz (eliteFilters.ts).
   buzz: knob("buzz", "Buzz", "preamp", 0x24, 0x02, true),
   punch: knob("punch", "Punch", "preamp", 0x25, 0x03, true),
   punchFreq: knob("punchFreq", "Punch Freq", "preamp", 0x2d, 0x0b, true),
   punchQ: knob("punchQ", "Punch Q", "preamp", 0x4f, 0x2d, true),
-  // Buzz Q / Crunch Q — the remaining drive-character Qs (PROTOCOL-MAP §3, idx 0x2c/0x2e). An amp
-  // model apply live-sets them to constants (Buzz Q = 64, Crunch Q = 0, §5); modeled so a SAVE after
-  // an apply records those bytes instead of silently keeping the base preset's old Qs.
+  // Buzz Q / Presence Q (desktop editor: "Crunch Q") — the remaining drive-stage Qs (PROTOCOL-MAP §3,
+  // idx 0x2c/0x2e). An amp model apply live-sets them to constants (Buzz Q = 64, Presence Q = 0, §5);
+  // modeled so a SAVE after an apply records those bytes instead of silently keeping the old Qs.
   buzzQ: knob("buzzQ", "Buzz Q", "preamp", 0x4e, 0x2c, true),
-  crunchQ: knob("crunchQ", "Crunch Q", "preamp", 0x50, 0x2e, true),
+  presenceQ: knob("presenceQ", "Presence Q", "preamp", 0x50, 0x2e, true),
   // IR select/morph — the continuous 0x0E value the IR page's mic rides (0 = Off/flat, ~16·n = cab
   // n, values between blend neighbours). Store-backed so the IR stack reflects the LOADED preset's
   // cab instead of a guess. blobOffset 0x30 = wire 0x0e + 0x22; confirmed against the 128-preset bank.
@@ -159,6 +164,40 @@ export const PARAMS = {
 } as const satisfies Record<string, ParamDef>;
 
 export type ParamId = keyof typeof PARAMS;
+
+/** The params the panel's MID knob and its Red Zone FREQ / Q knobs drive. See {@link panelMidMap}. */
+export interface PanelMidMap {
+  readonly mid: ParamId;
+  readonly freq: ParamId;
+  readonly q: ParamId;
+}
+
+/** Buzz values that move the panel's mid knobs onto the Punch band: 62 = Para Driver, 63 = VT Bass. */
+const PUNCH_MAP_BUZZ: readonly number[] = Object.freeze([62, 63]);
+
+const MID_MAP: PanelMidMap = Object.freeze({ mid: "mid", freq: "midFreq", q: "midQ" });
+const PUNCH_MAP: PanelMidMap = Object.freeze({ mid: "punch", freq: "punchFreq", q: "punchQ" });
+
+/**
+ * Which band the panel's MID knob (and its Red Zone FREQ and Q knobs) drives, given the live Buzz
+ * value. The pedal decides this itself before every knob scan, from Buzz alone:
+ *
+ * - **Buzz 62 or 63** (Para Driver, VT Bass — the two models that park the tone-stack Mid at 0): the
+ *   "Punch map", `punch` / `punchFreq` / `punchQ` (0x03 / 0x0b / 0x2d).
+ * - **anything else**: the "Mid map", `mid` / `midFreq` / `midQ` (0x0c / 0x0d / 0x2f).
+ *
+ * A user preset that happens to carry Buzz 62/63 gets the Punch map too. It follows the live value,
+ * so the map flips after an amp-model apply or a preset load. An unknown Buzz (nothing loaded yet)
+ * gets the Mid map, the pedal's own boot default.
+ */
+export function panelMidMap(buzz: number | undefined): PanelMidMap {
+  return buzz !== undefined && PUNCH_MAP_BUZZ.includes(buzz) ? PUNCH_MAP : MID_MAP;
+}
+
+/** Label overrides that show a {@link PanelMidMap}'s params under the panel's own names. */
+export function panelMidLabels(map: PanelMidMap): Partial<Record<ParamId, string>> {
+  return { [map.mid]: "Mid", [map.freq]: "Mid Freq", [map.q]: "Mid Q" };
+}
 
 export const PARAM_IDS = Object.keys(PARAMS) as ParamId[];
 
@@ -253,6 +292,25 @@ export const CHORUS_PARAMS = {
 } as const;
 
 /**
+ * The Red Zone **CHORUS** knob on the pedal drives Chorus **Mod Depth** (0x44), not Chorus Level
+ * (0x42). It has one side effect the app mirrors: moving it while Chorus Level is 0 also sets Chorus
+ * Level to {@link CHORUS_AUTO_LEVEL}, so the knob is never silent (the desktop editor does the same).
+ */
+export const CHORUS_AUTO_LEVEL = 64;
+
+/** What moving the panel CHORUS knob to `depth` writes, given the current Chorus Level. */
+export function panelChorusWrites(
+  depth: number,
+  chorusLevel: number | undefined,
+): { id: ParamId; value: number }[] {
+  const writes: { id: ParamId; value: number }[] = [{ id: "chorusModDepth", value: depth }];
+  // Only a KNOWN zero bumps: before a preset is read the level is unknown, and writing 64 then could
+  // overwrite a real, non-zero level on the pedal.
+  if (chorusLevel === 0) writes.push({ id: "chorus", value: CHORUS_AUTO_LEVEL });
+  return writes;
+}
+
+/**
  * Deep Ambience-page paramIds (iPlug indices; sendParam maps them to the live-set wire via liveSetId).
  * The **AMBIANCE knob (0x08) is Level**; Decay = **0x11 (Reverb Decay Time)**; Time = **0x10 (Reverb
  * Room Size)**, Echo / Echo Verb only — derived from observing EliteControl's ShowAmbience page
@@ -280,13 +338,15 @@ export const GATE_PARAMS = {
 } as const;
 
 /**
- * 3-band parametric EQ (Low / Mid / High), each with Gain / Freq / Q — captured 2026-07-05 by
- * sweeping every band's deep page. Gain = the main-panel LOW/MID/HIGH knob (0x06/0x0C/0x07); Freq
- * and Q are deep params (the Q ids are consecutive 0x33/0x34/0x35). Display ranges + tapers come
- * from the pedal's own filter model, src/dsp/eliteFilters.ts (x = value/128): gain 24x − 12 dB on
- * all three; Low freq 40–199 Hz linear, Mid a bipolar 200–1977 Hz sweep centred at exactly 500 Hz,
- * High 1000–7945 Hz linear; Q exponential 0.5–2 (Low) / 0.25–3.9 (Mid), High's Q switching taper
- * (and the band its shape) on the sign of the gain — boosts are peaking bells, cuts shelves.
+ * The tone-stack parametric EQ: Low / Mid / High, each with Gain / Freq / Q — captured 2026-07-05 by
+ * sweeping every band's deep page. Low and High Gain are the panel LOW/HIGH knobs (0x06/0x07). The Mid
+ * band (0x0c/0x0d/0x2f) is driven by the panel's MID / FREQ / Q knobs on most amp models, but on VT
+ * Bass and Para Driver those knobs move to the drive-stage Punch band and this one is parked at 0
+ * (see {@link panelMidMap}). Freq and Q are deep params. Display ranges + tapers come from the
+ * pedal's own filter model, src/dsp/eliteFilters.ts (x = value/128): gain 24x − 12 dB on all three;
+ * Low freq 40–199 Hz linear, Mid a bipolar 200–1977 Hz sweep centred at exactly 500 Hz, High
+ * 1000–7945 Hz linear; Q exponential 0.5–2 (Low) / 0.25–3.9 (Mid), High's Q switching taper (and the
+ * band its shape) on the sign of the gain — boosts are peaking bells, cuts shelves.
  */
 export const PARAMETRIC_EQ = {
   low: { gain: 0x06, freq: 0x48, q: 0x30 },
@@ -297,7 +357,7 @@ export const PARAMETRIC_EQ = {
 /**
  * A few notes on the fuller parameter map (docs/PARAM-MAP.md):
  *
- * - 0x2f is "Mid Q" (mapped as `q` / eq.mid.q) — a real control.
+ * - 0x2f is the Mid band's Q (mapped as `midQ` / eq.mid.q) — a real control.
  * - 0x13 is "Reverb Extension Factor" (2–5).
  * - 0x35–0x38 are the "User IR 7/8 Preset" addressing params for the writable IR slots.
  * - The deep reverb-engine params beyond Level/Decay/Time (0x12–0x18, 0x39–0x3b), the Expander block

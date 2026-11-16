@@ -20,12 +20,16 @@ import {
   PARAMS,
   PARAM_IDS,
   liveSetId,
+  panelMidMap,
   type ParamId,
 } from "../src/protocol/params";
 
+/** Stands in for "whatever the pedal's MID knob turns" — resolved at apply time (see panelMidMap). */
+const PANEL_MID = "panelMid";
+
 /** A machine-applyable value: the raw wire param id (0x05 etc.) and the 0–127 byte to send. */
 interface Apply {
-  param: number;
+  param: number | typeof PANEL_MID;
   raw: number;
 }
 interface Setting {
@@ -58,7 +62,9 @@ const P = {
   drive: wire("drive"), // 0x05
   low: wire("low"), // 0x06
   high: wire("high"), // 0x07
-  mid: wire("mid"), // 0x0c
+  // The pedal's MID knob: 0x0c (EQ Mid) on most amp models, 0x03 (Punch) on VT Bass / Para Driver.
+  // No recipe here sets an amp model, so it resolves against the CURRENT Buzz when applied.
+  mid: PANEL_MID,
   blend: wire("blend"), // 0x47
   ambienceLevel: AMBIENCE_PARAMS.level, // 0x08
   ambienceTime: AMBIENCE_PARAMS.time, // 0x10 (Reverb Room Size)
@@ -148,25 +154,25 @@ const RECIPES: Recipe[] = [
       {
         title: "Ambient space — Echo Verb (the faithful route)",
         detail:
-          "Bender's signature space is a Roland Space Echo (tape echo). The Elite's Echo Verb type — tape-style repeats plus a reverb tail — is the closest match, and since Ambience is one effect at a time, this beats plain reverb here. (Simpler alternative: Room reverb, ~20% Level / ~30% Decay.)",
+          "Bender's signature space is a Roland Space Echo (tape echo). The Elite's Echo Verb type — tape-style repeats plus a reverb tail — is the closest match, and since Ambiance is one effect at a time, this beats plain reverb here. (Simpler alternative: Room reverb, ~20% Level / ~30% Decay.)",
         settings: [
           {
-            control: "Ambience · Type",
+            control: "Ambiance · Type",
             value: "Echo Verb",
             applyEngine: AMBIENCE_ENGINES.indexOf("Echo Verb"),
           },
           {
-            control: "Ambience · Time",
+            control: "Ambiance · Time",
             value: "~40% (≈200 ms)",
             apply: { param: P.ambienceTime, raw: 51 },
           },
           {
-            control: "Ambience · Level",
+            control: "Ambiance · Level",
             value: "~22%",
             apply: { param: P.ambienceLevel, raw: 28 },
           },
           {
-            control: "Ambience · Decay",
+            control: "Ambiance · Decay",
             value: "~35% (a few soft repeats)",
             apply: { param: P.ambienceDecay, raw: 44 },
           },
@@ -198,7 +204,7 @@ const RECIPES: Recipe[] = [
       {
         title: "Notes",
         detail:
-          "The echo (Space Echo) is the documented Bender ingredient; the layered-bass width + warm voicing do the rest, with chorus just an optional stand-in. Ambience is one effect at a time — pick Echo Verb OR Room, not both. Keep everything light so the low end stays anchored (don't push Chorus past ~35% or the echo Level/Decay too high).",
+          "The echo (Space Echo) is the documented Bender ingredient; the layered-bass width + warm voicing do the rest, with chorus just an optional stand-in. Ambiance is one effect at a time — pick Echo Verb OR Room, not both. Keep everything light so the low end stays anchored (don't push Chorus past ~35% or the echo Level/Decay too high).",
       },
     ],
   },
@@ -276,12 +282,15 @@ function RecipesScreen() {
                   engineFailed = true;
                 }
               }
+              // Resolve the panel Mid against the live amp model, the way the pedal's own knob does.
+              const panelMid = wire(panelMidMap(pedalStore.getState().values.buzz).mid);
+              const wireOf = (a: Apply): number => (a.param === PANEL_MID ? panelMid : a.param);
               // Live-set the params PACED so BLE doesn't drop the burst (the pedal drops fire-and-
               // forget sends that land in one connection interval). sendParam mapped through liveSetId
               // (deep params set on index+4); do the same here so the on-wire ids are identical.
               await session.setParamsPaced(
                 applyable.map((s) => ({
-                  param: liveSetId(s.apply!.param),
+                  param: liveSetId(wireOf(s.apply!)),
                   value: s.apply!.raw & 0x7f,
                 })),
               );
@@ -290,7 +299,7 @@ function RecipesScreen() {
               // setValueLocal per control keeps the editor + save state in sync.
               for (const s of applyable) {
                 if (!s.apply) continue;
-                const id = PARAM_BY_WIRE[s.apply.param];
+                const id = PARAM_BY_WIRE[wireOf(s.apply)];
                 if (id) pedalStore.getState().setValueLocal(id, s.apply.raw);
               }
               const n = applyable.length + (engineFailed ? 0 : engines.length);

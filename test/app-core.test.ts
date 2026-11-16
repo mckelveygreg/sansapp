@@ -112,6 +112,35 @@ describe("pedal store + controller", () => {
     ctl.dispose();
   });
 
+  it("panel mid-knob notifies route by wire id: 0x03/0x0b/0x2d to Punch, 0x0c/0x0d/0x2f to Mid", async () => {
+    // The pedal's MID / FREQ / Q knobs send the Punch ids on VT Bass / Para Driver and the Mid ids on
+    // every other model. Either way the notify must land on the param it names, so the Editor's
+    // model-dependent "Mid" knob (panelMidMap) shows what the pedal just did.
+    const [appIO, devIO] = createLoopback();
+    wireModel(devIO, new PedalModel());
+    const session = new DeviceSession(appIO, 500);
+    await session.connect();
+    const store = createPedalStore();
+    const ctl = bindSession(session, store);
+
+    const sends: [number, number][] = [
+      [0x03, 90],
+      [0x0b, 20],
+      [0x2d, 30],
+      [0x0c, 40],
+      [0x0d, 50],
+      [0x2f, 60],
+      [0x44, 70], // Red Zone CHORUS knob = Chorus Mod Depth
+    ];
+    for (const [param, value] of sends) devIO.send(encode({ kind: "paramNotify", param, value }));
+    await new Promise((r) => setTimeout(r, 10));
+    const v = store.getState().values;
+    expect([v.punch, v.punchFreq, v.punchQ, v.mid, v.midFreq, v.midQ, v.chorusModDepth]).toEqual(
+      sends.map(([, value]) => value),
+    );
+    ctl.dispose();
+  });
+
   it("tracks the knob layer from the 0x4d footswitch notify (and never as a knob value)", async () => {
     const [appIO, devIO] = createLoopback();
     wireModel(devIO, new PedalModel());

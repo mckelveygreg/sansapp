@@ -1,7 +1,9 @@
 /**
- * Parametric EQ — the Elite's 3-band Low/Mid/High EQ, each with Gain/Freq/Q, LIVE over MIDI.
- * Gain = the main LOW/MID/HIGH knob (0x06/0x0C/0x07); Freq/Q are the deep params: low 0x48/0x30, mid
- * 0x0D/0x2f, high 0x49/0x31. The graph is the combined tone response and the Freq/Q read-outs are
+ * Parametric EQ — the Elite's tone stack, Low/Mid/High, each with Gain/Freq/Q, LIVE over MIDI.
+ * Gain = 0x06/0x0C/0x07; Freq/Q are the deep params: low 0x48/0x30, mid 0x0D/0x2f, high 0x49/0x31.
+ * Low and High Gain are always the panel LOW/HIGH knobs. Whether the Mid band is the panel's MID
+ * knob depends on the amp model (panelMidMap): yes on most models, but on VT Bass and Para Driver the
+ * panel's mid knobs drive the drive-stage Punch band instead and this band is parked at 0. The graph is the combined tone response and the Freq/Q read-outs are
  * the designer's own values, both from the pedal's filter model (src/dsp/eliteFilters.ts). All
  * bands read live from the store (so they reflect the loaded preset and match the editor's tone
  * chart); adjusting a control sends it to the pedal. RN app surface.
@@ -16,7 +18,7 @@ import { radius, theme, toneColors } from "../src/components/theme";
 import { designEliteFilter } from "../src/dsp/eliteFilters";
 import { eqResponse } from "../src/dsp/eq";
 import { logGrid } from "../src/dsp/ir";
-import { PARAMETRIC_EQ, type ParamId } from "../src/protocol/params";
+import { PARAMETRIC_EQ, panelMidMap, type ParamId } from "../src/protocol/params";
 import { eqGainDb, fmtHz } from "../src/protocol/units";
 import { sendParam } from "../src/midi/liveParam";
 import { pedalStore } from "../src/midi/pedal";
@@ -35,8 +37,8 @@ const STORE_ID: Record<string, ParamId> = {
   lowFreq: "lowFreq",
   lowQ: "lowQ",
   midGain: "mid",
-  midFreq: "freq",
-  midQ: "q",
+  midFreq: "midFreq",
+  midQ: "midQ",
   highGain: "high",
   highFreq: "highFreq",
   highQ: "highQ",
@@ -49,6 +51,8 @@ export default function ParametricEq() {
   // its graph reflect the pedal's actual values and match the editor's tone chart.
   const values = useStore(pedalStore, (s) => s.values);
   const baseline = useStore(pedalStore, (s) => s.baseline);
+  // Is the Mid band the pedal's own MID knob right now? Depends on the amp model (via Buzz).
+  const midIsPanel = panelMidMap(values.buzz).mid === "mid";
 
   const read = (key: string): number => values[STORE_ID[key]!] ?? 64;
   const ghostOf = (key: string): number | undefined => baseline[STORE_ID[key]!];
@@ -64,8 +68,8 @@ export default function ParametricEq() {
       low: read("lowGain"),
       mid: read("midGain"),
       high: read("highGain"),
-      freq: read("midFreq"),
-      q: read("midQ"),
+      midFreq: read("midFreq"),
+      midQ: read("midQ"),
       lowFreq: read("lowFreq"),
       lowQ: read("lowQ"),
       highFreq: read("highFreq"),
@@ -116,6 +120,13 @@ export default function ParametricEq() {
             <Text style={{ color: theme.accent, fontWeight: "700", letterSpacing: 1 }}>
               {b.label}
             </Text>
+            {b.key === "mid" ? (
+              <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
+                {midIsPanel
+                  ? "The pedal's MID knob, with its Red Zone FREQ and Q."
+                  : "Not on a pedal knob with this amp model: VT Bass and Para Driver park this band at 0 and move the pedal's MID / FREQ / Q knobs to Punch on the Amp page."}
+              </Text>
+            ) : null}
             <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
               <Knob
                 label="Gain"

@@ -39,7 +39,7 @@ export function AmpVoicePrint({ values }: { values: Readonly<Partial<Record<Para
           punchFreq: v("punchFreq"),
           punchQ: v("punchQ"),
           presence: v("presence"),
-          crunchQ: v("crunchQ"),
+          presenceQ: v("presenceQ"),
         },
         GRID,
       ),

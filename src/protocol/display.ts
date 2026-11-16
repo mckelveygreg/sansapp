@@ -19,14 +19,20 @@ export function displayFor(id: ParamId, raw: number): string {
   switch (id) {
     case "low":
     case "mid":
+    case "punch": // the drive-stage mid band: same 24x − 12 dB gain law as the EQ bands
     case "high": {
       const db = eqGainDb(raw);
       return `${db > 0 ? "+" : ""}${db.toFixed(1)} dB`;
     }
-    case "freq":
+    case "midFreq":
+    case "punchFreq": // Mid and Punch share one 200–1977 Hz frequency law
       return hz(sweepFreqHz(raw));
-    case "q": // Mid's Q law doesn't depend on the other two knobs, so noon stand-ins are exact
+    case "midQ": // Mid's Q law doesn't depend on the other two knobs, so noon stand-ins are exact
       return `Q ${designEliteFilter("mid", 64, 64, raw).q.toFixed(1)}`;
+    case "punchQ": // Punch's Q law switches on the gain sign; read it at a noon (boost-side) gain
+      return `Q ${designEliteFilter("punch", 64, 64, raw).q.toFixed(1)}`;
+    case "chorusModDepth": // the Red Zone CHORUS knob
+      return pct(raw);
     case "ratio":
       return `${compRatio(raw).toFixed(1)}:1`;
     case "filter": // Auto-Filter Level — reads "Bypass" at the centre detent (raw 64)

@@ -31,8 +31,8 @@ export const DEMO_VALUES = {
   lowFreq: 38,
   lowQ: 64,
   mid: 44,
-  freq: 58,
-  q: 70,
+  midFreq: 58,
+  midQ: 70,
   high: 88,
   highFreq: 82,
   highQ: 60,
@@ -42,7 +42,7 @@ export const DEMO_VALUES = {
   punchFreq: 65,
   punchQ: 64,
   buzzQ: 64, // constant across amp models (§5)
-  crunchQ: 0, // constant across amp models (§5)
+  presenceQ: 0, // constant across amp models (§5)
   // Blend (dry/wet) + IR cab
   blend: 104,
   irBlend: 32,

@@ -13,31 +13,37 @@ export interface KnobPanelProps {
   onChange: (id: ParamId, value: number) => void;
   /** No pedal connected: knobs render dimmed and inert (a tap still opens the deep page). */
   disabled?: boolean;
+  /** Per-knob label overrides — the panel's own names for the model-dependent mid knobs. */
+  labels?: Partial<Record<ParamId, string>>;
 }
 
 // Knobs that have a deep-edit page: tapping the knob opens it (the Knob shows a chevron badge).
-// Rule: any knob that also appears on a deep page links to it. Pre-Amp/Drive/Presence live on the
-// Amp page (with the hidden Buzz/Punch voicing); comp/ratio open Dynamics (comp + gate). Blend and
+// Rule: any knob that also appears on a deep page links to it. Preamp/Drive/Presence and the Punch
+// band live on the Amp page (with Buzz); comp/ratio open Dynamics (comp + gate). Blend and
 // Level have no deep page (Level is just the master output, edited here). Keep in sync with the
 // KNOB_PAGES routes in app/_layout.tsx.
 const DEEP_LINK: Partial<Record<ParamId, string>> = {
   preamp: "/amp",
   drive: "/amp",
   presence: "/amp",
+  punch: "/amp",
+  punchFreq: "/amp",
+  punchQ: "/amp",
   comp: "/comp",
   ratio: "/comp",
   filter: "/filter",
   ambiance: "/ambience",
   chorus: "/chorus",
+  chorusModDepth: "/chorus",
   low: "/eq",
   mid: "/eq",
   high: "/eq",
-  freq: "/eq",
-  q: "/eq",
+  midFreq: "/eq",
+  midQ: "/eq",
 };
 
 /** A wrapping grid of knobs bound to `values` — used by the editor and Red Zone screens. */
-export function KnobPanel({ ids, values, baseline, onChange, disabled }: KnobPanelProps) {
+export function KnobPanel({ ids, values, baseline, onChange, disabled, labels }: KnobPanelProps) {
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap, justifyContent: "center" }}>
       {ids.map((id) => {
@@ -45,7 +51,7 @@ export function KnobPanel({ ids, values, baseline, onChange, disabled }: KnobPan
         return (
           <Knob
             key={id}
-            label={PARAMS[id].label}
+            label={labels?.[id] ?? PARAMS[id].label}
             value={values[id] ?? 64}
             display={displayFor(id, values[id] ?? 64)}
             ghost={baseline[id]}

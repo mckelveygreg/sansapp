@@ -1,6 +1,8 @@
 /**
- * Amp — the AMPLIFIER page. An "amp model" is a recipe: it writes 7 voicing bytes (Pre-Amp, Drive,
- * Presence + the hidden Buzz/Punch/Punch-Freq/Punch-Q) plus a few fixed extras. It does NOT write the
+ * Amp — the AMPLIFIER page. An "amp model" is a recipe: it writes 7 voicing bytes (Preamp, Drive,
+ * Presence + Buzz/Punch/Punch-Freq/Punch-Q) plus a few fixed extras. On VT Bass and Para Driver the
+ * Punch band is what the pedal's MID / FREQ / Q knobs drive (panelMidMap); on other models it is
+ * hidden voicing. It does NOT write the
  * preset's output level — see ampApplySets. This page exposes all of them
  * as live knobs so the factory models are re-voiceable starting points — and lets you SAVE the
  * current voicing as your own custom amp (persisted, shown beside the factory models). Cabs/IRs live
@@ -29,7 +31,7 @@ import { AMP_MODELS } from "../src/protocol/constants";
 import { rawToPct, sendParam } from "../src/midi/liveParam";
 import { getSession, pedalStore } from "../src/midi/pedal";
 import { type AmpPreset, loadAmpPresets, saveAmpPresets } from "../src/midi/ampPresets";
-import { PARAM_IDS, PARAMS, liveSetId, type ParamId } from "../src/protocol/params";
+import { PARAM_IDS, PARAMS, liveSetId, panelMidMap, type ParamId } from "../src/protocol/params";
 
 // Wire INDEX (paramId) → registry id, so an apply can record every param it live-sets in the store.
 const PARAM_BY_INDEX = new Map<number, ParamId>();
@@ -40,7 +42,7 @@ for (const id of PARAM_IDS) {
 
 // The store-backed knobs an amp bundle drives (Preset Level 0x40 is level-match, not a knob here).
 const AMP_KNOBS: { id: ParamId; label: string }[] = [
-  { id: "preamp", label: "Pre-Amp" },
+  { id: "preamp", label: "Preamp" },
   { id: "drive", label: "Drive" },
   { id: "presence", label: "Presence" },
   { id: "buzz", label: "Buzz" },
@@ -122,6 +124,8 @@ function Chip({
 export default function Amp() {
   const ready = useStore(pedalStore, (s) => s.connection) === "ready";
   const values = useStore(pedalStore, (s) => s.values);
+  // On VT Bass / Para Driver (Buzz 62/63) the pedal's MID / FREQ / Q knobs drive the Punch band.
+  const punchIsPanel = panelMidMap(values.buzz).mid === "punch";
   const baseline = useStore(pedalStore, (s) => s.baseline);
   const [customs, setCustoms] = useState<AmpPreset[]>([]);
   const [status, setStatus] = useState<string | null>(null);
@@ -173,8 +177,8 @@ export default function Amp() {
     // Preset Level stays out of it: it's a per-preset output level, not part of the amp's identity.
     const sets = ampApplySets(name, vals);
     // Reflect into the store immediately (local, no wire) so the UI updates at once AND a later SAVE
-    // records what the pedal is now playing (Buzz Q / Crunch Q / Mid included) instead of the loaded
-    // preset's old bytes. Preset Level is left alone, so the preset keeps the level you set.
+    // records what the pedal is now playing (Buzz Q / Presence Q / Mid included) instead of the
+    // loaded preset's old bytes. Preset Level is left alone, so the preset keeps the level you set.
     for (const { index, value } of sets) {
       const id = PARAM_BY_INDEX.get(index);
       if (id) pedalStore.getState().setValueLocal(id, value);
@@ -352,11 +356,11 @@ export default function Amp() {
         </Text>
         <AmpVoicePrint values={values} />
         <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
-          The drive character&apos;s real frequency response: Buzz&apos;s 200 Hz shelf, Punch&apos;s
-          swept bell, and Crunch (the Presence knob) at 2500 Hz, summed exactly as the pedal builds
-          them. A centred Buzz is a slight cut — its unity point is up near ¾ — and Crunch only ever
-          lifts. Pre-Amp and Drive set level and saturation, not tone, so they don&apos;t move the
-          curve.
+          The drive stage&apos;s real frequency response: Buzz&apos;s 200 Hz shelf, Punch&apos;s
+          swept bell, and Presence (Crunch in the desktop editor) at 2500 Hz, summed exactly as the
+          pedal builds them. A centred Buzz is a slight cut — its unity point is up near ¾ — and
+          Presence only ever lifts. Preamp and Drive set level and saturation, not tone, so they
+          don&apos;t move the curve.
         </Text>
         <View
           style={{
@@ -379,8 +383,10 @@ export default function Amp() {
           ))}
         </View>
         <Text style={{ color: theme.textDim, fontSize: 11, lineHeight: 16 }}>
-          Pre-Amp / Drive / Presence are the front-panel controls; Buzz / Punch / Punch Freq / Punch
-          Q are the hidden voicing an amp model sets (ranges uncalibrated, shown as raw %).
+          {punchIsPanel
+            ? "Preamp / Drive / Presence are pedal knobs. With this amp model (VT Bass / Para Driver), so are Punch / Punch Freq / Punch Q: they are what the pedal's MID, FREQ and Q knobs turn. Buzz is hidden voicing."
+            : "Preamp / Drive / Presence are pedal knobs; Buzz / Punch / Punch Freq / Punch Q are hidden voicing an amp model sets. (On VT Bass and Para Driver, the pedal's MID, FREQ and Q knobs turn Punch instead of the EQ's Mid.)"}{" "}
+          Ranges uncalibrated, shown as raw %.
         </Text>
       </View>
 

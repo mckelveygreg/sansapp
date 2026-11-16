@@ -108,29 +108,40 @@ So Blend (index `0x47`) must be _set_ via `0x4B`; sending a set to `0x47` actual
 `params.ts` encodes this; it was the root cause of "reads back but won't write" for Blend, Auto
 Filter, and the other deep controls.
 
-**Param ids** (the `<param>` byte in `05 50/51`), mapped by turning each physical knob:
+**Param ids** (the `<param>` byte in `05 50/51`), mapped by turning each physical knob (named as
+printed on the pedal; the desktop editor calls Presence "Crunch"):
 
-| Knob  | id     |     | Knob     | id                      |
-| ----- | ------ | --- | -------- | ----------------------- |
-| Drive | `0x05` |     | Presence | `0x04`                  |
-| Low   | `0x06` |     | Blend    | `0x47` (set via `0x4B`) |
-| Mid   | `0x0C` |     | Comp     | `0x0A`                  |
-| High  | `0x07` |     | Level    | `0x00`                  |
+| Knob  | id                   |     | Knob     | id                      |
+| ----- | -------------------- | --- | -------- | ----------------------- |
+| Drive | `0x05`               |     | Presence | `0x04`                  |
+| Low   | `0x06`               |     | Blend    | `0x47` (set via `0x4B`) |
+| Mid   | `0x0C` / `0x03` (\*) |     | Comp     | `0x0A`                  |
+| High  | `0x07`               |     | Level    | `0x00`                  |
 
-**Red Zone controls** — these read/notify on the index; a live edit sets on index + 4:
+(\*) **The MID knob, and the Red Zone FREQ and Q knobs, depend on the amp model.** Before every knob
+scan the pedal checks the live **Buzz** value (`0x02`): Buzz 62 or 63 (Para Driver, VT Bass) points
+the three knobs at the drive-stage **Punch** band (`0x03` / `0x0B` / `0x2D`); any other value points
+them at the tone-stack **Mid** band (`0x0C` / `0x0D` / `0x2F`). It follows a preset load or an amp
+change within one scan. SansApp's Editor follows the same rule (`panelMidMap` in `params.ts`).
 
-| Ctrl   | index  | set id |     | Ctrl     | index  | set id |
-| ------ | ------ | ------ | --- | -------- | ------ | ------ |
-| Preamp | `0x01` | `0x01` |     | Ambiance | `0x08` | `0x08` |
-| Filter | `0x3D` | `0x41` |     | Chorus   | `0x42` | `0x46` |
-| Freq   | `0x0D` | `0x0D` |     | Ratio    | `0x19` | `0x1D` |
-| Q      | `0x2F` | `0x33` |     |          |        |        |
+**Red Zone controls** — these read/notify on the index; a live edit sets on index + 4. Freq and Q
+follow the amp model as above. The **CHORUS** knob sends Chorus **Mod Depth** (`0x44`); turning it
+while Chorus Level (`0x42`) is 0 also sets Chorus Level to 64 and notifies that.
+
+| Ctrl   | index                | set id          |     | Ctrl     | index  | set id |
+| ------ | -------------------- | --------------- | --- | -------- | ------ | ------ |
+| Preamp | `0x01`               | `0x01`          |     | Ambiance | `0x08` | `0x08` |
+| Filter | `0x3D`               | `0x41`          |     | Chorus   | `0x44` | `0x48` |
+| Freq   | `0x0D` / `0x0B` (\*) | `0x0D` / `0x0B` |     | Ratio    | `0x19` | `0x1D` |
+| Q      | `0x2F` / `0x2D` (\*) | `0x33` / `0x31` |     |          |        |        |
 
 (The earlier notes listed these as `0x41`/`0x46`/`0x1D`/`0x33` — those are the **set** ids, not the
-indices; the +4 rule reconciles the two.)
+indices; the +4 rule reconciles the two. They also listed Chorus as `0x42`: that was the Chorus Level
+bump above, not the knob itself.)
 
-**3-band parametric EQ (deep pages)** ✅: Low/Mid/High each have Gain/Freq/Q. Gain = the main
-LOW/MID/HIGH knob; Freq/Q are deep params. `PARAMETRIC_EQ` in `params.ts`.
+**3-band parametric EQ (deep pages)** ✅: Low/Mid/High each have Gain/Freq/Q. Low and High Gain are
+the panel LOW/HIGH knobs; Mid's Gain/Freq/Q are the panel MID / FREQ / Q knobs except on VT Bass and
+Para Driver (see (\*) above), where an apply parks Mid at 0. Freq/Q are deep params. `PARAMETRIC_EQ` in `params.ts`.
 
 | Band | Gain   | Freq   | Q      | Freq range (taper)                    | Q range (taper)             |
 | ---- | ------ | ------ | ------ | ------------------------------------- | --------------------------- |
@@ -187,8 +198,8 @@ linear. In `src/protocol/units.ts`.
 **Amp model & ambience type = live-set bundles, not index bytes** (from the app): neither is stored
 as a single index. Selecting one **live-sets a bundle of individual params** via `05 50`. The amp
 bundle is 8 voicing bytes at blob offsets `0x23, 0x24, 0x25, 0x26, 0x27, 0x2D, 0x4F, 0x62`
-(`0x23/26/27` = preamp/presence/drive); every apply also live-sets **Buzz Q = 64** and **Crunch Q =
-0**, and VT Bass / Para Driver additionally force **Mid → 0**. `AMP_BUNDLES` / `AMP_APPLY_FIXED` in
+(`0x23/26/27` = preamp/presence/drive); every apply also live-sets **Buzz Q = 64** and **Presence Q
+(Crunch Q) = 0**, and VT Bass / Para Driver additionally force **Mid → 0**. `AMP_BUNDLES` / `AMP_APPLY_FIXED` in
 `src/protocol/amp.ts` — **all 10** models captured in one clean pass, anchor-verified. The pedal has
 **10 amps** (Bass Driver, VT Bass, Para Driver, 1970s, 1980s, Flip, VT Stack, Blackface, British,
 Shred) — **not 12**. The pedal **discards** edit-buffer (`05 20` to `0x7F`) writes, so the live-set

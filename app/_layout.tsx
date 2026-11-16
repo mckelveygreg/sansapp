@@ -16,7 +16,7 @@ const KNOB_PAGES: Record<string, string> = {
   eq: "Parametric EQ",
   comp: "Dynamics",
   filter: "Auto Filter",
-  ambience: "Ambience",
+  ambience: "Ambiance",
   chorus: "Chorus",
   ir: "IR Studio",
 };

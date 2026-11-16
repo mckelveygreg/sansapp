@@ -106,3 +106,22 @@ bank, and not part of **the set**: a fact about the hardware that any slot listi
 All 128 **stored presets** as the app lists them, in slot order: the whole bank, where presets are managed —
 copied, renamed, exported, overwritten. Distinct from **the set**, which is chosen out of it and only
 recalled. Pre-existing code vocabulary (`src/device/library.ts`).
+
+## Panel names
+
+Controls are named as printed on the pedal and in its owner's manual. The desktop editor often uses
+different words for the same wire id; those appear only as secondary text ("Crunch" for Presence,
+"Reverb" for Ambiance, "Dynamics" for Comp).
+
+_Avoid_: Pre-Amp, Ambience, Crunch Q — say Preamp, Ambiance, Presence Q.
+
+## Mid band / Punch band
+
+Two swept mid filters. The **Mid band** (`0x0c`, freq `0x0d`, Q `0x2f`) sits in the tone-stack EQ;
+the **Punch band** (`0x03`, `0x0b`, `0x2d`) sits in the drive stage and is part of every amp model.
+
+## Panel mid map
+
+Which band the pedal's MID knob, and its Red Zone FREQ and Q knobs, turn. It depends on the amp
+model, read from the live Buzz value: VT Bass and Para Driver (Buzz 63/62) use the **Punch band**,
+every other model the **Mid band**. So "the Mid knob" means a different wire id on different presets.
