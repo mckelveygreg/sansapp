@@ -6,6 +6,7 @@ New:
 • Settings → Behaviour → Confirm before switching presets. Turn it off and changing presets discards unsaved edits without asking, which is handy while you experiment. It's on by default.
 
 Fixed:
+• Turning a knob on the pedal now marks the preset edited, so the app asks before you switch presets and lose the tweak. The red footswitch doesn't count as an edit.
 • Renaming the preset you're playing now sticks. Before, saving afterwards could put the old name back.
 • Tapping an amp model no longer changes your preset's output level. Before, VT Bass could drop the level to silence and Bass Driver could jump it to full.
 • An amp model's button now shows "edited" when your preset is voiced from that model but its knobs have moved off it, and explains that tapping it resets the voicing to the factory recipe.
