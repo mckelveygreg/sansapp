@@ -32,6 +32,7 @@ import {
   createPedalStore,
   type PedalController,
 } from "../state/store";
+import { describeConnectFailure } from "./connectFailure";
 
 declare global {
   /** Set by connectPedal; the patched RN MIDI polyfill calls it when a fire-and-forget send rejects
@@ -199,7 +200,21 @@ export async function connectPedal(portMatch?: string): Promise<void> {
   newSession.onState((s) => {
     if (s === "disconnected" && session === newSession) teardownSession();
   });
-  await newSession.connect();
+  // Log the port BEFORE the handshake: a failed connect is exactly when the MIDI log is the only thing
+  // a user can send us, and it used to record nothing (not even which port autodetect picked).
+  const ports = listPortNames(access);
+  pedalStore
+    .getState()
+    .pushLog(
+      `🔌 connecting via ${found.name} (in: ${ports.inputs.join(", ") || "none"}; out: ${ports.outputs.join(", ") || "none"})`,
+    );
+  try {
+    await newSession.connect();
+  } catch (e) {
+    const msg = describeConnectFailure(e, found.name);
+    pedalStore.getState().pushLog(`✖ connect failed: ${msg}`);
+    throw new Error(msg, { cause: e });
+  }
   pedalStore.getState().pushLog(`🔌 connected via ${found.name}`);
   // The handshake read this pedal's serial for free — swap the cache to it before anything reads or
   // writes names, so a second pedal never inherits the first one's. Best-effort: a cache miss must not

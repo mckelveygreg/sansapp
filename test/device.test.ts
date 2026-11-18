@@ -3,7 +3,7 @@ import { decode, encode, sysexVersion } from "../src/protocol/messages";
 import { PROTOCOL_V1_0, PROTOCOL_V1_1 } from "../src/protocol/constants";
 import { readAllPresets } from "../src/device/library";
 import { PedalModel } from "../src/device/pedalModel";
-import { DeviceSession } from "../src/device/session";
+import { DeviceSession, HandshakeError } from "../src/device/session";
 import { createLoopback, type MidiIO } from "../src/device/transport";
 import { PARAMS, TUNER_BLOB_OFFSET, TUNER_PARAM, liveSetId } from "../src/protocol/params";
 import { PC_MAP_BLOCK, SETTINGS_BLOCK, withPcMap, withSetting } from "../src/protocol/settings";
@@ -812,5 +812,60 @@ describe("PedalModel live parameter array", () => {
     const before = [...model.live];
     for (const param of [0x10, 0x11, 0x13]) model.handle({ kind: "setParam", param, value: 0x7f });
     expect([...model.live]).toEqual(before);
+  });
+});
+
+describe("connect handshake failure diagnostics", () => {
+  // "timeout awaiting reply to requestBlock" was the ONLY thing a failed connect said, whether the pedal
+  // never answered at all (a dead WIDI↔pedal cable / A/B switch, a wrong port) or answered the hello
+  // and then stalled on a data block (an app/firmware incompatibility). Those need different fixes.
+  it("a pedal that never replies fails at the hello stage, with no reply heard", async () => {
+    const [appIO] = createLoopback(); // nothing on the device side: a silent link
+    const session = new DeviceSession(appIO, 40);
+
+    const err = await session.connect().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HandshakeError);
+    const h = err as HandshakeError;
+    expect(h.stage).toBe("hello");
+    expect(h.pedalReplied).toBe(false);
+    expect(h.firmware).toBeNull();
+    expect(h.message).toMatch(/never replied/);
+    expect(h.message).toMatch(/1\.2, 1\.1, 1\.0/); // says which versions were tried
+  });
+
+  it("a pedal that answers the hello but not a data block names the block and its firmware", async () => {
+    const [appIO, devIO] = createLoopback();
+    const model = new PedalModel(makePresets());
+    devIO.onMessage((bytes) => {
+      const m = decode(bytes);
+      if (m.kind === "requestBlock" && m.reqCode === 0x55 && m.index === 0x0f) return; // stall
+      for (const reply of model.handle(m)) devIO.send(encode(reply));
+    });
+    const session = new DeviceSession(appIO, 40);
+
+    const err = await session.connect().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HandshakeError);
+    const h = err as HandshakeError;
+    expect(h.stage).toBe("dataBlock");
+    expect(h.blockIndex).toBe(0x0f);
+    expect(h.pedalReplied).toBe(true);
+    expect(h.firmware).toBe(1.2);
+    expect(h.message).toMatch(/firmware 1\.2/);
+    expect(h.message).toMatch(/0x0f/i);
+    expect(session.state).toBe("disconnected");
+  });
+
+  it("counts ANY inbound traffic as a reply, even one the handshake can't use", async () => {
+    // e.g. the wrong port, or a pedal on a firmware byte we don't probe: the RX leg works, so the
+    // cable-hint for a dead link would be wrong.
+    const [appIO, devIO] = createLoopback();
+    devIO.onMessage(() => devIO.send(new Uint8Array([0xf0, 0x7e, 0x00, 0x06, 0x02, 0xf7])));
+    const session = new DeviceSession(appIO, 40);
+
+    const err = (await session.connect().catch((e: unknown) => e)) as HandshakeError;
+    expect(err).toBeInstanceOf(HandshakeError);
+    expect(err.stage).toBe("hello");
+    expect(err.pedalReplied).toBe(true);
+    expect(err.message).not.toMatch(/never replied/);
   });
 });

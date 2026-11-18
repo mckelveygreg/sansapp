@@ -22,6 +22,53 @@ import type { MidiIO } from "./transport";
 
 export type ConnectionState = "disconnected" | "connecting" | "ready";
 
+/**
+ * A failed connect handshake, saying WHERE it stalled. The bare request timeout reads the same
+ * ("timeout awaiting reply to requestBlock") whether the pedal never answered at all or answered the
+ * hello and then stalled on a data block, and those have different causes: a silent link is the cable
+ * or port (nothing reached us), a mid-handshake stall is the conversation itself.
+ */
+export class HandshakeError extends Error {
+  constructor(
+    /** "hello" = the version-probing first read; "dataBlock" = one of the data-block reads after it. */
+    readonly stage: "hello" | "dataBlock",
+    /** True if ANY inbound MIDI arrived during the attempt — the pedal→app leg carries traffic. */
+    readonly pedalReplied: boolean,
+    /** The firmware the pedal identified as (1.0, 1.1, …), or null if it never sent a version byte. */
+    readonly firmware: number | null,
+    /** The protocol version bytes the hello probed, in order. */
+    readonly triedVersions: readonly number[],
+    /** The data block that timed out (stage "dataBlock" only). */
+    readonly blockIndex?: number,
+    options?: { cause?: unknown },
+  ) {
+    super(
+      HandshakeError.describe(stage, pedalReplied, firmware, triedVersions, blockIndex),
+      options,
+    );
+    this.name = "HandshakeError";
+  }
+
+  private static describe(
+    stage: "hello" | "dataBlock",
+    pedalReplied: boolean,
+    firmware: number | null,
+    tried: readonly number[],
+    blockIndex: number | undefined,
+  ): string {
+    const fw = (v: number) => (v / 10).toFixed(1);
+    if (stage === "dataBlock") {
+      const hex = `0x${(blockIndex ?? 0).toString(16).padStart(2, "0")}`;
+      const who = firmware === null ? "The pedal" : `The pedal (firmware ${firmware.toFixed(1)})`;
+      return `${who} answered the handshake but not data block ${hex}`;
+    }
+    const versions = tried.map(fw).join(", ");
+    return pedalReplied
+      ? `MIDI arrived, but nothing answered the pedal handshake (tried firmware ${versions})`
+      : `The pedal never replied (tried firmware ${versions})`;
+  }
+}
+
 export interface ParamNotifyEvent {
   /** Mapped control id, or null if the raw param byte isn't in the registry yet. */
   paramId: ParamId | null;
@@ -163,6 +210,8 @@ export class DeviceSession {
   private readonly versionCbs = new Set<(firmware: number) => void>();
   /** Data blocks the connect handshake read, kept by index (serial, checksum table, settings). */
   private readonly handshakeBlocks = new Map<number, Uint8Array>();
+  /** Raw inbound messages seen — lets a failed handshake tell "silent link" from "stalled reply". */
+  private rxCount = 0;
 
   constructor(
     private readonly io: MidiIO,
@@ -173,12 +222,13 @@ export class DeviceSession {
      * app sets ~150 for Bluetooth, tests/USB tools leave it 0). */
     private readonly sendGapMs = 0,
   ) {
-    this.unsub = io.onMessage((raw) =>
+    this.unsub = io.onMessage((raw) => {
+      this.rxCount++;
       this.reasm.push(raw, (m) => {
         this.adoptVersion(sysexVersion(m));
         this.handleIncoming(decode(m));
-      }),
-    );
+      });
+    });
   }
 
   /**
@@ -303,14 +353,20 @@ export class DeviceSession {
   async connect(): Promise<void> {
     this.setState("connecting");
     this.handshakeBlocks.clear();
+    const rxBefore = this.rxCount;
+    const heard = () => this.rxCount > rxBefore;
     try {
-      await this.helloWithVersionProbe();
+      const tried = await this.helloWithVersionProbe(heard);
       for (const index of HANDSHAKE_DATA_BLOCKS) {
         await this.delay(this.sendGapMs);
         const reply = await this.request(
           { kind: "requestBlock", reqCode: 0x55, index },
           (m) => m.kind === "block" && m.blockCode === 0x52 && m.index === index,
-        );
+        ).catch((e: unknown) => {
+          throw new HandshakeError("dataBlock", heard(), this.firmwareVersion, tried, index, {
+            cause: e,
+          });
+        });
         // Keep what the handshake already paid for: block 0x0F carries the serial and 0x03 the
         // per-preset checksum table, both of which let a cached preset bank be re-used instead of
         // re-walked (src/protocol/identity.ts). Discarding them cost a ~35 s sync on every connect.
@@ -340,13 +396,14 @@ export class DeviceSession {
    * try the newest first; a timeout means "wrong version", not "no pedal", so we fall back and retry
    * rather than failing the connect. Once a reply lands, adoptVersion() latches the pedal's own byte.
    */
-  private async helloWithVersionProbe(): Promise<void> {
+  private async helloWithVersionProbe(heard: () => boolean): Promise<readonly number[]> {
     const candidates =
       this.observedVersion === null
         ? PROTOCOL_VERSIONS
         : [this.observedVersion, ...PROTOCOL_VERSIONS];
+    const tried = [...new Set(candidates)];
     let lastError: unknown;
-    for (const version of new Set(candidates)) {
+    for (const version of tried) {
       this.version = version;
       try {
         this.send({ kind: "hello" });
@@ -359,12 +416,14 @@ export class DeviceSession {
           { kind: "requestBlock", reqCode: 0x6a, index: 0 },
           (m) => m.kind === "block" && m.blockCode === 0x6b,
         );
-        return;
+        return tried;
       } catch (e) {
         lastError = e;
       }
     }
-    throw lastError instanceof Error ? lastError : new Error("connect handshake failed");
+    throw new HandshakeError("hello", heard(), this.firmwareVersion, tried, undefined, {
+      cause: lastError,
+    });
   }
 
   /** Read a stored preset (or slot 0x7F = program 127, which doesn't track live edits) without
