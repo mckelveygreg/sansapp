@@ -17,8 +17,8 @@ over MIDI (Bluetooth or wired).
 ## Using SansApp
 
 1. **Connect.** Pair a Bluetooth MIDI adapter (a **CME WIDI Jack** is recommended — see
-   [Hardware](#hardware)) to your phone once via the CME WIDI app or GarageBand, then open SansApp
-   and tap **Connect**. A USB adapter (the pedal's MD1) also works. The pill up top shows the live
+   [Hardware](#hardware)) to your phone once via the CME WIDI app or GarageBand, **set the WIDI
+   Jack's A/B switch to A** (the pedal is Type A), then open SansApp and tap **Connect**. A USB adapter (the pedal's MD1) also works. The pill up top shows the live
    connection state.
 2. **Edit live.** The **Editor** has every control on one screen — Drive/EQ, Mix/Output, and the
    red **Red Zone** functions — plus a live EQ tone graph and the current preset name/number. Turn a
