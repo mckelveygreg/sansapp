@@ -29,6 +29,7 @@ const GUIDE: Section[] = [
       "- iPhone + USB: USB-C (or Lightning + camera adapter) → MD1 → pedal, then tap Connect.",
       "- Android + USB: USB-C → MD1 → pedal, allow the USB prompt, then tap Connect. This is the most reliable path on Android.",
       "- Android + Bluetooth: just tap Connect and allow the Nearby-devices permission — the app finds and opens the WIDI itself (no separate pairing step).",
+      "- WIDI Jack: set its A/B switch to A — the pedal is Type A. On B the phone still sees the WIDI, but the pedal never replies.",
       "The colored dot by the preset name shows the link. If it goes stale, reconnect from the Connect screen.",
     ],
   },
@@ -81,7 +82,8 @@ const GUIDE: Section[] = [
   {
     title: "Troubleshooting",
     lines: [
-      '- "Pedal not found": make sure the WIDI is paired (iPhone) or the Bluetooth/USB permission is granted (Android), or the MD1 is plugged in. If MIDI won\'t pass over the WIDI, flip its A/B switch — the pedal is Type A.',
+      '- "Pedal not found": make sure the WIDI is paired (iPhone) or the Bluetooth/USB permission is granted (Android), or the MD1 is plugged in.',
+      "- \"The pedal never replied\": the phone reached the WIDI, but no MIDI got through to the pedal. Set the WIDI's A/B switch to A, and check ▲ goes to the pedal's MIDI OUT and ▼ to MIDI IN.",
       "- A knob does nothing: the link may have dropped. Reconnect on the Connect screen.",
       "- Bulk actions (reading all presets, backup) take ~30 s over Bluetooth — that's normal; there's a progress bar.",
     ],

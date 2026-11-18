@@ -13,8 +13,8 @@ The Elite has **3.5 mm TRS Type A** MIDI IN and OUT jacks. The tidiest wireless 
   - ▼ socket → pedal **MIDI IN** (sends to the pedal)
 - **Power:** parasitic from the pedal's MIDI OUT (needs 3.3–5 V). If the LED doesn't light,
   plug any USB‑C charger/power bank into the WIDI Jack's USB‑C port.
-- **Type A/B switch:** the pedal is Type A. CME's cable is wired Type B, so if MIDI won't
-  pass at first, flip the WIDI Jack's A/B slide switch (this is the documented fix).
+- **Type A/B switch: set it to A.** The pedal is Type A. On B the phone still pairs with the
+  WIDI Jack, but nothing reaches the pedal, and the app reports "The pedal never replied".
 - **First-time setup:** update the WIDI Jack firmware once with the free **CME WIDI** iPhone
   app (enables long-SysEx support). After that it appears as a normal Bluetooth MIDI device;
   the app pairs it via iOS's native BLE MIDI. Bulk operations are chunked + retried, so large
